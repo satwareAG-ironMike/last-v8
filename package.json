@@ -1,0 +1,20 @@
+{
+  "name": "last-v8",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive 3D simulation of a cross-plane 90 degree V8 on an industrial test stand (Three.js/WebGL, procedural geometry)",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "serve": "node scripts/serve.mjs",
+    "smoke": "node test/render.smoke.mjs",
+    "controls": "node test/controls.smoke.mjs",
+    "shots": "node test/screenshots.mjs"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.6.0"
+  }
+}
