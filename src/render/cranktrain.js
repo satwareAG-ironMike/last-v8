@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { SPEC, DEG } from '../engine/spec.js';
 import { crankPinPoint, pistonPinPoint, pistonAlong } from '../engine/timing.js';
 import { latheX, latheBank, worldBox } from './parts.js';
-import { extrude, alignX } from './primitives.js';
+import { extrude, alignX, sprocketGeometry } from './primitives.js';
 
 const C = SPEC.crank;
 const P = SPEC.piston;
@@ -139,12 +139,21 @@ function buildCrank(materials) {
   }
   crank.add(flywheel);
 
-  // nose sprocket for the cam drive + faceted tooth band
+  // nose sprocket for the cam drive: 18 machined teeth; cam sprockets are 36
   const sprocket = new THREE.Group();
   sprocket.name = 'sprocket';
   const spDrum = new THREE.Mesh(latheX(solidX(C.sprocket.radius, C.sprocket.x0, C.sprocket.x1), 40), materials.crankShaft);
   spDrum.name = 'sprocket-drum';
-  const spTeeth = new THREE.Mesh(latheX(ringX(C.sprocket.teethRadius, C.sprocket.radius - 0.05, 28.75, 29.65), 22), materials.chainSteel);
+  const spTeeth = new THREE.Mesh(
+    sprocketGeometry(C.sprocket.teeth, C.sprocket.pitchR, C.sprocket.toothH, C.sprocket.x1 - C.sprocket.x0, 0),
+    materials.chainSteel
+  );
+  // bevels are asymmetric along the extrusion axis: land the measured bbox on the band
+  spTeeth.geometry.computeBoundingBox();
+  spTeeth.geometry.translate(
+    (C.sprocket.x0 + C.sprocket.x1) / 2 - (spTeeth.geometry.boundingBox.min.x + spTeeth.geometry.boundingBox.max.x) / 2,
+    0, 0
+  );
   spTeeth.name = 'sprocket-teeth';
   for (const m of [spDrum, spTeeth]) {
     m.castShadow = true;

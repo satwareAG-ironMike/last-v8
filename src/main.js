@@ -1,10 +1,12 @@
-// App shell: WebGLRenderer, test-cell environment, lights, block casting.
-// Valvetrain, manifolds, stand, UI and camera rigs land in the following
-// commits; everything visual here is procedural (see src/render/materials.js).
+// App shell: WebGLRenderer, test-cell environment, lights, block casting,
+// cranktrain and DOHC valvetrain. Manifolds, stand, UI and camera rigs land
+// in the following commits; everything visual here is procedural
+// (see src/render/materials.js).
 import * as THREE from 'three';
 import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
 import { createCranktrain } from './render/cranktrain.js';
+import { createValvetrain } from './render/valvetrain.js';
 import { createEngineState } from './engine/animation.js';
 
 const container = document.getElementById('viewport');
@@ -65,11 +67,13 @@ scene.add(engine);
 const state = createEngineState({ rpm: 1600, running: true });
 const cranktrain = createCranktrain(materials);
 engine.add(cranktrain.group);
+const valvetrain = createValvetrain(materials);
+engine.add(valvetrain.group);
 
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
 camera.up.set(0, 0, 1); // world is Z-up (see src/engine/spec.js); keep the deck vertical in frame
-camera.position.set(90, -60, 45);
-camera.lookAt(1.3, 0.8, 2.4); // solved numerically: engine bbox centred in NDC
+camera.position.set(84.4, -117.6, 104.5);
+camera.lookAt(-3.3, -0.4, 16); // swept numerically: whole engine uncropped AND max valvetrain parts on screen
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -85,6 +89,7 @@ function loop() {
   lastT = now;
   state.step(dt);
   cranktrain.update(state.theta);
+  valvetrain.update(state.theta);
   renderFrame();
   if (frameCount % 30 === 0) {
     statusEl.textContent = state.running
@@ -143,7 +148,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.4-cranktrain',
+  version: 'v8-0.5-valvetrain',
   THREE,
   renderer,
   scene,
@@ -151,6 +156,7 @@ window.__v8 = {
   materials,
   engine,
   cranktrain,
+  valvetrain,
   state,
   start: () => state.start(),
   stop: () => state.stop(),

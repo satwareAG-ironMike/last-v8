@@ -41,7 +41,10 @@ export const SPEC = {
     noseRadius: 3.0,
     flangeRadius: 5.2,
     flywheel: { radius: 9.4, x0: -30.0, x1: -27.8, ringRadius: 9.95 },
-    sprocket: { radius: 4.75, teethRadius: 5.15, x0: 28.6, x1: 29.8 },
+    // 18-tooth drive sprocket at the nose; cam sprockets have exactly 2x the
+    // teeth AND 2x the pitch radius -> the 2:1 half-speed law is machined, not
+    // faked, and both sprockets share one chain pitch (2 pi pitchR / teeth).
+    sprocket: { radius: 3.15, teeth: 18, pitchR: 3.45, toothH: 0.55, x0: 28.6, x1: 29.8 },
     // Absolute throw azimuth per station, front -> rear.
     // Four throws 90 deg apart in azimuth -> cross-plane ("Chinese arm") crank.
     pinAz: [315, 225, 45, 135],
@@ -89,8 +92,13 @@ export const SPEC = {
     shim: 0.3,
     camBaseRadius: 1.6,
     camJournalRadius: 1.75,
+    camLobeWidth: 2.6, // extruded lobe thickness along the cam axis
     coverExtra: 3.4, // cam cover stand-off above the cam axis
     deckBoltRadius: 0.85,
+    retainerGap: 0.4, // retainer thickness; spring top seat at stemToTip - retainerGap
+    retainerRadius: 0.75,
+    shimRadius: 1.75, // adjusting shim under the bucket
+    bucketFlangeRadius: 2.15, // guide lip on the bucket skirt
   },
 
   valves: {
@@ -101,13 +109,26 @@ export const SPEC = {
     exhaustClose: 405, // 45 deg after overlap TDC  -> 280 deg duration
     intakeOpen: 350, // 10 deg before overlap TDC
     intakeClose: 590, // 50 deg after intake BDC    -> 240 deg duration
-    springFreeLength: 5.2,
+    // Spring data. A compression spring is installed SHORTER than its free
+    // length: freeLength - installed = the seat preload at zero lift.
+    // Installed length = stemToTip - retainerGap - guideLength = 5.0 cm.
+    springFreeLength: 5.2, // 0.2 cm seat preload
     springRadius: 1.35,
     springCoils: 7,
     springWireRadius: 0.22,
   },
 
-  cam: { halfSpeedRatio: 2 },
+  cam: {
+    halfSpeedRatio: 2,
+    journalAft: -28.7, // continuous journal: aft bearing ... through all 4 sprocket bands
+    journalFore: 29.95,
+    bearings: [-27.5, -22, -11, 0, 11, 22, 27.5], // 7 journals per camshaft
+    bearingR: 2.05,
+    bearingHalf: 1.1,
+    // 36 teeth = 2x the 18-tooth crank sprocket; four flat chain bands on the
+    // front face, each 0.3 cm wide, exactly filling the 28.6..29.8 sprocket stack.
+    sprocket: { teeth: 36, pitchR: 6.9, toothH: 0.55, width: 0.3, bands: [28.6, 28.9, 29.2, 29.5] },
+  },
 
   ignitionAdvance: 14, // crank degrees BTDC the spark fires
 
