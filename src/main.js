@@ -1,8 +1,9 @@
-// App shell: WebGLRenderer, test-cell environment, lights, placeholder rig.
-// The engine parts, stand, UI and camera rigs land in the following commits;
-// everything visual here is procedural (see src/render/materials.js).
+// App shell: WebGLRenderer, test-cell environment, lights, block casting.
+// Valvetrain, manifolds, stand, UI and camera rigs land in the following
+// commits; everything visual here is procedural (see src/render/materials.js).
 import * as THREE from 'three';
 import { createEnvironment, createMaterials } from './render/materials.js';
+import { createBlock } from './render/block.js';
 
 const container = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
@@ -47,35 +48,19 @@ const rim = new THREE.DirectionalLight(0xffc27a, 1.3);
 rim.position.set(-35, 20, 110);
 scene.add(rim);
 
+// floor is the XY plane at z = -16.5 (world Z is up, see engine/spec.js)
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), materials.floorPlate);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = -34;
+floor.position.z = -16.5;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// placeholder rig: proves materials, env reflections and shadows until the V8 arrives
-const rig = new THREE.Group();
-rig.name = 'placeholder-rig';
-
-const block = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 20), materials.castIronBlock);
-block.position.y = 2;
-const headCover = new THREE.Mesh(new THREE.BoxGeometry(34, 6, 20), materials.castAluminumHead);
-headCover.position.y = 12;
-const flywheel = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 2.4, 48), materials.crankShaft);
-flywheel.rotation.z = Math.PI / 2;
-flywheel.position.set(-20, 2, 0);
-const demo = new THREE.Mesh(new THREE.TorusKnotGeometry(6, 1.6, 140, 24), materials.headerSteel);
-demo.position.set(26, 14, 0);
-for (const m of [block, headCover, flywheel, demo]) {
-  m.castShadow = true;
-  m.receiveShadow = true;
-  rig.add(m);
-}
-scene.add(rig);
+const engine = createBlock(materials);
+engine.name = 'v8-block';
+scene.add(engine);
 
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
-camera.position.set(64, 42, 88);
-camera.lookAt(0, 4, 0);
+camera.position.set(50, -20, 58);
+camera.lookAt(0, 0, 6);
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -89,8 +74,7 @@ function loop() {
   const now = performance.now();
   const dt = Math.min((now - lastT) / 1000, 0.05);
   lastT = now;
-  rig.rotation.y += dt * 0.25; // placeholder spin so successive frames differ
-  demo.rotation.x += dt * 0.6;
+  void dt; // consumed by the animation engine in the cranktrain commit
   renderFrame();
   if (frameCount % 30 === 0) statusEl.textContent = `renderer live - frame ${frameCount}`;
   requestAnimationFrame(loop);
@@ -145,11 +129,12 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'shell-0.1',
+  version: 'v8-0.3-block',
   renderer,
   scene,
   camera,
   materials,
+  engine,
   frameCount: () => frameCount,
   grabFrame,
 };
