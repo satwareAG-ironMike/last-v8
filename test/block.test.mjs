@@ -117,3 +117,39 @@ test('union sanity: every block solid family is anchored on the drum shell', () 
   // webs stand on the void wall at the tangent along-value the renderer uses
   assert.ok(idHalfDepth(B.boreWallHalf) < arcHalfDepth(B.boreWallHalf), 'web tangent is below column tangent');
 });
+
+test('renderer instantiation: block builds as one group inside the design envelope', async () => {
+  const { createBlock } = await import('../src/render/block.js');
+  const THREE = await import('three');
+  const fakeMats = {};
+  for (const name of ['castIronBlock', 'boreWall', 'bearingShell', 'fastenerDark', 'paintedGraphite', 'brass'])
+    fakeMats[name] = new THREE.MeshStandardMaterial({ name });
+  const block = createBlock(fakeMats);
+  const meshes = [];
+  block.traverse((o) => o.isMesh && meshes.push(o));
+  assert.ok(meshes.length >= 45, `too few solids: ${meshes.length}`);
+  const bb = new THREE.Box3().setFromObject(block);
+  const E = { x: 26.5, y: 21.99, zLo: -15.05, zHi: 21.99 }; // deck corner: (deckA + deckHalfWidth)/sqrt2
+  assert.ok(
+    Math.abs(bb.min.x + E.x) < 0.2 && Math.abs(bb.max.x - E.x) < 0.2 &&
+    Math.abs(bb.min.y + E.y) < 0.3 && Math.abs(bb.max.y - E.y) < 0.3 &&
+    Math.abs(bb.min.z - E.zLo) < 0.3 && Math.abs(bb.max.z - E.zHi) < 0.35,
+    `block bbox ${JSON.stringify([bb.min.x, bb.max.x, bb.min.y, bb.max.y, bb.min.z, bb.max.z])}`
+  );
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      if (!Number.isFinite(pos.getX(i)) || !Number.isFinite(pos.getY(i)) || !Number.isFinite(pos.getZ(i)))
+        assert.fail(`${m.name}: NaN vertex`);
+    }
+  }
+  // liners must sit at their own station x - one per bore, none stacked
+  const wantX = { 1: 16.5, 2: 16.5, 3: 5.5, 4: 5.5, 5: -5.5, 6: -5.5, 7: -16.5, 8: -16.5 };
+  for (const [num, want] of Object.entries(wantX)) {
+    const liner = meshes.find((m) => m.name === `liner-cyl${num}`);
+    assert.ok(liner, `liner-cyl${num} missing`);
+    const lbb = new THREE.Box3().setFromObject(liner);
+    const cx = (lbb.min.x + lbb.max.x) / 2;
+    assert.ok(Math.abs(cx - want) < 0.01, `liner-cyl${num} at x=${cx}, must be ${want}`);
+  }
+});

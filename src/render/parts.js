@@ -63,9 +63,13 @@ export function latheX(pairs, segments = 48) {
   return g;
 }
 
-/** Closed solid of revolution about a bank bore axis. Profile: [radius, along]. */
-export function latheBank(bank, pairs, segments = 48) {
+/**
+ * Closed solid of revolution about a bank bore axis, offset `x` cm along the
+ * crank axis (world X) to its cylinder station. Profile: [radius, along].
+ */
+export function latheBank(bank, pairs, segments = 48, x = 0) {
   const g = new THREE.LatheGeometry(latheProfile(pairs), segments, 0, Math.PI * 2);
   g.applyQuaternion(alignYTo(bankUp(bank)));
+  g.translate(x, 0, 0); // station offset is along world X, never along the bore
   return g;
 }

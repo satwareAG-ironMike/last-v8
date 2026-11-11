@@ -104,7 +104,7 @@ export function createBlock(materials) {
     [LINER_OD, B.boreStartA],
   ];
   for (const cyl of SPEC.cylinders) {
-    put(`liner-cyl${cyl.num}`, latheBank(cyl.bank, liner, 48), materials.boreWall);
+    put(`liner-cyl${cyl.num}`, latheBank(cyl.bank, liner, 48, B.stations[cyl.station]), materials.boreWall);
   }
 
   // 5. main bearing hardware.
