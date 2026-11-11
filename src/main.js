@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
+import { createCranktrain } from './render/cranktrain.js';
+import { createEngineState } from './engine/animation.js';
 
 const container = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
@@ -58,9 +60,16 @@ const engine = createBlock(materials);
 engine.name = 'v8-block';
 scene.add(engine);
 
+// Rotating assembly lives in the same scene graph as the casting; the only
+// animation clock is state.theta, posed through src/engine/timing.js math.
+const state = createEngineState({ rpm: 1600, running: true });
+const cranktrain = createCranktrain(materials);
+engine.add(cranktrain.group);
+
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
-camera.position.set(50, -20, 58);
-camera.lookAt(0, 0, 6);
+camera.up.set(0, 0, 1); // world is Z-up (see src/engine/spec.js); keep the deck vertical in frame
+camera.position.set(90, -60, 45);
+camera.lookAt(1.3, 0.8, 2.4); // solved numerically: engine bbox centred in NDC
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -74,9 +83,14 @@ function loop() {
   const now = performance.now();
   const dt = Math.min((now - lastT) / 1000, 0.05);
   lastT = now;
-  void dt; // consumed by the animation engine in the cranktrain commit
+  state.step(dt);
+  cranktrain.update(state.theta);
   renderFrame();
-  if (frameCount % 30 === 0) statusEl.textContent = `renderer live - frame ${frameCount}`;
+  if (frameCount % 30 === 0) {
+    statusEl.textContent = state.running
+      ? `${state.rpm} rpm - crank ${state.theta.toFixed(0)}°${state.slowmo < 1 ? ` - slowmo ${state.slowmo}` : ''}`
+      : `engine stopped - crank ${state.theta.toFixed(0)}°`;
+  }
   requestAnimationFrame(loop);
 }
 loop();
@@ -129,12 +143,19 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.3-block',
+  version: 'v8-0.4-cranktrain',
+  THREE,
   renderer,
   scene,
   camera,
   materials,
   engine,
+  cranktrain,
+  state,
+  start: () => state.start(),
+  stop: () => state.stop(),
+  setRpm: (v) => state.setRpm(v),
+  setSlowmo: (f) => state.setSlowmo(f),
   frameCount: () => frameCount,
   grabFrame,
 };

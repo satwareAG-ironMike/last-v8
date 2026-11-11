@@ -29,11 +29,19 @@ export const SPEC = {
     radius: 4.0, // half stroke
     mainRadius: 2.7,
     pinRadius: 2.4,
-    pinWidth: 4.6,
+    pinWidth: 5.8, // pin ends s +/- 2.9; runs through both web slabs
+    webIn: 1.4, // web slab occupies s +/- (1.4..2.5); rod gap is s +/- 1.4
+    webOut: 2.5,
+    webThickness: 1.1,
+    webHalfU: 2.6, // web half-width perpendicular to the throw direction
     counterRadius: 6.3,
-    counterThickness: 2.2,
+    counterLobeHalfX: 1.45, // one counter lobe per throw, s +/- 1.45, touches both webs
+    counterInnerR: 2.2,
+    counterArcDeg: 150,
     noseRadius: 3.0,
     flangeRadius: 5.2,
+    flywheel: { radius: 9.4, x0: -30.0, x1: -27.8, ringRadius: 9.95 },
+    sprocket: { radius: 4.75, teethRadius: 5.15, x0: 28.6, x1: 29.8 },
     // Absolute throw azimuth per station, front -> rear.
     // Four throws 90 deg apart in azimuth -> cross-plane ("Chinese arm") crank.
     pinAz: [315, 225, 45, 135],
@@ -43,7 +51,9 @@ export const SPEC = {
 
   rod: { length: 14.5, bigEndRadius: 3.1, capRadius: 3.1, smallEndRadius: 1.7, beamWidth: 2.4 },
 
-  piston: { radius: 4.95, compressionHeight: 3.9, crownThickness: 1.6, skirtLength: 4.6 },
+  // Skirt must clear the counterweight tips: at BDC the pin sits 10.5 up the
+  // bore, the skirt bottom 10.5 - skirtLength = 6.5 > counterRadius + 0.15.
+  piston: { radius: 4.95, compressionHeight: 3.9, crownThickness: 1.6, skirtLength: 4.0 },
 
   block: {
     deckA: 24.1, // crank centreline -> deck face, up the bore axis
