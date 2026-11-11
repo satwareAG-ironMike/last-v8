@@ -53,9 +53,15 @@ export const SPEC = {
     stations: [16.5, 5.5, -5.5, -16.5], // front -> rear
     pitch: 11.0,
     crankcaseRadius: 9.4,
+    caseOuterRadius: 11.6, // casting OD around the crankcase
     deckHalfWidth: 7.0,
+    boreWallHalf: 5.35, // half width of the bore tunnel opening in the slab profile
+    deckCornerR: 1.6, // deck corner radius (head bolt bosses)
+    mainBossR: 4.6, // fore main bearing hole (nose journal passes it)
+    aftMainBossR: 5.7, // aft main bearing hole (flywheel flange passes it)
+    counterBayHalfX: 22.0, // all crank counterweights stay inside |x| < this, r <= counterRadius
     slabFront: 4.5, // accessory-drive slab, +X of the first station
-    slabRear: 4.0, // rear main / bell housing slab, -X of the last station
+    slabRear: 4.5, // rear main / bell housing slab, -X of the last station (symmetric)
   },
 
   head: {
@@ -165,4 +171,74 @@ export function camAzimuths(bank) {
     intake: camAxisBank(bank, 'intake'),
     exhaust: camAxisBank(bank, 'exhaust'),
   };
+}
+
+// ---- block solid topology -------------------------------------------------
+// The block casting is decomposed into solids that are axis-aligned in one
+// bank's (along, out) frame or in world (y,z). Because bank axes are
+// orthonormal and centred on the crank axis, radius from the crank axis is
+// hypot(along, out) in bank frames - every tangent/chord below guarantees
+// each solid mates exactly with the crankcase cylinder (no floating parts).
+
+const BLOCK = SPEC.block;
+const OD2 = BLOCK.caseOuterRadius * BLOCK.caseOuterRadius;
+const ID2 = BLOCK.crankcaseRadius * BLOCK.crankcaseRadius;
+
+/** Max |out| that still fits a bearing stripe of half-width halfOut on the OD arc. */
+export const OD = BLOCK.caseOuterRadius;
+export const ID = BLOCK.crankcaseRadius;
+
+/** Along-frame chord depth where the OD cylinder crosses out = +/-halfOut. */
+export function arcHalfDepth(halfOut) {
+  return Math.sqrt(OD2 - halfOut * halfOut);
+}
+
+/** World half-width where the OD cylinder crosses z = -|halfZ|. */
+export function arcHalfWidth(halfZ) {
+  return Math.sqrt(OD2 - halfZ * halfZ);
+}
+
+/** Along-frame chord depth where the ID (void) cylinder crosses out = +/-halfOut. */
+export function idHalfDepth(halfOut) {
+  return Math.sqrt(ID2 - halfOut * halfOut);
+}
+
+/**
+ * Deck corner support column of a bank: from the OD chord plane up to the
+ * deck, outboard of the bore tunnel. Bottom corners land ON the OD cylinder
+ * (out = deckHalfWidth) and outside the crankcase void (out = boreWallHalf).
+ */
+export function supportColumn(bank) {
+  const out0 = BLOCK.boreWallHalf;
+  const out1 = BLOCK.deckHalfWidth;
+  const along0 = arcHalfDepth(out1);
+  return {
+    bank,
+    along0,
+    along1: BLOCK.deckA,
+    out0,
+    out1,
+    // clearance checks in radius terms
+    rInnerBottom: Math.hypot(along0, out0),
+    rOuterBottom: Math.hypot(along0, out1),
+  };
+}
+
+/** Main bearing cap lug: side plates whose top corners bear on the void edge. */
+export function mainCapLug(halfOut0 = 3.0, halfOut1 = 4.6, zTop = -8.9, zBottom = -11.5) {
+  return {
+    y0: halfOut0,
+    y1: halfOut1,
+    zTop,
+    zBottom,
+    rCorner: Math.hypot(halfOut0, zTop), // must sit on the casting, not in the void
+  };
+}
+
+/** X positions of the five main bearing caps (slab centres and slab joints). */
+export const MAIN_CAPS_X = [24.25, 11, 0, -11, -24.25];
+
+/** Oil pan flange half-width at its bolt plane z = flangeZ. */
+export function panFlangeHalfWidth(flangeZ) {
+  return arcHalfWidth(Math.abs(flangeZ));
 }
