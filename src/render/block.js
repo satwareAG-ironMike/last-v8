@@ -27,8 +27,8 @@ const X_FRONT = B.stations[0] + B.pitch / 2; // 22
 const X_REAR = B.stations[3] - B.pitch / 2; // -22
 const SHELL_IN = CR.mainRadius + 0.05; // bearing shell inner
 const SHELL_OUT = SHELL_IN + 0.7;
-const FLANGE_Z = -11.15;
-const RAIL_Z = -11.6;
+const FLANGE_Z = B.panFlangeZ; // published: the test stand bolts onto these planes
+const RAIL_Z = B.panRailZ;
 
 /** Closed outer-first lathe profile for a ring about world X. */
 function ringX(rOut, rIn, x0, x1) {

@@ -1,7 +1,8 @@
 // App shell: WebGLRenderer, test-cell environment, lights, block casting,
-// cranktrain, DOHC valvetrain, the two cylinder heads and the intake / exhaust
-// manifolds. Stand, UI and camera rigs land in the following commits;
-// everything visual here is procedural (see src/render/materials.js).
+// cranktrain, DOHC valvetrain, the two cylinder heads, the intake / exhaust
+// manifolds and the industrial test stand that carries the engine. UI and
+// camera rigs land in the following commit; everything visual here is
+// procedural (see src/render/materials.js).
 import * as THREE from 'three';
 import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
@@ -9,6 +10,7 @@ import { createCranktrain } from './render/cranktrain.js';
 import { createValvetrain } from './render/valvetrain.js';
 import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
+import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
 
@@ -55,11 +57,17 @@ const rim = new THREE.DirectionalLight(0xffc27a, 1.3);
 rim.position.set(-35, 20, 110);
 scene.add(rim);
 
-// floor is the XY plane at z = -16.5 (world Z is up, see engine/spec.js)
+// floor is the XY plane at SPEC.stand.floorZ (world Z is up, see engine/spec.js);
+// the stand's feet sit exactly on it
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), materials.floorPlate);
-floor.position.z = -16.5;
+floor.position.z = SPEC.stand.floorZ;
 floor.receiveShadow = true;
 scene.add(floor);
+
+// The test stand is fixed cell hardware: it goes into the scene, never into the
+// engine group, and it has no update() - the engine hangs from it.
+const stand = createStand(materials);
+scene.add(stand.group);
 
 const engine = createBlock(materials);
 engine.name = 'v8-block';
@@ -80,7 +88,8 @@ engine.add(manifolds.group);
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
 camera.up.set(0, 0, 1); // world is Z-up (see src/engine/spec.js); keep the deck vertical in frame
 camera.position.set(84.4, -117.6, 104.5);
-camera.lookAt(-3.0, 1.8, 8.6); // swept numerically: block, heads, valvetrain + manifolds uncropped
+camera.lookAt(-1.9, 1.9, 7.9); // swept numerically: engine, manifolds AND the whole
+// test stand (x +-35.5, y +-17.2, z -16.5..-5.2) fit uncropped in a 16:9 boot frame
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -155,7 +164,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.7-manifolds',
+  version: 'v8-0.8-stand',
   SPEC,
   bankOut,
   bankUp,
@@ -169,6 +178,7 @@ window.__v8 = {
   valvetrain,
   heads,
   manifolds,
+  stand,
   state,
   start: () => state.start(),
   stop: () => state.stop(),

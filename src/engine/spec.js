@@ -75,6 +75,13 @@ export const SPEC = {
     counterBayHalfX: 22.0, // all crank counterweights stay inside |x| < this, r <= counterRadius
     slabFront: 4.5, // accessory-drive slab, +X of the first station
     slabRear: 4.5, // rear main / bell housing slab, -X of the last station (symmetric)
+
+    // ---- the two faces the test stand is allowed to bolt onto ----
+    // panFlangeZ: top plane of the cast pan rails; panRailZ: their bottom face,
+    // which is also the oil-pan's top face - the only flat plane under the block.
+    panFlangeZ: -11.15,
+    panRailZ: -11.6,
+    panInset: 0.25, // the pan wall stands this far inboard of the pan-rail edge
   },
 
   head: {
@@ -191,6 +198,61 @@ export const SPEC = {
     bracketA: 1.2,     // bracket reach beside the rail in `along`
     bracketDrop: 1.1,  // how far below the rail axis its lower face sits
     bracketBite: 0.9,  // how deep it is cast into the plenum bar / starts into it
+  },
+
+  // ---- industrial test stand (routing solved against the measured casting
+  // envelope: tmp/stand-lanes2.mjs, tmp/stand-faces.mjs, tmp/stand-candidate2.mjs)
+  // The engine is carried on two real casting interfaces only:
+  //   A. the oil-pan flange - the block's cast pan rails (flat pads,
+  //      |y| <= panFlangeHalfWidth(panFlangeZ), z panRailZ..panFlangeZ) and the
+  //      pan side wall at |y| = panWallHalfWidth(): 4 mounts, 2 clamp bolts each.
+  //   B. the fore/aft end-disc flat x-faces at |x| = endDiscFaceX(): 4 locator
+  //      jaws, one reaction frame per end, so crank torque has nowhere to go.
+  // No cradle under the pan is possible: the pan bottom is z -14.6, its drain
+  // plug reaches -15.05 and the floor is -16.5 - 1.45..1.90 cm of air. Every
+  // frame member therefore travels the free lane floorZ..frameZ1 or the corridor
+  // outside |x| > 22, and the fore/aft frame has to dodge the rotating hardware:
+  // nose stub r 3.0, sprocket drum x 28.6..29.8 r 3.74, flywheel disc r 9.4 plus
+  // ring gear r 9.95. Non-mount members keep >= minAir of real air; mounts mate.
+  stand: {
+    floorZ: -16.5, // test-cell floor plane: the stand's feet, nothing below
+    frameZ1: -15.15, // top face of every frame beam (measured free lane ceiling)
+    bedX: [-35.5, 35.5], // bed rails under the block, outboard of everything
+    bedY: [13.2, 17.2],
+    skidX: [-30.5, 30.5], // centre skid rails under the oil pan lane
+    skidY: [4.4, 6.4],
+    tieForeX: [33.0, 35.5], // fore/aft cross ties: the frame's torsion box
+    tieAftX: [-35.5, -33.0],
+    sideTieX: [22.4, 24.4], // ties from each bed rail down to its skid rail
+    postX: [16.5, 19.5], // mount posts, one per corner, outboard of the pan
+    postY: [4.4, 6.4], // its bottom face sits on frameZ1 (derived), its top on padZ0
+    padInX: 15.5, // mount plate: its inboard edge and top face are DERIVED from
+    padOutX: 20.5, // the pan wall and the pan-rail plane plus `bite`, not pinned
+    padOutY: 6.4,
+    padZ0: -12.6,
+    colOutX: 27.6, // fore/aft locator pedestals, outboard of the flywheel ring gear
+    colY: [13.2, 17.2],
+    colZ1: -13.8, // their base is frameZ1 (derived), so they stand on the bed rails
+    jawOutX: 27.0, // locator jaws clamping the end-disc faces; inboard face derived
+    jawY: [6.0, 10.0],
+    jawZ: [-12.6, -5.2],
+    braceX: 18.0, // diagonal gussets: buried in the bed rail, buried in the mount post
+    braceR: 0.55,
+    braceFootY: 14.4,
+    braceFootZ: -15.55,
+    braceHeadY: 6.0,
+    braceHeadZ: -13.2,
+    bite: 0.1, // design engagement depth into the pan flange (both axes)
+    jawBite: 0.05, // design engagement depth into the end-disc face
+    minAir: 0.5, // real air every non-mount member keeps from the engine
+    boltsPerMount: 2,
+    boltTipY: 2.6, // clamp bolt tip, buried in the oil-pan wall: the shaft length
+    // is DERIVED from padOutY - boltTipY in stand.js, so it can never be pinned wrong
+    boltZ: -12.05,
+    boltOffX: 2.0, // bolt offsets from the mount centre along x
+    boltAcross: 1.3,
+    boltHeadH: 0.9,
+    boltShaftR: 0.42,
   },
 
   valves: {
@@ -371,3 +433,19 @@ export const MAIN_CAPS_X = [24.25, 11, 0, -11, -24.25];
 export function panFlangeHalfWidth(flangeZ) {
   return arcHalfWidth(Math.abs(flangeZ));
 }
+
+/**
+ * The two flat casting faces the test stand is allowed to bolt onto, derived
+ * from the block topology above so the stand can never claim a face the casting
+ * does not actually have (test/stand.test.mjs measures them off the block group).
+ */
+/** |y| half-width of the oil-pan side wall the mount pads clamp against. */
+export const panWallHalfWidth = () =>
+  panFlangeHalfWidth(SPEC.block.panFlangeZ) - SPEC.block.panInset;
+
+/** z of the pan-rail bottom face = the oil-pan top face: the mount bearing plane. */
+export const panRailPlane = () => SPEC.block.panRailZ;
+
+/** |x| of the fore/aft end-disc flat faces the locator jaws clamp against. */
+export const endDiscFaceX = () =>
+  SPEC.block.stations[0] + SPEC.block.pitch / 2 + SPEC.block.slabFront;
