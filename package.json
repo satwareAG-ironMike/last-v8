@@ -7,14 +7,9 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "serve": "node scripts/serve.mjs",
-    "smoke": "node test/render.smoke.mjs",
-    "controls": "node test/controls.smoke.mjs",
-    "shots": "node test/screenshots.mjs"
+    "smoke": "node test/render.smoke.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"
-  },
-  "devDependencies": {
-    "puppeteer-core": "^24.6.0"
   }
 }
