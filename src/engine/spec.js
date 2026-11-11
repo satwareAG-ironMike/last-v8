@@ -99,16 +99,36 @@ export const SPEC = {
     retainerRadius: 0.75,
     shimRadius: 1.75, // adjusting shim under the bucket
     bucketFlangeRadius: 2.15, // guide lip on the bucket skirt
+
+    // ---- head casting topology (pinned by test/heads.test.mjs) ----
+    gasketT: 0.15, // compressed head gasket between block deck and head face
+    gasketId: 5.5, // gasket bore: outboard of the 5.3 bore shell, inboard of
+    gasketOd: 7.0, // the deck rails the clamping load rides on
+    railTopA: 27.0, // machined deck-rail top plane the head bolts stand on
+    boltOut: 6.3, // bolt row |out|: mid of the gasket band 5.5..7.0
+    boltXOff: 2.9, // bolt x offset from each cylinder station
+    guideBoreR: 0.48, // valve-guide bore over the 0.34 stem
+    floorT: 0.6, // spring-seat floor thickness; its top plane = guideLength
+    bucketBoreR: 2.25, // bucket/guide bore: 0.10 over the 2.15 bucket flange,
+    // 0.68 over the 1.57 spring coil OD - the spring rides inside this bore
+    bossClr: 0.05, // cam-bearing running clearance inside each head boss
+    coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
   },
 
   valves: {
     maxLift: 1.2,
     // Cycle angles in CRANK degrees, c = 0 at power TDC:
     //   0..180 POWER | 180..360 EXHAUST | 360..540 INTAKE | 540..720 COMPRESSION
-    exhaustOpen: 125, // 55 deg before exhaust BDC
-    exhaustClose: 405, // 45 deg after overlap TDC  -> 280 deg duration
-    intakeOpen: 350, // 10 deg before overlap TDC
-    intakeClose: 590, // 50 deg after intake BDC    -> 240 deg duration
+    // 240 deg duration, symmetric about the exhaust-stroke mid (270): the
+    // 125..405 blowdown window leaves only ~0.75 mm between the exhaust valve
+    // disc and the flat piston crown at overlap TDC - physically it would
+    // clash. 145..385 keeps the same 265 deg event midpoint (the baked lobe
+    // azimuth is unchanged) and restores >0.25 cm crown clearance.
+    exhaustOpen: 145, // 35 deg before exhaust BDC
+    exhaustClose: 385, // 25 deg after overlap TDC -> 240 deg duration
+    intakeOpen: 340, // 20 deg before overlap TDC
+    intakeClose: 580, // 40 deg after intake BDC    -> 240 deg duration
+    // Overlap = 20 + 25 = 45 crank deg (the timing test window is 40..70).
     // Spring data. A compression spring is installed SHORTER than its free
     // length: freeLength - installed = the seat preload at zero lift.
     // Installed length = stemToTip - retainerGap - guideLength = 5.0 cm.
