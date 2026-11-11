@@ -255,6 +255,26 @@ export const SPEC = {
     boltShaftR: 0.42,
   },
 
+  // Camera rig (src/ui/cameraRig.js). The home pose is the swept boot framing
+  // recorded in G5d; every limit is published here, so the rig tests measure
+  // what the rig actually does instead of what the author remembered.
+  view: {
+    homePos: [84.4, -117.6, 104.5], // solved against the engine+stand union bbox
+    homeTarget: [-1.9, 1.9, 7.9],
+    fov: 48,
+    aspect: 1280 / 713, // the size the headless gates render at
+    distMin: 42, // close enough to read a valve spring through the section
+    distMax: 420, // inside the fog far plane (900) and the shadow camera (420)
+    pitchLimit: 1.35, // rad, stays clear of the Z-up gimbal at 90 deg
+    eyeMin: 2.0, // the camera never dips closer than this to the cell floor
+    orbitSpeed: 0.0045, // rad per pixel of mouse travel
+    zoomStep: 1.18, // per wheel notch, multiplicative: even zoom feel at any range
+    walkSpeed: 45, // cm/s; Shift = walkBoost x
+    walkBoost: 3.5,
+    damping: 9, // 1/s, exponential: smooth orbit/zoom, frame-rate independent
+    walkBounds: { x: 95, y: 95, zMax: 70 }, // its z floor is derived: floorZ + eyeMin
+  },
+
   valves: {
     maxLift: 1.2,
     // Cycle angles in CRANK degrees, c = 0 at power TDC:

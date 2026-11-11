@@ -12,6 +12,7 @@ import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
+import { createCameraRig } from './ui/cameraRig.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
 
 const container = document.getElementById('viewport');
@@ -85,11 +86,77 @@ engine.add(heads.group);
 const manifolds = createManifolds(materials);
 engine.add(manifolds.group);
 
-const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
-camera.up.set(0, 0, 1); // world is Z-up (see src/engine/spec.js); keep the deck vertical in frame
-camera.position.set(84.4, -117.6, 104.5);
-camera.lookAt(-1.9, 1.9, 7.9); // swept numerically: engine, manifolds AND the whole
-// test stand (x +-35.5, y +-17.2, z -16.5..-5.2) fit uncropped in a 16:9 boot frame
+// The camera and its rig. The pose is NOT written here: SPEC.view carries the
+// swept boot framing (engine, manifolds and the whole test stand uncropped in a
+// 16:9 frame) and the rig reproduces it, so the framing exists exactly once.
+const camera = new THREE.PerspectiveCamera(SPEC.view.fov, window.innerWidth / window.innerHeight, 0.5, 3000);
+const rig = createCameraRig(camera);
+rig.update(0); // land the camera on the published home pose before the first render
+
+// --- input: mouse orbit, wheel zoom, WASD + QE walk, R = RESET CAMERA --------
+// Every input is a GOAL for the rig; the loop chases it, which is what makes the
+// motion smooth and frame-rate independent (src/ui/cameraRig.js).
+const canvas = renderer.domElement;
+const keys = new Set();
+let dragging = false;
+let lastPx = 0;
+let lastPy = 0;
+
+canvas.addEventListener('pointerdown', (e) => {
+  dragging = true;
+  lastPx = e.clientX;
+  lastPy = e.clientY;
+  canvas.setPointerCapture?.(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  rig.orbit(e.clientX - lastPx, e.clientY - lastPy);
+  lastPx = e.clientX;
+  lastPy = e.clientY;
+});
+const endDrag = () => {
+  dragging = false;
+};
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('pointerleave', endDrag);
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
+  rig.zoom(THREE.MathUtils.clamp((e.deltaY * lines) / 100, -3, 3));
+}, { passive: false });
+
+// A control in the panel (the RPM slider, a button) keeps keyboard focus while
+// it is in use: movement keys must not fire into the camera from a form field.
+const formFocused = () => {
+  const el = document.activeElement;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
+};
+const MOVE_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight']);
+window.addEventListener('keydown', (e) => {
+  if (formFocused()) return;
+  if (e.code === 'KeyR') {
+    rig.reset();
+    return;
+  }
+  if (!MOVE_CODES.has(e.code)) return;
+  keys.add(e.code);
+  e.preventDefault(); // the page must not scroll while walking
+});
+window.addEventListener('keyup', (e) => keys.delete(e.code));
+window.addEventListener('blur', () => keys.clear());
+
+/** The walk vector from the held keys, in the rig's own floor-parallel basis. */
+function readKeys() {
+  const held = (c) => (keys.has(c) ? 1 : 0);
+  return {
+    fwd: held('KeyW') - held('KeyS'),
+    strafe: held('KeyD') - held('KeyA'),
+    rise: held('KeyQ') - held('KeyE'),
+    boost: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+  };
+}
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -106,6 +173,9 @@ function loop() {
   state.step(dt);
   cranktrain.update(state.theta);
   valvetrain.update(state.theta);
+  const w = readKeys();
+  if (w.fwd || w.strafe || w.rise) rig.walk(w, dt); // held keys walk every frame
+  rig.update(dt); // writes the camera pose the renderer is about to use
   renderFrame();
   if (frameCount % 30 === 0) {
     statusEl.textContent = state.running
@@ -164,7 +234,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.8-stand',
+  version: 'v8-0.9-camera',
   SPEC,
   bankOut,
   bankUp,
@@ -172,6 +242,7 @@ window.__v8 = {
   renderer,
   scene,
   camera,
+  rig,
   materials,
   engine,
   cranktrain,
@@ -184,6 +255,12 @@ window.__v8 = {
   stop: () => state.stop(),
   setRpm: (v) => state.setRpm(v),
   setSlowmo: (f) => state.setSlowmo(f),
+  orbitBy: (dx, dy) => rig.orbit(dx, dy),
+  zoomBy: (notches) => rig.zoom(notches),
+  walkBy: (o, dt) => rig.walk(o, dt),
+  focusPart: (point, range) => rig.focusOn(point, range),
+  resetCamera: () => rig.reset(),
+  cameraPose: () => rig.state(),
   frameCount: () => frameCount,
   grabFrame,
 };
