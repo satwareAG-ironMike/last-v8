@@ -1,14 +1,16 @@
 // App shell: WebGLRenderer, test-cell environment, lights, block casting,
-// cranktrain, DOHC valvetrain and the two cylinder heads. Manifolds, stand,
-// UI and camera rigs land in the following commits; everything visual here is
-// procedural (see src/render/materials.js).
+// cranktrain, DOHC valvetrain, the two cylinder heads and the intake / exhaust
+// manifolds. Stand, UI and camera rigs land in the following commits;
+// everything visual here is procedural (see src/render/materials.js).
 import * as THREE from 'three';
 import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
 import { createCranktrain } from './render/cranktrain.js';
 import { createValvetrain } from './render/valvetrain.js';
 import { createHeads } from './render/heads.js';
+import { createManifolds } from './render/manifolds.js';
 import { createEngineState } from './engine/animation.js';
+import { SPEC, bankOut, bankUp } from './engine/spec.js';
 
 const container = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
@@ -72,11 +74,13 @@ const valvetrain = createValvetrain(materials);
 engine.add(valvetrain.group);
 const heads = createHeads(materials);
 engine.add(heads.group);
+const manifolds = createManifolds(materials);
+engine.add(manifolds.group);
 
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 3000);
 camera.up.set(0, 0, 1); // world is Z-up (see src/engine/spec.js); keep the deck vertical in frame
 camera.position.set(84.4, -117.6, 104.5);
-camera.lookAt(-2.8, 1.5, 8.1); // swept numerically: whole engine uncropped, heads + valvetrain framed
+camera.lookAt(-3.0, 1.8, 8.6); // swept numerically: block, heads, valvetrain + manifolds uncropped
 
 let lastT = performance.now();
 let frameCount = 0;
@@ -151,7 +155,10 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.6-heads',
+  version: 'v8-0.7-manifolds',
+  SPEC,
+  bankOut,
+  bankUp,
   THREE,
   renderer,
   scene,
@@ -161,6 +168,7 @@ window.__v8 = {
   cranktrain,
   valvetrain,
   heads,
+  manifolds,
   state,
   start: () => state.start(),
   stop: () => state.stop(),

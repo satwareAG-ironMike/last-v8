@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+const ZAXIS = new THREE.Vector3(0, 0, 1);
 
 /** Rounded rectangle Shape centred on the local origin. */
 export function roundedRectShape(w, h, r) {
@@ -112,7 +113,11 @@ export function cylinderBetween(a, b, r, radial = 20, open = false) {
   const vb = new THREE.Vector3(b.x ?? b[0], b.y ?? b[1], b.z ?? b[2]);
   const mid = va.clone().add(vb).multiplyScalar(0.5);
   const len = va.distanceTo(vb);
-  const g = new THREE.CylinderGeometry(r, r, len, radial, 1, open);
+  // Tessellate along the length: a 1-segment cylinder only carries vertices at
+  // its two end rings, so any vertex-measured clearance or contact test against
+  // a long tube would measure mostly empty space instead of its side surface.
+  const segs = Math.max(1, Math.round(len / 1.5));
+  const g = new THREE.CylinderGeometry(r, r, len, radial, segs, open);
   g.applyQuaternion(alignYTo(vb.clone().sub(va)));
   g.translate(mid.x, mid.y, mid.z);
   return g;
@@ -225,8 +230,13 @@ export function springGeometry(radius, length, coils, wireR, samplesPerCoil = 22
 export function weldBead(curve, t, r, tube = 0.22) {
   const p = curve.getPointAt(t);
   const tan = curve.getTangentAt(t);
+  // A weld bead is a hoop AROUND the tube it joins: TorusGeometry's ring lies in
+  // its local XY plane, so its hole axis - the axis the hoop must follow - is
+  // local Z. Aligning local Y to the tangent instead (the usual cylinder helper)
+  // tips the hoop into a plane containing the tube, which makes it stab into the
+  // part behind the joint instead of encircling the joint.
   const g = new THREE.TorusGeometry(r, tube, 8, 26);
-  g.applyQuaternion(alignYTo(tan));
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(ZAXIS, tan));
   g.translate(p.x, p.y, p.z);
   return g;
 }

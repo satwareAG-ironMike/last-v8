@@ -115,6 +115,84 @@ export const SPEC = {
     coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
   },
 
+  // ---- intake + exhaust topology (pinned by test/manifolds.test.mjs) ----
+  // All bank-local: `along` up the bore axis, `out` outboard away from the V.
+  // The block body bulges to out 12.24 at mid-height (measured, tmp/block-envelope.mjs);
+  // the head casting reaches out 7.95 at its port bulkheads and -8.13 at the cam bosses.
+  // Clearance is not decoration here: the voxel shell test measures every tube
+  // vertex against the real block/head/valvetrain/cranktrain meshes, and a 1 cm
+  // shell inflates an obstacle by up to half a cell, so the design keeps
+  // >= 1.2 cm of real air everywhere the pipework runs beside the engine.
+  manifold: {
+    // ---- exhaust: 4-into-1 header per bank, outboard ----
+    exFlangeT: 0.7, // flange plate standing on the head outboard stay face (out 7.00)
+    exFlangeX: 1.55, // flange half width in x (the stay is 1.7, so 0.15 all round)
+    exFlangeA0: 24.4,
+    exFlangeA1: 29.6, // the stay face spans 24.25..30: the flange lands inside it
+    exFlangeR: 0.35, // cast corner radius of the flange plate
+    exPortR: 0.95, // port bore through flange and neck, coaxial with the seat
+    exNeckR: 1.35, // hollow port neck boss standing on the flange
+    exNeckT: 1.9, // neck length along the port axis; the primary butts onto it
+    // Flange bolt pattern, bank-local offsets in `along` from the port axis.
+    // The renderer drills these holes and places exactly these bolts, so the
+    // count and the spacing are load-bearing, not decoration.
+    boltOffsetsAlong: [1.7, -1.7],
+    boltHoleR: 0.36,
+    exPrimaryR: 1.05, // 4-into-1 primary tube
+    // Pair merge sits exactly midway between its two cylinder stations, so all
+    // four primaries travel the same 5.5 cm in x and come out the same length:
+    // (16.5 + 5.5) / 2 = 11, mirror -11.
+    exMergeX: 11.0,
+    exPairR: 1.5, // pair outlet: r^2 2.25 >= 2 primaries 2 x 1.1025 = 2.205
+    // A merged collector has to pass the flow of ALL four primaries, so its
+    // area is sized against 4 x the primary area, not against one of them:
+    // 2.15^2 = 4.62 >= 4 x 1.05^2 = 4.41.
+    exCollectorR: 2.15,
+    exOutletR: 2.7, // bolt-on outlet flange disc at the collector end
+    exOutletT: 0.9,
+    shieldOut0: 17.6, // heat shield: outboard of every primary tube surface (15.25)
+    shieldOut1: 18.2,
+    shieldA0: 14.5, // shield span in along: starts outboard of the collector
+    shieldA1: 30.0,
+    shieldXFront: [9.5, 18.5], // wide enough to cover both primaries of its pair
+    shieldXAft: [-18.5, -9.5],
+    shieldStayR: 0.35, // stand-off bracket from the clamp band up to the shield
+    // Grip points along the two primaries a shield covers: the outer cylinder's
+    // tube passes under the shield early, the inner cylinder's only near its
+    // merge end, where its blended x reaches the shield footprint.
+    clampBandT: [0.35, 0.8],
+    clampBandR: 1.15, // band ring radius around the 1.05 primary
+    clampBandTube: 0.35,
+    // ---- intake: 4 runners into one plenum hanging in the V ----
+    inFlangeT: 0.7, // intake flange plate standing on the head inboard face
+    inFlangeX: 1.55,
+    inFlangeA0: 24.4,
+    inFlangeA1: 29.6,
+    inFlangeR: 0.35,
+    inPortR: 1.0, // intake port bore: matches the 4.6 intake valve disc seat
+    inNeckR: 1.45, // hollow intake port neck boss
+    inNeckT: 1.9,
+    inRunnerR: 1.2, // intake runner tube
+    // The plenum hangs in the V, inboard of the cam bosses (the boss OD reaches
+    // |out| = 5.28 + 2.85 = 8.13 measured), so its outboard wall sits at -12.5:
+    // 4.4 cm of real air past the whole casting.
+    plenumOut0: -19.5,
+    plenumOut1: -12.5,
+    plenumA0: 30.5,
+    plenumA1: 37.5,
+    plenumX: 22.0, // half length: 6.6 cm clear of the 28.6 sprocket band
+    plenumR: 1.4, // cast fillet of the plenum bar
+    railAlong: 28.0, // fuel rail rides below + inboard of the plenum, out of its way
+    railOut: -20.5,
+    railR: 0.62,
+    railX: 20.0,
+    injR: 0.5, // injector body from the rail up-outboard into its own runner
+    bracketX: [18.0, 19.2], // rail brackets cast into the plenum bar, hugging the rail
+    bracketA: 1.2,     // bracket reach beside the rail in `along`
+    bracketDrop: 1.1,  // how far below the rail axis its lower face sits
+    bracketBite: 0.9,  // how deep it is cast into the plenum bar / starts into it
+  },
+
   valves: {
     maxLift: 1.2,
     // Cycle angles in CRANK degrees, c = 0 at power TDC:
