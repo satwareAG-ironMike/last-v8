@@ -13,6 +13,7 @@ import { createManifolds } from './render/manifolds.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
+import { createViewControls } from './ui/viewControls.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
 
 const container = document.getElementById('viewport');
@@ -93,6 +94,14 @@ const camera = new THREE.PerspectiveCamera(SPEC.view.fov, window.innerWidth / wi
 const rig = createCameraRig(camera);
 rig.update(0); // land the camera on the published home pose before the first render
 
+// CUTAWAY / EXPLODED VIEW / ASSEMBLE / PART INSPECTION. The laws (section plane,
+// fan-out chain, hoist, framing) all live in src/engine/view.js; this is the one
+// place they are applied to the live scene. The stand is passed because the hoist
+// is derived from the hardware that actually grips the casting, measured not
+// declared. The view writes engine.position.z and wrapper offsets only - the
+// animation above (state.theta -> cranktrain/valvetrain) is never touched.
+const view = createViewControls({ engine, materials, rig, camera, scene, stand: stand.group });
+
 // --- input: mouse orbit, wheel zoom, WASD + QE walk, R = RESET CAMERA --------
 // Every input is a GOAL for the rig; the loop chases it, which is what makes the
 // motion smooth and frame-rate independent (src/ui/cameraRig.js).
@@ -101,23 +110,37 @@ const keys = new Set();
 let dragging = false;
 let lastPx = 0;
 let lastPy = 0;
+let travel = 0; // how far this press has slid; a press that never slid is a click
+const CLICK_SLOP_PX = 6;
 
 canvas.addEventListener('pointerdown', (e) => {
   dragging = true;
+  travel = 0;
   lastPx = e.clientX;
   lastPy = e.clientY;
   canvas.setPointerCapture?.(e.pointerId);
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!dragging) return;
-  rig.orbit(e.clientX - lastPx, e.clientY - lastPy);
+  const dx = e.clientX - lastPx;
+  const dy = e.clientY - lastPy;
+  travel += Math.hypot(dx, dy);
+  rig.orbit(dx, dy);
   lastPx = e.clientX;
   lastPy = e.clientY;
 });
 const endDrag = () => {
   dragging = false;
 };
-canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointerup', (e) => {
+  // A press that never travelled is a CLICK: point at a part and PART INSPECTION
+  // selects it. A press that travelled was an orbit, and orbiting is not selecting.
+  const clicked = dragging && travel <= CLICK_SLOP_PX;
+  dragging = false;
+  if (!clicked) return;
+  const hit = view.pickAt(e.clientX, e.clientY, canvas.getBoundingClientRect());
+  if (hit) statusEl.textContent = `inspecting ${hit.label} - frame range ${hit.range} cm`;
+});
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('pointerleave', endDrag);
 
@@ -175,12 +198,19 @@ function loop() {
   valvetrain.update(state.theta);
   const w = readKeys();
   if (w.fwd || w.strafe || w.rise) rig.walk(w, dt); // held keys walk every frame
+  view.update(dt); // eases the exploded view and keeps the section on the hoisted engine
   rig.update(dt); // writes the camera pose the renderer is about to use
   renderFrame();
   if (frameCount % 30 === 0) {
-    statusEl.textContent = state.running
+    const vs = view.state();
+    const tags = [];
+    if (vs.cutaway) tags.push('cutaway');
+    if (vs.fraction > 0.001) tags.push(`exploded ${(vs.fraction * 100).toFixed(0)}%`);
+    if (vs.inspected) tags.push(`inspecting ${vs.inspected}`);
+    const suffix = tags.length ? ` - ${tags.join(' - ')}` : '';
+    statusEl.textContent = (state.running
       ? `${state.rpm} rpm - crank ${state.theta.toFixed(0)}°${state.slowmo < 1 ? ` - slowmo ${state.slowmo}` : ''}`
-      : `engine stopped - crank ${state.theta.toFixed(0)}°`;
+      : `engine stopped - crank ${state.theta.toFixed(0)}°`) + suffix;
   }
   requestAnimationFrame(loop);
 }
@@ -234,7 +264,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.9-camera',
+  version: 'v8-0.10-view',
   SPEC,
   bankOut,
   bankUp,
@@ -251,6 +281,7 @@ window.__v8 = {
   manifolds,
   stand,
   state,
+  view,
   start: () => state.start(),
   stop: () => state.stop(),
   setRpm: (v) => state.setRpm(v),
@@ -258,9 +289,34 @@ window.__v8 = {
   orbitBy: (dx, dy) => rig.orbit(dx, dy),
   zoomBy: (notches) => rig.zoom(notches),
   walkBy: (o, dt) => rig.walk(o, dt),
-  focusPart: (point, range) => rig.focusOn(point, range),
+  focusCameraOn: (point, range) => rig.focusOn(point, range),
   resetCamera: () => rig.reset(),
   cameraPose: () => rig.state(),
+  // --- CUTAWAY / EXPLODED VIEW / ASSEMBLE / PART INSPECTION ------------------
+  cutaway: (on) => view.setCutaway(on),
+  isCutaway: () => view.isCutaway(),
+  explode: () => view.explode(),
+  assemble: () => view.assemble(),
+  inspect: (name) => view.focusPart(name),
+  clearInspect: () => view.clearInspect(),
+  inspectables: () => view.inspectables(),
+  pickPart: (x, y) => view.pickAt(x, y, canvas.getBoundingClientRect()),
+  viewState: () => view.state(),
+  explodedBounds: () => view.explodedBounds(),
+  stepView: (dt) => view.update(dt),
+  /** Run the easing to rest at a fixed dt: the headless gates need a settled
+   * assembly, not one still in flight when the shutter opens. The threshold is
+   * finer than the view's own 1e-6 snap-to-zero, because ASSEMBLE is only truly
+   * finished once the explode wrappers have been detached. */
+  settleView: () => {
+    let f = view.state().fraction;
+    for (let i = 0; i < 900; i++) {
+      f = view.update(1 / 60);
+      const st = view.state();
+      if (Math.abs(st.goal - f) < 1e-9 && (st.goal !== 0 || st.moved === 0)) break;
+    }
+    return f;
+  },
   frameCount: () => frameCount,
   grabFrame,
 };
