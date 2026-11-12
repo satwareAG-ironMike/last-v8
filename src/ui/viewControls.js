@@ -326,6 +326,7 @@ export function createViewControls(ctx) {
   }
 
   let inspected = null;
+  let frameRange = null; // the range the last inspection commanded the rig to take
   let selection = null;
   const clearSelection = () => {
     if (selection) {
@@ -387,6 +388,7 @@ export function createViewControls(ctx) {
     if (!obj) return null;
     const fit = framingFor(name);
     rig.focusOn(fit.anchor, fit.range); // the anchor is inside the walk volume
+    frameRange = fit.range; // published: what this inspection asked the rig for
     clearSelection();
     // A UNIT box, scaled to the part: the outline then follows the member through a
     // separation and a collapse (see update()). A box geometry baked at the size the
@@ -528,6 +530,7 @@ export function createViewControls(ctx) {
   const clearInspect = () => {
     clearSelection();
     inspected = null;
+    frameRange = null;
     return inspected;
   };
 
@@ -555,6 +558,7 @@ export function createViewControls(ctx) {
       goal,
       lift,
       inspected,
+      frameRange,
       moved: wrappers.size,
       engineZ: engine.position.z,
     }),

@@ -591,6 +591,11 @@ test('inspection while exploded frames the part where the chain put it', (t) => 
     assert.ok(Math.abs(r.frameRadius - anchorSphere) < 0.02, `${name}: frameRadius ${r.frameRadius} vs anchor sphere ${anchorSphere.toFixed(2)}`);
     assert.ok(Math.abs(r.range - framingRange(anchorSphere)) < 0.05, `${name}: range ${r.range} is not the framing law for the anchor sphere ${anchorSphere.toFixed(2)}`);
     assert.ok(r.range >= V.distMin - EPS && r.range <= V.distMax + EPS, `${name}: range ${r.range} outside the rig limits`);
+    // and it is PUBLISHED: the rig is aimed by a number the UI can read back, so a
+    // control can be checked against what it commanded instead of against a guess
+    assert.ok(Math.abs(view.state().frameRange - r.range) < 0.05, `${name}: state().frameRange ${view.state().frameRange} is not the range this inspection framed at (${r.range})`);
+    rig.update(0);
+    assert.ok(Math.abs(rig.state().dist - view.state().frameRange) < 0.05, `${name}: the rig stands at ${rig.state().dist}, the published framing range is ${view.state().frameRange}`);
     // the anchor sphere is what a frustum contains, so it is never smaller than
     // the part's own bounding sphere
     assert.ok(r.frameRadius >= r.radius - EPS, `${name}: anchor sphere ${r.frameRadius} smaller than the part radius ${r.radius}`);
@@ -698,6 +703,8 @@ test('inspection: the outline travels with the part through a separation and a c
   const r = view.focusPart(name);
   assert.ok(r, `${name} did not resolve to an inspection`);
   assert.equal(view.state().inspected, name);
+  assert.ok(Number.isFinite(view.state().frameRange), 'an inspection framed without publishing its range');
+  assert.ok(Math.abs(view.state().frameRange - r.range) < 0.05, `state().frameRange ${view.state().frameRange} vs the fit range ${r.range}`);
   const atSelect = matched('just selected, assembled engine');
   // ASSERTING SCENE OBJECTS AS SCALARS, on purpose. `assert.equal(outline(), null)`
   // or `assert.equal(outline().parent, scene)` looks harmless, but when such an
@@ -745,6 +752,7 @@ test('inspection: the outline travels with the part through a separation and a c
   assert.equal(view.clearInspect(), null);
   assert.equal(outlineCount(), 0, 'PART INSPECTION off must remove the outline');
   assert.equal(view.state().inspected, null);
+  assert.equal(view.state().frameRange, null, 'CLEAR left a framing range published after the inspection is gone');
   assert.equal(view.state().moved, 0, 'inspection must never leave explode wrappers behind');
   t.diagnostic(`outline followed ${name} from ${atSelect.centre.toArray().map((n) => n.toFixed(1))} to ${atFull.centre.toArray().map((n) => n.toFixed(1))} (${drift.toFixed(1)} cm) and back`);
 });
