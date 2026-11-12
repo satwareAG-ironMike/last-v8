@@ -80,7 +80,7 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ## Child DOX Index
 
-No child AGENTS.md files exist yet (scanned 2026-11-12). Current durable docs at root: `README.md` (usage, structure, verification commands), `GATES.md` (evidence ledger, gate-sig discipline). Candidate child scopes if they ever grow their own rules: `src/` (engine/render/ui law), `test/` (gate harness), `scripts/` (serve + ledger audit tools). Create a child doc only when such a scope gains rules not already owned here.
+No child AGENTS.md files exist yet (scanned 2026-11-12). Current durable docs at root: `README.md` (usage, structure, session statistics, verification commands), `GATES.md` (evidence ledger, gate-sig discipline), `HISTORY.md` (origin and build story), `LICENSE` (MIT, Michael Wegener / satware AG), `specs/deploy.md` (canonical deploy facts the site sync pins against - layout changes must update it in the same PR). Workflow: work lands on `main` only via PR with a green `test` check; the `v1.0.0` tag is the site sync's provenance anchor. Candidate child scopes if they ever grow their own rules: `src/` (engine/render/ui law), `test/` (gate harness), `scripts/` (serve + ledger audit tools). Create a child doc only when such a scope gains rules not already owned here.
 
 ## Honesty
 
