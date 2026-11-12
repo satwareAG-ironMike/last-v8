@@ -26,8 +26,12 @@ A hash whose run file is gone stays as it is - then the recorded hash IS the rec
 row the base carries it requires the row title line to be present verbatim and every
 committed indented claim line to survive as a PREFIX of its current line (that is exactly
 what a filename insertion does), it allows the declared head-matter edits and added claim
-lines, it allows an open stub to be filled later, and it fails if any hash or sig the
-base recorded is missing here, or if a row title or claim line was rewritten.
+lines, and it fails if any hash or sig the base recorded is missing here, or if a row title
+or claim line was rewritten. One exception is measured rather than open-ended: a row the
+base left as an open stub may have its box closed by a later commit that earned it, and the
+only difference allowed in that title line is `[ ]` becoming `[x]`. The base carries exactly
+one such row, `prove` asserts that it is G6, and the box change exempts nothing else in the
+row.
 
 Usage:
   python3 scripts/ledger-name-evidence.py            dry run of the naming on the working file
@@ -123,6 +127,14 @@ IDENTITY_ANCHOR = "  SAME POSE SAME PICTURE:"
 
 ROW_HEAD = re.compile(r"^- \[[ x]\] (G[0-9a-z]+):")
 STUB_EVIDENCE = "  EVIDENCE: pending"
+
+# The one title change a later commit is allowed to make. `prove` compares row titles
+# verbatim, and the only row a later commit earns is a row that was an OPEN STUB in the
+# base: its box may go from `[ ]` to `[x]`, and nothing else in the title line may move.
+# The base carries exactly one such row, so this is measured, not open-ended: the count is
+# asserted below, and every other title difference still fails the proof. A closed box
+# never exempts the row's CHECK / EXPECT lines or its earlier claim lines, which stay under
+# the same prefix rule, nor the rule that no hash or sig of the base may go missing.
 
 # Two rows cite a solver script by its scratch-dir path. The scratch dir is gitignored and
 # disposable, so those scripts are not in the repo - a reviewer following the citation would
@@ -246,13 +258,19 @@ def prove(work):
 
     # 2. every row the base carries is still here, title verbatim, claims preserved
     kept_lines = 0
+    stubs_in_base = sorted(r for r, b in drows.items() if STUB_EVIDENCE in b)
+    closed_stubs = []
     for rid, block in drows.items():
         if rid not in wrows:
             problems.append(f"row {rid}: its title line is gone")
             continue
         wb = wrows[rid]
         if wb[0] != block[0]:
-            problems.append(f"row {rid}: title rewritten\n  was: {block[0][:120]}\n  now: {wb[0][:120]}")
+            earned = STUB_EVIDENCE in block and wb[0] == "- [x] " + block[0][len("- [ ] "):]
+            if not earned:
+                problems.append(f"row {rid}: title rewritten\n  was: {block[0][:120]}\n  now: {wb[0][:120]}")
+            else:
+                closed_stubs.append(rid)
         for line in block[1:]:
             if not line.strip():
                 continue
@@ -278,8 +296,15 @@ def prove(work):
     print(f"committed claim lines of the base that survive as a prefix here: {kept_lines}")
     print(f"committed hashes/sigs of the base still in this file: "
           f"{len(re.findall(r'[0-9a-f]{16,64}', base)) - sum(lost.values())}/{len(re.findall(r'[0-9a-f]{16,64}', base))}")
+    if stubs_in_base != ["G6"]:
+        problems.append(f"the declared stub-close rule assumes the base carries exactly one open stub row, G6; it carries {stubs_in_base}")
+    for rid in closed_stubs:
+        if STUB_EVIDENCE not in drows[rid]:
+            problems.append(f"row {rid}: a title box was closed on a row the base did not leave open")
     if added_rows:
         print(f"rows added since the base: {added_rows}")
+    print(f"open stub rows of {BASE}: {stubs_in_base} - closed here: {sorted(closed_stubs) or 'none yet'} "
+          f"(a close may change the box and nothing else in the title)")
     if problems:
         print(f"\nPROOF FAILED: {len(problems)} undeclared edit(s)")
         for p in problems:

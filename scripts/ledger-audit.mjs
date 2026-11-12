@@ -8,19 +8,25 @@ import { createHash } from 'node:crypto';
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 
-// (1) index every scratch file the harness ever wrote, by content hash
+// (1) index every scratch file the harness ever wrote, by content hash. Recursed, because
+// the driver keeps its per-case outputs in tmp/mutate-panel/ and a row that cites one of
+// those should resolve the same way a top-level citation does.
 const byHash = new Map();
 const byName = new Map();
-for (const dir of ['tmp', 'shots']) {
+const walk = (dir) => {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
-    if (!ent.isFile()) continue; // tmp/mutate-panel/ holds the driver's scratch copies
-    const f = ent.name;
-    const p = `${dir}/${f}`;
+    const p = `${dir}/${ent.name}`;
+    if (ent.isDirectory()) {
+      walk(p);
+      continue;
+    }
+    if (!ent.isFile()) continue;
     const h = sha(readFileSync(p));
     byHash.set(h, p);
     byName.set(p, h);
   }
-}
+};
+for (const dir of ['tmp', 'shots']) walk(dir);
 
 // (2) read the rows
 const rows = [];
