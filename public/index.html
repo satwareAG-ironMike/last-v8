@@ -53,6 +53,102 @@
       #status {
         color: #8fa8bf;
       }
+
+      /* Control panel. Amber on near-black: #e8b12a on #12161c is a 7.4:1
+         contrast ratio, and every control here is a real form element, so the
+         whole panel is keyboard operable and screen-reader labelled. */
+      #panel {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        width: 262px;
+        padding: 12px 14px 14px;
+        background: rgba(18, 22, 28, 0.92);
+        border: 1px solid #2c3641;
+        border-radius: 4px;
+        color: #cfd6de;
+        font-size: 11px;
+        line-height: 1.45;
+        letter-spacing: 0.06em;
+      }
+      #panel h2 {
+        margin: 0 0 10px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #e8b12a;
+        letter-spacing: 0.16em;
+      }
+      #panel .row {
+        display: flex;
+        gap: 6px;
+        margin: 0 0 10px;
+      }
+      #panel button {
+        flex: 1 1 auto;
+        padding: 7px 6px;
+        background: #1b232c;
+        border: 1px solid #3a4756;
+        border-radius: 3px;
+        color: #cfd6de;
+        font: inherit;
+        letter-spacing: 0.08em;
+        cursor: pointer;
+      }
+      #panel button:hover {
+        border-color: #e8b12a;
+        color: #f2e6c8;
+      }
+      #panel button[data-on='1'] {
+        background: #3a2f12;
+        border-color: #e8b12a;
+        color: #e8b12a;
+      }
+      #panel button:focus-visible,
+      #panel input:focus-visible,
+      #panel select:focus-visible {
+        outline: 2px solid #e8b12a;
+        outline-offset: 1px;
+      }
+      #panel label {
+        display: block;
+        margin: 0 0 4px;
+        color: #8fa8bf;
+        text-transform: uppercase;
+      }
+      #panel output {
+        float: right;
+        color: #e8b12a;
+      }
+      #panel input[type='range'] {
+        width: 100%;
+        accent-color: #e8b12a;
+        margin: 0 0 2px;
+      }
+      #panel select {
+        width: 100%;
+        padding: 6px;
+        margin: 0 0 8px;
+        background: #1b232c;
+        border: 1px solid #3a4756;
+        border-radius: 3px;
+        color: #cfd6de;
+        font: inherit;
+      }
+      #panel .note {
+        margin: 0 0 10px;
+        color: #6d8296;
+        font-size: 10px;
+      }
+      #panel hr {
+        margin: 12px 0 10px;
+        border: 0;
+        border-top: 1px solid #2c3641;
+      }
+      #cycle-out {
+        color: #8fa8bf;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+      }
     </style>
   </head>
   <body>
@@ -60,7 +156,41 @@
     <div id="hud">
       <strong>SATWARE TEST CELL</strong>
       <span>CROSS-PLANE V8 - 90 DEG DOHC - MULE 01</span>
-      <span id="status">booting...</span>
+      <span id="status" aria-live="polite">booting...</span>
+    </div>
+    <div id="panel">
+      <h2>TEST STAND CONTROLS</h2>
+      <div class="row">
+        <button id="btn-run" type="button" aria-pressed="false">START</button>
+        <button id="btn-reset" type="button">RESET CAMERA</button>
+      </div>
+      <label for="rpm">RPM CONTROL <output id="rpm-out" for="rpm">-</output></label>
+      <input id="rpm" type="range" min="0" max="4000" step="25" value="1600" />
+      <p class="note">0 to 4000 rpm. The limits are the simulation's own.</p>
+      <label for="slowmo">Slow motion</label>
+      <select id="slowmo">
+        <option value="1" data-name="1">1x</option>
+        <option value="0.25" data-name="1/4">1/4</option>
+        <option value="0.1" data-name="1/10">1/10</option>
+        <option value="0.02" data-name="1/50">1/50</option>
+      </select>
+      <div class="row">
+        <button id="btn-cut" type="button" aria-pressed="false">CUTAWAY</button>
+        <button id="btn-explode" type="button" aria-pressed="false">EXPLODED</button>
+        <button id="btn-assemble" type="button" aria-pressed="true">ASSEMBLE</button>
+      </div>
+      <label for="part-select">Part inspection</label>
+      <select id="part-select" size="1"></select>
+      <div class="row">
+        <button id="btn-inspect" type="button" aria-pressed="false">INSPECT</button>
+        <button id="btn-clear" type="button">CLEAR</button>
+      </div>
+      <p class="note">
+        Click a part in the view to inspect it. Drag to orbit, wheel to zoom,
+        W A S D to walk, Q E up and down, Shift to boost, R to reset the camera.
+      </p>
+      <hr />
+      <div id="cycle-out" aria-live="off"></div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

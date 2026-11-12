@@ -13,6 +13,7 @@ import { createManifolds } from './render/manifolds.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
+import { createPanel } from './ui/panel.js';
 import { createViewControls } from './ui/viewControls.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
 
@@ -102,6 +103,30 @@ rig.update(0); // land the camera on the published home pose before the first re
 // animation above (state.theta -> cranktrain/valvetrain) is never touched.
 const view = createViewControls({ engine, materials, rig, camera, scene, stand: stand.group });
 
+// The control panel (START/STOP, RPM CONTROL, slow motion, CUTAWAY, EXPLODED VIEW,
+// ASSEMBLE, PART INSPECTION, RESET CAMERA). It holds no state of its own: every
+// control writes through the published setters and sync() repaints from them, so a
+// widget can never disagree with the simulation. The status line is shared: a control
+// writes a confirmation, and the loop below keeps writing the canonical readout that
+// names the live state.
+// The line is held by whoever wrote it last: a confirmation owns it for its window, and
+// the canonical readout is written the frame its own text changes rather than on a fixed
+// 30 frame tick. A tick is a phase, not a freshness rule: while the engine ran the HUD
+// could name a crank angle up to 30 frames behind the CYL 1 line sitting next to it, and
+// at 1800 rpm (180 crank degrees a frame) that is a whole half-cycle of disagreement.
+// The G7 cutaway pair exposed it in the picture: the HUD read "crank 540°" beside
+// "CYL 1 POWER 0° of 720°".
+const STATUS_HOLD_MS = 500; // the same window the old 30 frame tick could take at most
+let statusShown = ''; // the exact text the line is carrying
+let statusUntil = 0; // until when a control confirmation owns the line
+
+const say = (msg) => {
+  statusEl.textContent = msg;
+  statusShown = msg;
+  statusUntil = performance.now() + STATUS_HOLD_MS;
+};
+const panel = createPanel({ state, view, rig, say });
+
 // --- input: mouse orbit, wheel zoom, WASD + QE walk, R = RESET CAMERA --------
 // Every input is a GOAL for the rig; the loop chases it, which is what makes the
 // motion smooth and frame-rate independent (src/ui/cameraRig.js).
@@ -139,7 +164,9 @@ canvas.addEventListener('pointerup', (e) => {
   dragging = false;
   if (!clicked) return;
   const hit = view.pickAt(e.clientX, e.clientY, canvas.getBoundingClientRect());
-  if (hit) statusEl.textContent = `inspecting ${hit.label} - frame range ${hit.range} cm`;
+  if (!hit) return;
+  panel.selectPart(hit.name); // the menu names whatever the ray actually resolved
+  statusEl.textContent = `inspecting ${hit.label} - frame range ${hit.range} cm`;
 });
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('pointerleave', endDrag);
@@ -200,17 +227,22 @@ function loop() {
   if (w.fwd || w.strafe || w.rise) rig.walk(w, dt); // held keys walk every frame
   view.update(dt); // eases the exploded view and keeps the section on the hoisted engine
   rig.update(dt); // writes the camera pose the renderer is about to use
+  panel.sync(); // widgets repaint from the authorities: rpm, run state, view state, cycle
   renderFrame();
-  if (frameCount % 30 === 0) {
+  if (now >= statusUntil) {
     const vs = view.state();
     const tags = [];
     if (vs.cutaway) tags.push('cutaway');
     if (vs.fraction > 0.001) tags.push(`exploded ${(vs.fraction * 100).toFixed(0)}%`);
     if (vs.inspected) tags.push(`inspecting ${vs.inspected}`);
     const suffix = tags.length ? ` - ${tags.join(' - ')}` : '';
-    statusEl.textContent = (state.running
+    const want = (state.running
       ? `${state.rpm} rpm - crank ${state.theta.toFixed(0)}°${state.slowmo < 1 ? ` - slowmo ${state.slowmo}` : ''}`
       : `engine stopped - crank ${state.theta.toFixed(0)}°`) + suffix;
+    if (want !== statusShown) {
+      statusShown = want;
+      statusEl.textContent = want;
+    }
   }
   requestAnimationFrame(loop);
 }
@@ -317,6 +349,8 @@ window.__v8 = {
     }
     return f;
   },
+  panel,
+  panelMenu: () => panel.menu.map((p) => p.name),
   frameCount: () => frameCount,
   grabFrame,
 };
