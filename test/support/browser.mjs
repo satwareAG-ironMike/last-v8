@@ -62,14 +62,15 @@ export class Cdp {
     }
     for (const fn of this.listeners.get(msg.method) ?? []) fn(msg.params ?? {});
   }
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 30000) {
     const id = ++this.id;
     return new Promise((res, rej) => {
       this.pending.set(id, { res, rej });
       this.ws.send(JSON.stringify({ id, method, params }));
       const t = setTimeout(() => {
-        if (this.pending.delete(id)) rej(new Error(`CDP timeout: ${method}`));
-      }, 30000);
+        if (this.pending.delete(id))
+          rej(new Error(`CDP timeout: ${method} did not answer within ${timeoutMs} ms`));
+      }, timeoutMs);
       t.unref();
     });
   }
@@ -102,6 +103,7 @@ export async function withPage(opts = {}, fn) {
 
   const watchdog = setTimeout(() => {
     console.error('WATCHDOG EXPIRED: the browser gate never finished');
+    teardown();
     process.exit(1);
   }, watchdogMs);
   watchdog.unref();
@@ -113,6 +115,22 @@ export async function withPage(opts = {}, fn) {
   let cdp = null;
   const errors = [];
   const warnings = [];
+
+  /**
+   * Puts the browser, the DevTools socket, the server and the throw-away profile back
+   * in the box. The watchdog and the finally share ONE teardown: process.exit() skips
+   * finally blocks, and a gate that times out without killing its headless Chromium
+   * leaves a SwiftShader gpu-process (~390 MB) burning a core for every gate that runs
+   * afterwards - measured consequence: load average 25 on 16 cores, and the next gate
+   * timed out because the machine was busy (tmp/g6-run11.out).
+   */
+  const teardown = () => {
+    clearTimeout(watchdog);
+    if (cdp) cdp.close();
+    if (browser && browser.exitCode === null) browser.kill('SIGKILL');
+    server.close();
+    rmSync(profile, { recursive: true, force: true });
+  };
 
   try {
     browser = spawn(
@@ -188,8 +206,14 @@ export async function withPage(opts = {}, fn) {
     await cdp.send('Page.navigate', { url: pageUrl });
     await loaded;
 
-    const evalJs = async (expression) => {
-      const r = await cdp.send('Runtime.evaluate', { expression, returnByValue: true });
+    const evalJs = async (expression, opts = {}) => {
+      // awaitPromise: the gates read published constants out of the app's own
+      // modules, which needs a dynamic import to resolve before the value comes back
+      const r = await cdp.send(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: true },
+        opts.timeoutMs ?? 30000
+      );
       if (r.exceptionDetails)
         throw new Error(`eval failed: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}`);
       return r.result.value;
@@ -207,12 +231,12 @@ export async function withPage(opts = {}, fn) {
       return Buffer.from(shot.data, 'base64');
     };
 
-    return await fn({ evalJs, capture, pageUrl, errors, warnings, server });
+    // `cdp` is handed over on purpose: the control gate (G6) drives the page through
+    // raw DevTools INPUT events (mouse press/move/release, key up/down, wheel), which
+    // is what makes "every control functional" a claim about the real UI rather than
+    // about a convenience API called from the test.
+    return await fn({ evalJs, capture, pageUrl, errors, warnings, server, cdp });
   } finally {
-    clearTimeout(watchdog);
-    if (cdp) cdp.close();
-    if (browser && browser.exitCode === null) browser.kill('SIGKILL');
-    server.close();
-    rmSync(profile, { recursive: true, force: true });
+    teardown();
   }
 }
