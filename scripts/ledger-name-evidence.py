@@ -124,6 +124,29 @@ IDENTITY_ANCHOR = "  SAME POSE SAME PICTURE:"
 ROW_HEAD = re.compile(r"^- \[[ x]\] (G[0-9a-z]+):")
 STUB_EVIDENCE = "  EVIDENCE: pending"
 
+# Two rows cite a solver script by its scratch-dir path. The scratch dir is gitignored and
+# disposable, so those scripts are not in the repo - a reviewer following the citation would
+# find nothing. This declares, next to each citation, what IS committed and checkable
+# instead. The cited lines themselves are left exactly as they were measured.
+SCRATCH_CLARIFY = [
+    ("/tmp/opencode/last-v8/frame-check.mjs --solve",
+     "  SCRATCH CITATION (declared 2026-11-12): `frame-check.mjs` was a session scratch tool - "
+     "the scratch directory is gitignored and disposable - so the solver is not in this repo and "
+     "its `--solve` run cannot be recomputed from it. What it produced is committed: the pose on "
+     "the line above is published as `SPEC.view.homePos` / `SPEC.view.homeTarget` "
+     "(`src/engine/spec.js:262-263`), `test/camerarig.test.mjs` asserts the rig boots on that "
+     "pose and that the pose is legal under its own published pitch / range / cell / floor "
+     "limits, and G5f measures the shell landing the boot camera on it. Read the line above as "
+     "the record of what this boot pose was solved for, not as a claim needing the script."),
+    ("/tmp/opencode/last-v8/frame-check-stand.mjs --solve",
+     "  SCRATCH CITATION (declared 2026-11-12): same for `frame-check-stand.mjs` - a session "
+     "scratch tool, gitignored and gone. The union bbox and the pose it solved are committed: "
+     "`SPEC.view` (`src/engine/spec.js:261-265`) carries pos (84.4, -117.6, 104.5) and lookAt "
+     "(-1.9, 1.9, 7.9) as `homePos` / `homeTarget`, `test/camerarig.test.mjs` proves that home "
+     "pose is legal under the published pitch limit, range bounds, walkable cell and floor "
+     "guard, and G5f measures the rig putting the boot camera there."),
+]
+
 
 def git_show(rev, path="GATES.md"):
     r = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True, text=True)
@@ -171,7 +194,23 @@ def derive(base_text):
     assert base_text.count(IDENTITY_ANCHOR) == 1, "identity anchor must appear exactly once"
     t = base_text.replace(OLD_OWNS, NEW_OWNS, 1).replace(OLD_RECIPE, NEW_RECIPE + "\n\n" + HYGIENE, 1)
     t = t.replace(IDENTITY_ANCHOR, IDENTITY + IDENTITY_ANCHOR, 1)
+    t = clarify_scratch(t)
     return apply_names(t)
+
+
+def clarify_scratch(text):
+    """Insert each SCRATCH_CLARIFY note after the line that cites the gone scratch tool."""
+    out, n = [], 0
+    for line in text.split("\n"):
+        out.append(line)
+        for anchor, note in SCRATCH_CLARIFY:
+            if anchor in line:
+                out.append(note)
+                n += 1
+    scratch_notes = sum(1 for line in out if line.startswith("  SCRATCH CITATION"))
+    assert scratch_notes == len(SCRATCH_CLARIFY), \
+        f"scratch citations inserted: {scratch_notes}, declared: {len(SCRATCH_CLARIFY)}"
+    return "\n".join(out)
 
 
 def split_rows(text):
