@@ -1,7 +1,7 @@
 // Cylinder heads: two aluminium castings standing on the block deck through a
-// compressed copper head gasket. The deck rails carry the 32 head bolts and the
-// gasket clamping load; each casting carries the 28 cam bearing bosses (bore =
-// bearing OD + 0.05 running clearance), the bearing caps and clamps, four cam
+// compressed copper head gasket. The deck rails carry the 48 head bolts and the
+// gasket clamping load; each casting carries the 36 cam bearing bosses (bore =
+// bearing OD + 0.05 running clearance), the bearing caps and clamps, ten cam
 // girder bridges, the bucket guide bores, the machined spring-seat floors, the
 // spring tubes, the valve guides and the hardened seat inserts exactly on the
 // timing.js seat/axis points, plus four bolt-on cam covers whose ceiling clears
@@ -10,11 +10,11 @@
 // valvetrain actually rides on. Pinned by test/heads.test.mjs.
 //
 // Bank-local frame: `along` up the bore axis, `out` outboard (away from the V),
-// world X = crank axis. The head faces stay at |x| <= 28.55 so the cam journals
-// carry the four chain sprockets (band starts at 28.6) outside the casting.
+// world X = crank axis. The head faces stay 0.05 inboard of the sprocket band
+// so the cam journals can carry the four chain sprockets outside the casting.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { SPEC, bankPoint, bankUp, camAxisBank, HEAD_TOP_A } from '../engine/spec.js';
+import { SPEC, STATION_JOINTS_X, bankPoint, bankUp, camAxisBank, HEAD_TOP_A } from '../engine/spec.js';
 import { camAxisPoint, valveAxisDir, valveSeatPoint } from '../engine/timing.js';
 import { boxInBank, latheBank, latheX } from './parts.js';
 import { alignYTo, boltGeometry, instancedBolts } from './primitives.js';
@@ -26,14 +26,19 @@ const CAM = SPEC.cam;
 const FACE = B.deckA + H.gasketT; // 24.25 head deck face, above the compressed gasket
 const RAIL = H.railTopA; // 27.0 machined clamping plane the head bolts stand on
 const CAM_A = camAxisBank('L', 'intake')[0]; // cam axis `along`, identical for both lines
-const EDGE = 28.55; // fore/aft head faces: inboard of the sprocket band
-const BAND = SPEC.crank.sprocket.x0; // 28.6: first cam chain sprocket plane
-// The fore cam bearing (27.5 + 1.1) ends exactly at the sprocket band, so the
-// boss face IS the machined shoulder the sprocket locates against: only the
-// bearing column may reach that plane, the rest of the casting stops at EDGE.
+const BAND = SPEC.crank.sprocket.x0; // first cam chain sprocket plane
+// fore/aft head faces: 0.05 inboard of the sprocket band, so the casting never
+// enters the chain plane and the outermost bearing column still reaches it.
+const EDGE = BAND - 0.05;
+// The fore cam bearing (38.5 + 1.1) ends at the sprocket band, so the boss face
+// IS the machined shoulder the sprocket locates against: only the bearing
+// column may reach that plane, the rest of the casting stops at EDGE.
 const SHOULDER = BAND;
-const DECK_X0 = B.stations[3] - B.pitch / 2; // -22: block deck ends
-const DECK_X1 = B.stations[0] + B.pitch / 2; //  22
+const DECK_X0 = -B.stations[0] - B.pitch / 2; // block deck ends
+const DECK_X1 = B.stations[0] + B.pitch / 2;
+// The exhaust pair merges sit midway between the two stations of each pair.
+// Mid bulkheads are cast there: the two primaries of a pair run in one runner.
+const MERGE_X = B.stations.filter((_, i) => i % 2 === 1).map((s) => s + B.pitch / 2);
 const valves = ['intake', 'exhaust'];
 const ref = (bank) => SPEC.cylinders.find((c) => c.bank === bank); // the station-0 cylinder
 
@@ -69,7 +74,7 @@ function mesh(name, geometry, material, kind, userData = {}) {
   return m;
 }
 
-/** The 32 head bolts: four per cylinder, straddling the gasket band, on the rails. */
+/** Four head bolts per cylinder, straddling the gasket band, on the rails. */
 export function headBoltSpecs() {
   const specs = [];
   for (const bank of ['L', 'R']) {
@@ -83,7 +88,7 @@ export function headBoltSpecs() {
       }
     }
   }
-  return specs; // 32
+  return specs; // 4 * cylinders
 }
 
 function headCasting(bank, materials) {
@@ -100,14 +105,14 @@ function headCasting(bank, materials) {
     rib, 'rail');
 
   // 2. bulkheads: the fore/aft end walls close the casting over the end cam
-  //    bearings, the two centre webs are the exhaust port runners between the
-  //    cylinder stations - their outboard faces are the header flange planes.
-  for (const [name, x0, x1, o0, o1] of [
+  //    bearings, the mid webs are the exhaust port runners where two primaries
+  //    join - their outboard faces are the header flange planes.
+  const chimneys = [
     [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -7.95, 7.95],
     [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -7.95, 7.95],
-    [`chimney-${bank}-mid1`, 9.0, 13.0, 6.45, 7.95],
-    [`chimney-${bank}-mid2`, -13.0, -9.0, 6.45, 7.95],
-  ]) {
+    ...MERGE_X.map((mx) => [`chimney-${bank}-m${mx}`, mx - 2.0, mx + 2.0, 6.45, 7.95]),
+  ];
+  for (const [name, x0, x1, o0, o1] of chimneys) {
     add(name, boxInBank(bank, FACE, PORT_TOP, o0, o1, x0, x1, 0.3), rib, 'chimney');
   }
 
@@ -120,7 +125,7 @@ function headCasting(bank, materials) {
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
   }
 
-  // 4. cam bearing columns, 14 per bank on the cam axis line: a merged web
+  // 4. cam bearing columns, one per cam bearing on the cam axis line: a merged web
   //    (crossbar + two legs straddling the bore), the machined boss, its cap
   //    and two bearing clamps.
   for (const valve of valves) {
@@ -152,12 +157,14 @@ function headCasting(bank, materials) {
     }
 
     // 5. cam girder bridges tie adjacent bearing columns together at the cap
-    //    row - the only belt high enough to clear the 1.75 journal, at the
-    //    lobe-free x window between two cylinder stations.
-    for (const [i, [xa, xb]] of [[6.95, 15.05], [-15.05, -6.95]].entries()) {
+    //    row - the only belt high enough to clear the 1.75 journal, so it is
+    //    kept strictly inside the lobe-free x window around each interior joint
+    //    (test/heads.test.mjs proves no bridge box touches a lobe box).
+    const bridgeHalf = B.pitch / 2 - H.camLobeWidth / 2 - 0.55;
+    for (const [i, j] of STATION_JOINTS_X.entries()) {
       const s = Math.sign(O);
       add(`bridge-${bank}-${valve}-${i}`, boxInBank(bank, CAP_TOP - 0.95, CAP_TOP,
-        O + s * 1.2, O + s * 2.4, xa, xb, 0.2), rib, 'bridge');
+        O + s * 1.2, O + s * 2.4, j - bridgeHalf, j + bridgeHalf, 0.2), rib, 'bridge');
     }
   }
 
@@ -207,7 +214,7 @@ function camCover(bank, valve, materials) {
   cover.name = `cam-cover-${bank}-${valve}`;
   const O = camAxisBank(bank, valve)[1];
   const put = (name, geometry) => cover.add(mesh(name, geometry, materials.castAluminumHead, 'cover'));
-  const [x0, x1] = [-28.05, 28.05];
+  const [x0, x1] = [-(EDGE - 0.5), EDGE - 0.5]; // walls stand in from the end faces
 
   put('plate', boxInBank(bank, COVER_CEIL, HEAD_TOP_A, O - 2.75, O + 2.75, -EDGE, EDGE, 0.3));
   put('wall-out', boxInBank(bank, CAP_TOP, COVER_CEIL, O + 2.05, O + 2.75, x0, x1, 0.2));

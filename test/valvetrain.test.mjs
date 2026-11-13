@@ -62,20 +62,24 @@ const underCam = (cap, d, p) => cap.clone().sub(p).dot(d);
 
 // ---- build contract --------------------------------------------------------
 
-test('valvetrain build: 4 camshafts, 16 lobes, 16 buckets with shims, 16 valves with retainers, 16 springs', async () => {
+test('valvetrain build: 4 camshafts, 24 lobes, 24 buckets with shims, 24 valves with retainers, 24 springs', async () => {
   const { group } = await buildValvetrain();
   assert.equal(group.name, 'valvetrain');
   for (const name of camGroupNames) assert.ok(group.getObjectByName(name), `${name} missing`);
-  assert.equal(count(group, 'lobe-cyl'), 16, '16 cam lobes expected');
-  assert.equal(count(group, 'bucket-cyl'), 16 * 4, 'bucket group + cup + flange + shim per valve');
-  assert.equal(count(group, 'valve-cyl'), 16 * 4, 'valve group + head + stem + retainer per valve');
-  assert.equal(count(group, 'spring-cyl'), 16);
+  const N = SPEC.cylinders.length; // 12 valves of each kind across the engine
+  const perBank = SPEC.block.stations.length; // 6 lobes on one camshaft
+  assert.equal(N, 12);
+  assert.equal(count(group, 'lobe-cyl'), 2 * N, 'one intake and one exhaust lobe per cylinder');
+  assert.equal(count(group, 'bucket-cyl'), 2 * N * 4, 'bucket group + cup + flange + shim per valve');
+  assert.equal(count(group, 'valve-cyl'), 2 * N * 4, 'valve group + head + stem + retainer per valve');
+  assert.equal(count(group, 'spring-cyl'), 2 * N);
   assert.equal(count(group, 'camshaft-'), 4);
-  assert.equal(count(group, 'bearing-'), 28, '7 bearing journals per camshaft');
+  assert.equal(count(group, 'bearing-'), 4 * SPEC.cam.bearings.length, `${SPEC.cam.bearings.length} bearing journals per camshaft`);
   assert.equal(count(group, 'cam-sprocket-'), 4);
   let meshes = 0;
   group.traverse((o) => { if (o.isMesh) meshes += 1; });
-  assert.equal(meshes, 164, `164 solids expected (52 camtrain + 48 bucket/shim + 48 valve + 16 spring), got ${meshes}`);
+  const want = 4 * (2 + SPEC.cam.bearings.length + perBank) + 2 * N * 3 + 2 * N * 3 + 2 * N;
+  assert.equal(meshes, want, `${want} solids expected (camshaft+bearings+sprocket+lobes per cam + 3 bucket + 3 valve + 1 spring per valve), got ${meshes}`);
 });
 
 // ---- cam phasing -------------------------------------------------------------
@@ -161,7 +165,7 @@ test('lobes are machined from lobeProfileRadius: base circle, maxLift nose, cent
 
 // ---- valve schedule through the meshes --------------------------------------
 
-test('all 16 valves sit exactly on valveAxisPoint; their opening window matches the cam event exactly', async () => {
+test('all 24 valves sit exactly on valveAxisPoint; their opening window matches the cam event exactly', async () => {
   const { group, update } = await buildValvetrain();
   const d = new THREE.Vector3();
   for (let theta = 0; theta < 720; theta += 5) {
@@ -282,7 +286,7 @@ test('springs compress by exactly the valve lift, are preloaded, and never reach
 
 // ---- nothing floats apart ----------------------------------------------------
 
-test('nothing floats: continuous camshafts through 7 bearings, drive sprockets in the crank nose plane', async () => {
+test(`nothing floats: continuous camshafts through ${SPEC.cam.bearings.length} bearings, drive sprockets in the crank nose plane`, async () => {
   const { group } = await buildValvetrain();
   // Box3.expandByObject() refreshes the object's own matrix but NOT its
   // ancestors', so pose the whole tree like the renderer does before measuring.
@@ -305,7 +309,7 @@ test('nothing floats: continuous camshafts through 7 bearings, drive sprockets i
       `${name}: axis not on camAxisBank line`);
     const j = cam.getObjectByName(`camshaft-${bank}-${valve}`);
     const jbb = new THREE.Box3().setFromObject(j);
-    assert.ok(jbb.min.x < SPEC.block.stations[3] - SPEC.cam.bearingHalf && jbb.max.x > bands[3] + CS.width,
+    assert.ok(jbb.min.x < SPEC.block.stations.at(-1) - SPEC.cam.bearingHalf && jbb.max.x > bands.at(-1) + CS.width,
       `${name}: journal ${jbb.min.x}..${jbb.max.x} does not run from the aft bearing through the sprocket`);
     for (const bx of SPEC.cam.bearings) {
       const brg = cam.getObjectByName(`bearing-${bank}-${valve}-${bx}`);
@@ -320,6 +324,6 @@ test('nothing floats: continuous camshafts through 7 bearings, drive sprockets i
       Math.abs(sb.max.z - capPt.z), Math.abs(sb.min.z - capPt.z));
     assert.ok(maxR <= CS.pitchR + CS.toothH + 0.2, `${name}: sprocket radial envelope ${maxR}`);
     assert.ok(maxR >= CS.pitchR + CS.toothH * 0.4, `${name}: sprocket teeth too small`);
-    assert.equal(count(cam, 'bearing-'), 7, `${name}: 7 bearing journals expected`);
+    assert.equal(count(cam, 'bearing-'), SPEC.cam.bearings.length, `${name}: bearing journals expected`);
   }
 });

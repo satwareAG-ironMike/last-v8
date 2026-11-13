@@ -51,7 +51,7 @@ export const DECK_END_X = Math.abs(STATIONS[0]) + PITCH / 2;
 const END_X = DECK_END_X + SLAB;
 /** Nose sprocket plane; everything cam-driven hangs off this. */
 const SPROCKET_X0 = END_X + 2.3;
-const OUTER_CAM_BEARING = DECK_END_X + PITCH / 2 + SLAB; // clear of the end disc
+const OUTER_CAM_BEARING = DECK_END_X + PITCH / 2; // on the head casting's overhang past the end disc
 /** The seven main bearing journals, front -> rear: five on slab joints, two in the end discs. */
 export const MAIN_JOURNALS = [
   [STATIONS[0] + WEB_OUT - 0.05, END_X],
