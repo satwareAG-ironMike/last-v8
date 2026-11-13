@@ -27,10 +27,11 @@ import { join } from 'node:path';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Pinned crank angles the laws are measured at. 0 is TDC for cylinders 1 and 6 and BDC
-// for 4 and 7; 265 is peak exhaust lift on cylinder 1; 450 is peak intake lift on
-// cylinder 4. The others spread the four strokes over the 720 degree cycle.
-const ANGLES = [0, 90, 180, 265, 340, 450, 540, 719];
+// Pinned crank angles the laws are measured at, derived from timing.js and re-checked
+// there every run: 0 leaves cylinders 1 and 4 at top dead centre and 7 and 10 at bottom
+// dead centre; 265 is the cyl 1 exhaust lobe nose (lift 1.2); 460 is the cyl 1 intake
+// nose. The others spread the four strokes over the 720 degree cycle.
+const ANGLES = [0, 90, 180, 265, 340, 460, 540, 719];
 
 // ---- page-side: measure the rendered tree against the authority ----------------
 // No backticks inside: this whole body is inserted into a template literal below.
@@ -104,7 +105,9 @@ const MEASURE = `(async () => {
     pistonG.updateWorldMatrix(true, true);
     const cp = tm.crankPinPoint(cyl, theta);
     const pp = tm.pistonPinPoint(cyl, theta);
-    const off = cyl.bank === 'R' ? 0.7 : -0.7; // two cylinders share one crankpin: their rods sit side by side on it
+    // Two cylinders share one crankpin and their rods sit side by side on it, at the
+    // published SPEC.crank.rodOff - never a number this file remembers.
+    const off = cyl.bank === 'R' ? S.crank.rodOff : -S.crank.rodOff;
     const big = new THREE.Vector3().setFromMatrixPosition(rodG.matrixWorld);
     const small = new THREE.Vector3(0, S.rod.length, 0).applyMatrix4(rodG.matrixWorld);
     const axis = new THREE.Vector3(...v.bankUp(cyl.bank));
@@ -358,6 +361,10 @@ const MEASURE = `(async () => {
       boreRadius: S.block.boreRadius, boreStartA: S.block.boreStartA, deckA: S.block.deckA,
       stroke: S.stroke, rodLength: S.rod.length, smallEndRadius: S.rod.smallEndRadius, maxLift: V.maxLift,
       retainerGap: H.retainerGap, halfSpeedRatio: S.cam.halfSpeedRatio,
+      // The tightest engineered gap between a rod and the forging it rides: the big
+      // end of a pair stands this far shy of its crank web. Derived, not remembered:
+      // webIn - (rodOff + half the big-end width) = 1.55 - 1.43 = 0.12 cm.
+      rodWebClearance: S.crank.webIn - (S.crank.rodOff + S.rod.bigEndWidth / 2),
     },
   };
 })()`;
@@ -733,13 +740,19 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   await evalJs('window.__v12.cutaway(false); "ok"');
   await sleep(300);
 
-  // Cylinders 1 and 4 are the pair the gate pinned: crank 0 leaves 1 at top dead centre
-  // and 4 at bottom dead centre (measured off the meshes, not assumed), and crank 180 must
-  // swap them. Their crowns are the topmost vertex of each piston.
+  // The dead-centre pair is chosen, not remembered: the gate takes the measured crowns
+  // at crank 0 and picks the highest and the lowest. Those measurements were already
+  // proven equal to timing.js above (pistonGroupAlongError < 1e-9 on every cylinder), so
+  // the two it picks ARE the authority's top and bottom dead centre for this engine -
+  // 1 and 10 on the V12, and crank 180 has to swap them by exactly one stroke.
   const stroke = runs[0].m.spec.stroke;
   const at0 = runs[0].m.chain;
   const at180 = runs.find((z) => z.theta === 180).m.chain;
-  const swap = [1, 4].map((cyl) => {
+  const top = at0.reduce((a, b) => (b.pistonAlongHi > a.pistonAlongHi ? b : a));
+  const bottom = at0.reduce((a, b) => (b.pistonAlongHi < a.pistonAlongHi ? b : a));
+  if (top.station === bottom.station)
+    bad.push(`the gate picked cyl ${top.cyl} and cyl ${bottom.cyl} as opposite dead centres, but they share station ${top.station}`);
+  const swap = [top.cyl, bottom.cyl].map((cyl) => {
     const a = at0.find((c) => c.cyl === cyl);
     const b = at180.find((c) => c.cyl === cyl);
     return { cyl, crown0: a.pistonAlongHi, crown180: b.pistonAlongHi, travel: +(a.pistonAlongHi - b.pistonAlongHi).toFixed(4) };
@@ -748,7 +761,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (Math.abs(Math.abs(sw.travel) - stroke) > 0.3)
       bad.push(`cyl ${sw.cyl}: its crown stands ${sw.crown0} cm up the bore at crank 0 and ${sw.crown180} cm at crank 180, a travel of ${sw.travel} cm where the published stroke is ${stroke} cm`);
   if (!(swap[0].travel > 0 && swap[1].travel < 0))
-    bad.push(`cyl 1 moved ${swap[0].travel} cm and cyl 4 ${swap[1].travel} cm between crank 0 and crank 180: the two cylinders the gate pinned are not at opposite dead centres`);
+    bad.push(`cyl ${swap[0].cyl} moved ${swap[0].travel} cm and cyl ${swap[1].cyl} ${swap[1].travel} cm between crank 0 and crank 180: the two cylinders the gate picked are not at opposite dead centres`);
   console.log('dead centres at crank 0 vs 180: ' + swap.map((sw) => `cyl${sw.cyl} crown ${sw.crown0} -> ${sw.crown180} cm (travel ${sw.travel})`).join(', '));
 
   // determinism: the same pose twice must be the same picture, byte for byte in the
@@ -844,8 +857,11 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // contact numbers measured here, printed so the thresholds above are auditable
   const last = runs[0].m.pairs.map((q) => (q.missing ? `${q.a}<->${q.b} MISSING` : `${q.gap}cm ${q.a}<->${q.b}`));
   console.log('contacts at crank 0: ' + last.join('  '));
+  // The rod limit is not a remembered 0.06: it is the published web clearance of a
+  // side-by-side pair, which is the tightest engineered gap between rod and forging.
+  const rodWeb = runs[0].m.spec.rodWebClearance + 0.01;
   for (const [lim, pair] of [
-    [0.06, 'rod-cyl1<->crank'], [0.06, 'rod-cyl5<->crank'],
+    [rodWeb, 'rod-cyl1<->crank'], [rodWeb, 'rod-cyl5<->crank'],
     [2.0, 'rod-cyl1<->piston-cyl1'], [2.0, 'rod-cyl4<->piston-cyl4'],
     [0.08, 'headers-L<->head-L'], [0.08, 'headers-R<->head-R'],
     [0.08, 'intake-L<->head-L'], [0.08, 'intake-R<->head-R'],
