@@ -1,11 +1,11 @@
 // Rotating assembly: crankshaft (with web-integrated counterweights),
-// 8 pistons with ring packs, 8 connecting rods, flywheel, nose sprocket.
-// Static geometry is baked once in the theta = 0 pose; update(theta) drives
-// every pose from src/engine/timing.js - the crank group turns at theta,
+// 12 pistons with ring packs, 12 connecting rods on six shared pins, flywheel,
+// nose sprocket. Static geometry is baked once in the theta = 0 pose; update(theta)
+// drives every pose from src/engine/timing.js - the crank group turns at theta,
 // pistons slide along their bore axes, rods re-aim between pin and piston.
 // All clearances are pinned by test/cranktrain.test.mjs.
 import * as THREE from 'three';
-import { SPEC, DEG } from '../engine/spec.js';
+import { SPEC, DEG, MAIN_JOURNALS, endDiscFaceX } from '../engine/spec.js';
 import { crankPinPoint, pistonPinPoint, pistonAlong } from '../engine/timing.js';
 import { latheX, latheBank, worldBox } from './parts.js';
 import { extrude, alignX, sprocketGeometry } from './primitives.js';
@@ -90,21 +90,24 @@ function buildCrank(materials) {
     return m;
   };
 
-  // main journals: run through the web windows (overlap 0.05 for fusion)
-  const mains = [
-    ['main-x11', 7.95, 14.05],
-    ['main-x0', -3.05, 3.05],
-    ['main-x-11', -14.05, -7.95],
-    ['main-fore', 18.95, 26.5],
-    ['main-aft', -26.5, -18.95],
-  ];
-  for (const [name, x0, x1] of mains) put(name, latheX(solidX(C.mainRadius, x0, x1), 40), materials);
-  put('nose-stub', latheX(solidX(C.noseRadius, 26.45, 28.65), 32), materials);
+  // main journals: one per main bearing, from the seven-journal row in spec.js,
+  // each running 0.05 into the web window it ends next to so the forging fuses
+  MAIN_JOURNALS.forEach(([x0, x1], i) =>
+    put(`main-${i}`, latheX(solidX(C.mainRadius, x0, x1), 40), materials)
+  );
+  // nose stub: out of the fore end disc to the sprocket drum, r = noseRadius
+  put(
+    'nose-stub',
+    latheX(solidX(C.noseRadius, endDiscFaceX() - 0.05, C.sprocket.x0 + 0.05), 32),
+    materials
+  );
 
-  // pins, webs, bosses per station
+  // pins, webs, bosses per station: one pin per station, wide enough to carry
+  // both big ends of its pair side by side (spec.crank.rodOff pins the clearance)
+  const pinHalf = C.pinWidth / 2;
   for (const s of SPEC.block.stations) {
     const off = pinOffset(s);
-    const pin = put(`pin-s${s}`, latheX(solidX(C.pinRadius, s - 2.9, s + 2.9), 40), materials);
+    const pin = put(`pin-s${s}`, latheX(solidX(C.pinRadius, s - pinHalf, s + pinHalf), 40), materials);
     pin.geometry.translate(0, off.y, off.z);
     for (const side of [+1, -1]) {
       const w = new THREE.Mesh(webSolid(s, side), materials.crankShaft);
@@ -122,14 +125,21 @@ function buildCrank(materials) {
     }
   }
 
-  // flywheel: disc + bolt flange through the aft boss + ring gear band
+  // flywheel: disc + bolt flange running into the aft main journal + ring gear band
   const flywheel = new THREE.Group();
   flywheel.name = 'flywheel';
-  const fwDisc = new THREE.Mesh(latheX(solidX(C.flywheel.radius, C.flywheel.x0, C.flywheel.x1 + 0.05), 64), materials.crankShaft);
+  const fw = C.flywheel;
+  const fwDisc = new THREE.Mesh(latheX(solidX(fw.radius, fw.x0, fw.x1 + 0.05), 64), materials.crankShaft);
   fwDisc.name = 'flywheel-disc';
-  const fwFlange = new THREE.Mesh(latheX(solidX(C.flangeRadius, C.flywheel.x1 - 0.1, -26.45), 40), materials.crankShaft);
+  const fwFlange = new THREE.Mesh(
+    latheX(solidX(C.flangeRadius, fw.x1 - 0.1, -endDiscFaceX() + 0.05), 40),
+    materials.crankShaft
+  );
   fwFlange.name = 'flywheel-flange';
-  const fwRing = new THREE.Mesh(latheX(ringX(C.flywheel.ringRadius, C.flywheel.radius - 0.05, -29.5, -28.3), 48), materials.chainSteel);
+  const fwRing = new THREE.Mesh(
+    latheX(ringX(fw.ringRadius, fw.radius - 0.05, fw.x0 + 0.5, fw.x0 + 1.7), 48),
+    materials.chainSteel
+  );
   fwRing.name = 'flywheel-ring-gear';
   for (const m of [fwDisc, fwFlange, fwRing]) {
     m.castShadow = true;
@@ -181,15 +191,22 @@ function buildRod(cyl, materials) {
   };
   // canonical: big end centre at origin (axis = world X = pin axis),
   // small end at (0, rod.length, 0); the group transform aims it per frame.
-  put(`rod-cyl${cyl.num}-big`, latheX(ringX(R.bigEndRadius, C.pinRadius + 0.05, -0.65, 0.65), 36), materials.rodSteel);
-  put(`rod-cyl${cyl.num}-parting`, latheX(ringX(R.bigEndRadius + 0.06, R.bigEndRadius - 0.05, -0.66, 0.66), 36), materials.fastenerDark);
+  // The whole rod is exactly R.bigEndWidth wide so that a pair at +/- rodOff
+  // fits one pin between the webs (test/v12.test.mjs).
+  const BE = R.bigEndWidth / 2;
+  put(`rod-cyl${cyl.num}-big`, latheX(ringX(R.bigEndRadius, C.pinRadius + 0.05, -BE, BE), 36), materials.rodSteel);
+  put(
+    `rod-cyl${cyl.num}-parting`,
+    latheX(ringX(R.bigEndRadius + 0.06, R.bigEndRadius - 0.05, -BE - 0.01, BE + 0.01), 36),
+    materials.fastenerDark
+  );
   put(`rod-cyl${cyl.num}-bolt+`, worldBox(-0.3, 0.3, -2.6, -1.4, 2.1, 3.1, 0.12), materials.fastenerDark);
   put(`rod-cyl${cyl.num}-bolt-`, worldBox(-0.3, 0.3, -2.6, -1.4, -3.1, -2.1, 0.12), materials.fastenerDark);
-  put(`rod-cyl${cyl.num}-beam`, worldBox(-0.65, 0.65, 2.9, 8.2, -1.2, 1.2, 0.3), materials.rodSteel);
-  put(`rod-cyl${cyl.num}-beam2`, worldBox(-0.5, 0.5, 7.5, 13.0, -0.75, 0.75, 0.25), materials.rodSteel);
+  put(`rod-cyl${cyl.num}-beam`, worldBox(-BE, BE, 2.9, 8.2, -1.2, 1.2, 0.3), materials.rodSteel);
+  put(`rod-cyl${cyl.num}-beam2`, worldBox(-BE + 0.15, BE - 0.15, 7.5, 13.0, -0.75, 0.75, 0.25), materials.rodSteel);
   const small = put(
     `rod-cyl${cyl.num}-small`,
-    latheX(ringX(R.smallEndRadius + 0.45, R.smallEndRadius - 0.2, -0.55, 0.55), 32),
+    latheX(ringX(R.smallEndRadius + 0.45, R.smallEndRadius - 0.2, -BE + 0.1, BE - 0.1), 32),
     materials.rodSteel
   );
   small.geometry.translate(0, R.length, 0);
@@ -265,7 +282,7 @@ export function createCranktrain(materials) {
     const rod = buildRod(cyl, materials);
     const piston = buildPiston(cyl, materials);
     group.add(rod, piston);
-    rods.push({ cyl, rod, off: cyl.bank === 'R' ? 0.7 : -0.7 });
+    rods.push({ cyl, rod, off: cyl.bank === 'R' ? C.rodOff : -C.rodOff });
     pistons.push({ cyl, piston });
   }
 

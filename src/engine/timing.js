@@ -1,4 +1,4 @@
-// Kinematics of the cross-plane 90 deg DOHC V8.
+// Kinematics of the 60 deg DOHC V12.
 // Pure math, no Three.js: this module is the authority the renderer is driven from.
 //
 // Every valve event is DERIVED from the cam lobe profile that is machined in the

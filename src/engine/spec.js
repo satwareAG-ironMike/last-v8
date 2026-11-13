@@ -37,9 +37,11 @@ const SLAB = 4.5; // accessory-drive / bell-housing slab, symmetric fore and aft
 // and the pin runs through both slabs to +/- PIN_WIDTH/2 (test/v12.test.mjs).
 const WEB_IN = 1.55;
 const WEB_OUT = 2.65;
-const PIN_WIDTH = 6.2;
+const PIN_WIDTH = 2 * WEB_OUT; // pin ends flush with the outer faces of both webs
 const ROD_OFF = 0.78;
-const COUNTER_LOBE_HALF_X = 1.65; // wide enough to key into both webs of its throw
+// The counterweight is integral with the web pair, so its fore/aft half extent
+// is the web pair's own: nothing sticks out past WEB_OUT into the end discs.
+const COUNTER_LOBE_HALF_X = WEB_OUT;
 export const STATIONS = [27.5, 16.5, 5.5, -5.5, -16.5, -27.5]; // front -> rear
 /** Slab joints between two cylinder stations: where the interior main caps stand. */
 export const STATION_JOINTS_X = STATIONS.slice(0, -1).map((s, i) => (s + STATIONS[i + 1]) / 2);
