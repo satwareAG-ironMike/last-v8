@@ -20,10 +20,12 @@ G1..G7), and the V12 was rebuilt on top of them in the same engine family -
 stroke, rod, bore, head and valvetrain geometry and the pan/stand Z planes
 were kept on purpose. The V12 evidence is rows G8..G11.
 
-> **Live Demo**: <https://michael.wegener.engineering/projects/last-v8/poc/>
+> **Live Demo**: <https://michael.wegener.engineering/projects/last-v12/poc/>
 > **Narrative - how this was built**: <https://michael.wegener.engineering/projects/last-v8/>
 >
-> Both pages go live with the next site deploy on michael.wegener.engineering.
+> The poc is served under the `projects/last-v12/` path (canonical facts in
+> `specs/deploy.md`); the narrative page under `projects/last-v8/` lives on the
+> learn site and is maintained by the michael/learn team.
 
 ## Session statistics
 
@@ -43,17 +45,35 @@ estimated; the story is in `HISTORY.md`.
 | Provider errors | 4 total: 1 image rejected (server `--vision off`), 1 engine crash, 2 interrupts |
 | Result | 26 commits, G1-G7 evidence ledger, working simulation |
 
-The V12 upgrade, measured on this tree (the `v12` branch), each row pointing
-at the gate that earned it:
+The V12 refactoring session, measured by `scripts/session-stats.mjs` from the
+opencode database - the script is the generator, the table is the run recorded
+in `GATES.md` G13 (2026-11-13, span and tokens still growing while the session
+lives):
 
 | Metric | Value |
 |---|---|
-| Unit tests | 107 pass / 0 fail (`npm test`, `test/v12.test.mjs` is new) |
+| Session | "Create protected branch v12", 5.37 h wall (unattended `/goal`) |
+| Model | qwen3.8-flash-next, UD-Q4_K_XL GGUF, lemonade-1 (AMD Strix Halo), local - cost 0 cloud tokens |
+| Model generation time | 3.4 h streaming |
+| Prompt tokens processed | 55.3 M (90 % served from prompt cache) |
+| Tokens generated | 455 K at 37.2 tok/s sustained - slow by datacenter standards, and the whole refactor ran on a home iGPU box at zero marginal cost |
+| Context compactions | 4 |
+| Assistant turns | 372, from 8 user messages |
+| Tool calls | 410 (shell 250, edit 108, read 34, write 7, todowrite 4, skill 3, webfetch 1, question 1, grep 1, execute 1) |
+| Tool errors | 8 of 410 - path-guard rejections and one ssh timeout, none changed an outcome |
+| Result | the V12 engine and controls, ledger rows G8..G13, release v12.0.0 prepared |
+
+And the artifact itself, measured on this tree (the `v12` branch), each row
+pointing at the gate that earned it:
+
+| Metric | Value |
+|---|---|
+| Unit tests | 111 pass / 0 fail (`npm test`, `test/v12.test.mjs` + `test/release.test.mjs` are new) |
 | Boot frame | 2235 draw calls, 1280x713, 0 console errors (G9) |
 | PART INSPECTION menu | 187 parts, equal to the count the scene publishes (G10) |
 | Teardown | 149 members separated by the published table, nothing under the floor law (G10) |
 | Materials | 1118 meshes, 31 families, 1173 texture maps, all canvas (G11) |
-| Evidence | `GATES.md` rows G1..G11 (22 rows), recomputable gate-sigs |
+| Evidence | `GATES.md` rows G1..G16 (27 rows), recomputable gate-sigs |
 
 ## Run it
 
@@ -140,12 +160,13 @@ label that disagrees with the geometry cannot exist.
 
 | Command | Gate |
 |---|---|
-| `npm test` | the unit gates: V12 architecture, kinematics, timing, heads, manifolds, stand, camera rig, view controls - 107 tests |
+| `npm test` | the unit gates: V12 architecture, kinematics, timing, heads, manifolds, stand, camera rig, view controls, release identity - 111 tests |
 | `npm run smoke` | the page loads in headless Chromium with zero console errors and a rendered WebGL frame (G9) |
 | `node test/controls.smoke.mjs` | G10: every control driven through real CDP mouse/key events (V8 row: G6) |
 | `node test/screenshots.mjs` | G11: the rendered assembly measured against the authorities at 8 pinned crank angles; writes `shots/` (V8 row: G7) |
 | `node scripts/ledger-audit.mjs` | recomputes every `gate-sig` from the recipe and resolves every cited `output-sha256` to the file it names |
 | `python3 scripts/ledger-name-evidence.py --prove` | the V8 rows of `GATES.md` are verbatim: pinned against commit `345f71f`, every base row title, claim line, hash and sig survives |
+| `node scripts/session-stats.mjs` | G13: regenerates this README's V12 session-statistics table from the opencode database |
 
 `GATES.md` is the ledger: each row carries `CHECK`, `EXPECT`, and `EVIDENCE` with the
 `gate-sig` (first 16 hex of `sha256(CHECK value + "\n" + EXPECT value)`) and the

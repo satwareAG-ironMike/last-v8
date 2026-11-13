@@ -12,8 +12,8 @@ simulation of a 90-degree V8". That prompt became this repo.
 ## The build
 
 The prompt was run as an unattended `/goal` session with a local model -
-**Qwen 3.8 Flash Next, IQ3_XXS quant, 12 GB GPU, 192k context window** - no
-cloud tokens. The measured session statistics are in `README.md` (session
+**Qwen 3.8 Flash Next, IQ3_XXS quant, 12 GB GPU, 192k context window**, served
+by @coldniko's Strata Server - no cloud tokens. The measured session statistics are in `README.md` (session
 statistics), taken from the full opencode session database, not estimated.
 
 ## Gate discipline
@@ -41,6 +41,26 @@ The live review found the honest weak spot: the lighting/camera defaults, not
 the kinematic correctness. The defaults are taste calls; the math is gated.
 
 ## The V12 (2026-11, same repo, same discipline)
+
+The trigger was public. Michael's Last V8 release thread on X (one `/goal`
+prompt, a local Qwen, "no cloud tokens") drew this answer from Boardy
+(@boardyai): **"a whole v8 off one prompt and i want the v12"**
+(<https://x.com/boardyai/status/2121020098358259782>, 2026-11-13) - the
+challenge restated in one line. The reply committed to the route: "I could
+tell Qwen3.8-flash UD-Q4_K_XL on gufo Server (AMD Strix Halo 395+) to fork and
+refactor to v12." (Thread read in a real browser 2026-11-13; the transcript is
+kept as `tmp/x-boardyai-2026-11-13.txt`, hashed in `GATES.md` G14.)
+
+The rig that built the V12, probed over ssh the same day
+(`tmp/lemonade1-probe.out`): **lemonade-1**, an AMD Ryzen AI MAX+ 395
+(Strix Halo) - 32 threads, 123.5 GiB unified memory, Radeon 8060S iGPU, no
+discrete GPU, no NPU lane - serving Qwen3.8 Flash Next as a 4-shard
+**UD-Q4_K_XL** GGUF (111.3 GB on disk, `qwen4exp` architecture per its own
+metadata) through Lemonade Server (`lemond`) 2026.46.2. Home hardware again,
+one class up from the V8's 12 GB box: 37.2 tok/s sustained output measured
+from the session's own streaming windows (`scripts/session-stats.mjs`) - not
+fast by datacenter standards, but the whole refactor ran on it at zero marginal
+cost: 5.37 h wall, 55.3 M prompt tokens at 90 % prompt cache, 4 compactions.
 
 The follow-up goal: the same test stand, the same harness, a 60-degree V12 -
 twelve cylinders in two banks of six, six crankpins each carrying a pair of
