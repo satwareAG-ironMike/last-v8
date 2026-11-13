@@ -206,7 +206,13 @@ try {
     if (!panelIds.every(Boolean)) bad.push(`panel controls missing: ${JSON.stringify(panelIds)}`);
     if (start.rpmMin !== String(published[0]) || start.rpmMax !== String(published[1]))
       bad.push(`slider bounds ${start.rpmMin}..${start.rpmMax} are not the published RPM limits ${published.join('..')}`);
-    if (start.menuSize !== 133) bad.push(`PART INSPECTION menu holds ${start.menuSize} entries, the scene publishes 133 inspectable members`);
+    // The menu is generated from the scene, so the law is the two counts agreeing -
+    // never a number this file remembers (it was 133 for the V8, and a rebuilt
+    // engine would only have made the gate lie about the scene).
+    const publishedParts = await evalJs('window.__v12.inspectables().length');
+    if (start.menuSize !== publishedParts)
+      bad.push(`PART INSPECTION menu holds ${start.menuSize} entries, the scene publishes ${publishedParts} inspectable members`);
+    if (publishedParts < 60) bad.push(`the scene publishes only ${publishedParts} inspectable members`);
     if (start.outlines !== 0) bad.push('the scene starts with a selection outline in it');
 
     // ---- START / STOP ---------------------------------------------------------
@@ -618,13 +624,34 @@ try {
     await clickControl('#btn-explode');
     const apartState = await settle('apart');
     const apart = await snap('19 EXPLODED VIEW clicked');
-    if (!(apartState.fraction > 0.999 && apartState.moved === 107)) bad.push(`exploded view settled at ${JSON.stringify(apartState)}`);
+    // How many members SHOULD move is not a number this file remembers: it is the
+    // members the published teardown table claims. Counting them here, out of the
+    // same rule set the view applies, keeps the law true for any engine build (it
+    // was 107 for the V8, 149 for the V12).
+    const ruleCount = await evalJs(`(async () => {
+      const { explodeRuleFor } = await import('/src/engine/view.js');
+      let n = 0;
+      for (const name of window.__v12.view.members.keys()) if (explodeRuleFor(name)) n += 1;
+      return n;
+    })()`);
+    if (!(apartState.fraction > 0.999 && apartState.moved === ruleCount))
+      bad.push(`exploded view settled at ${JSON.stringify(apartState)}, the table claims ${ruleCount} members`);
     if (apart.view.cutaway !== false || apart.cutPressed !== 'false')
       bad.push(`EXPLODED VIEW left the cutaway open (cutaway=${apart.view.cutaway} aria-pressed=${apart.cutPressed})`);
     if (apart.explodePressed !== 'true' || apart.assemblePressed !== 'false')
       bad.push(`view buttons disagree with the state: exploded aria-pressed=${apart.explodePressed} assembled aria-pressed=${apart.assemblePressed}`);
-    if (Math.abs(apart.view.engineZ - 34.25) > 1e-2)
-      bad.push(`the assembly hangs at ${apart.view.engineZ} cm, the unit publishes a 34.25 cm hoist`);
+    // The hoist is not a constant to remember either (34.25 was what the V8 earned):
+    // the law behind it is that nothing in the separated assembly may sink through
+    // the test-cell floor plate, which is what the published lift exists to prevent.
+    const floorLaw = await evalJs(`(async () => {
+      const { SPEC } = await import('/src/engine/spec.js');
+      const { explodeSpecs } = await import('/src/engine/view.js');
+      const v = window.__v12;
+      const b = new v.THREE.Box3().setFromObject(v.engine);
+      return { minZ: +b.min.z.toFixed(3), limit: SPEC.stand.floorZ + explodeSpecs().floorMargin, engineZ: v.viewState().engineZ };
+    })()`);
+    if (!(floorLaw.minZ >= floorLaw.limit - 1e-2 && floorLaw.engineZ > 0))
+      bad.push(`the separated assembly sinks to z ${floorLaw.minZ}, the floor law allows nothing below ${floorLaw.limit} (hoist ${floorLaw.engineZ})`);
     const apartBox = apart.live;
 
     // ---- PART INSPECTION from the panel menu ---------------------------------
