@@ -1,18 +1,18 @@
 // Heads unit - written RED first. Contract:
 // - two head castings standing on the block deck through a copper head gasket
-// - 16 valve guides + seat inserts exactly on the timing.js seat/axis points
+// - 24 valve guides + seat inserts exactly on the timing.js seat/axis points
 // - machined spring seats exactly where the valvetrain springs actually sit
 // - cam-cover ceiling derived from spec constants, clearing every rotating lobe
 // - bucket bores that retain every bucket at every lift
-// - 28 cam bearing bosses on the cam axis line, 0.05 cm over every bearing
-// - 32 head bolts at deckBoltRadius, clear of the bores
+// - 36 cam bearing bosses on the cam axis line, 0.05 cm over every bearing
+// - 48 head bolts at deckBoltRadius, clear of the bores
 // - nothing pokes through the cover, nothing inside the sprocket band, every
 //   casting solid connected, static/dynamic piston clearances proven.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
-  SPEC, DEG, bankUp, bankOut, camAxisBank, camAxisStation, HEAD_TOP_A,
+  SPEC, DEG, STATION_JOINTS_X, bankUp, bankOut, camAxisBank, camAxisStation, HEAD_TOP_A,
 } from '../src/engine/spec.js';
 import {
   valveAxisDir, valveSeatPoint, camAxisPoint, pistonAlong, valveLift,
@@ -83,13 +83,24 @@ function axial(p, seat, d) {
   return { s, r };
 }
 
+// Per bank of six: two rails, two end chimneys plus one runner web per exhaust
+// pair, twelve bucket stays, one boss/web/cap and two clamps per cam bearing on
+// both cam lines, one girder bridge per interior joint on both lines, and five
+// valve-row solids per valve.
 const KIND_COUNTS = {
-  rail: 2, chimney: 4, floor: 8, guide: 8, seatRing: 8, springtube: 8, bucketbore: 8,
-  bridge: 4, stay: 8, boss: 14, bossweb: 14, cap: 14, clamp: 28,
+  rail: 2,
+  chimney: 2 + B.stations.length / 2,
+  floor: 12, guide: 12, seatRing: 12, springtube: 12, bucketbore: 12,
+  bridge: 2 * STATION_JOINTS_X.length,
+  stay: B.stations.length * 2,
+  boss: 2 * SPEC.cam.bearings.length,
+  bossweb: 2 * SPEC.cam.bearings.length,
+  cap: 2 * SPEC.cam.bearings.length,
+  clamp: 4 * SPEC.cam.bearings.length,
 };
-const PER_BANK = Object.values(KIND_COUNTS).reduce((a, b) => a + b, 0); // 120
+const PER_BANK = Object.values(KIND_COUNTS).reduce((a, b) => a + b, 0);
 
-test('heads build contract: 2 castings x 120 solids, 16 guides + seat inserts, 4 covers, 2 gaskets, 32 bolts', async () => {
+test(`heads build contract: 2 castings x ${PER_BANK} solids, 24 guides + seat inserts, 4 covers, 2 gaskets, 48 bolts`, async () => {
   const { group } = await buildHeads();
   assert.equal(group.name, 'heads');
   let bolts = 0;
@@ -119,15 +130,15 @@ test('heads build contract: 2 castings x 120 solids, 16 guides + seat inserts, 4
       rings += 1;
       assert.equal(o.material.name, 'copperGasket');
     });
-    assert.equal(rings, 4, `gasket-${bank} rings`);
+    assert.equal(rings, B.stations.length, `gasket-${bank} rings`);
   }
   let guides = 0;
   group.traverse((o) => {
     if (/^guide-cyl\d+-(intake|exhaust)$/.test(o.name)) guides += 1;
-    if (o.isInstancedMesh && o.name === 'head-bolts') { assert.equal(o.count, 32); bolts = o.count; }
+    if (o.isInstancedMesh && o.name === 'head-bolts') { assert.equal(o.count, 4 * SPEC.cylinders.length); bolts = o.count; }
   });
-  assert.equal(guides, 16, 'valve guides');
-  assert.equal(bolts, 32, 'head bolt instances');
+  assert.equal(guides, 2 * SPEC.cylinders.length, 'valve guides');
+  assert.equal(bolts, 4 * SPEC.cylinders.length, 'head bolt instances');
 });
 
 test('castings stand on the deck through the gasket; rails carry the full gasket footprint', async () => {
@@ -163,7 +174,7 @@ test('castings stand on the deck through the gasket; rails carry the full gasket
       const sHi = Math.max(Math.abs(oMin), Math.abs(oMax));
       assert.ok(Math.abs(sLo - H.gasketId) < 1e-6 && Math.abs(sHi - H.gasketOd) < 1e-6,
         `rail out span ${oMin}..${oMax} != gasket footprint +-${H.gasketId}..${H.gasketOd}`);
-      assert.ok(Math.abs(xMin - (B.stations[3] - B.pitch / 2)) < 1e-6 &&
+      assert.ok(Math.abs(xMin + (B.stations[0] + B.pitch / 2)) < 1e-6 &&
         Math.abs(xMax - (B.stations[0] + B.pitch / 2)) < 1e-6, `rail x ${xMin}..${xMax} != deck ends`);
     });
     assert.equal(rails, 2);
@@ -193,7 +204,7 @@ test('castings stand on the deck through the gasket; rails carry the full gasket
   }
 });
 
-test('16 guides sit exactly on the valve axes and seats; spring seats sit exactly where the springs sit', async () => {
+test('24 guides sit exactly on the valve axes and seats; spring seats sit exactly where the springs sit', async () => {
   const { group } = await buildHeads();
   const vt = await buildValvetrain();
   vt.update(0);
@@ -257,7 +268,7 @@ test('cam covers: top face exactly at HEAD_TOP_A, ceiling clears every rotating 
       for (const p of vs) {
         const r = Math.hypot(alongOf(v, bank, p) - camA, outOf(v, bank, p) - oCam);
         assert.ok(r >= noseR + 0.15, `cover ${cover.name} intrudes on the cam sweep (r ${r} < ${noseR + 0.15})`);
-        assert.ok(Math.abs(p.x) <= 28.6 - 0.04, `cover ${cover.name} x ${p.x} inside the sprocket band`);
+        assert.ok(Math.abs(p.x) <= BAND - 0.04, `cover ${cover.name} x ${p.x} inside the sprocket band`);
       }
       // every lobe nose stays under this cover's ceiling
       for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
@@ -276,7 +287,7 @@ test('cam covers: top face exactly at HEAD_TOP_A, ceiling clears every rotating 
   }
 });
 
-test('28 cam bearing bosses ride exactly on the cam axis line, 0.05 cm over every bearing, carried by webs', async () => {
+test('36 cam bearing bosses ride exactly on the cam axis line, 0.05 cm over every bearing, carried by webs', async () => {
   const { group } = await buildHeads();
   const vt = await buildValvetrain();
   for (const bank of ['L', 'R']) {
@@ -287,8 +298,8 @@ test('28 cam bearing bosses ride exactly on the cam axis line, 0.05 cm over ever
       if (o.userData.kind === 'boss') bosses.push(o);
       if (o.userData.kind === 'bossweb') webs.push(o);
     });
-    assert.equal(bosses.length, 14, `head-${bank} bosses`);
-    assert.equal(webs.length, 14, `head-${bank} boss webs`);
+    assert.equal(bosses.length, 2 * CAM.bearings.length, `head-${bank} bosses`);
+    assert.equal(webs.length, 2 * CAM.bearings.length, `head-${bank} boss webs`);
     for (const valve of valves) {
       const camA = camAlongA(bank);
       const oCam = camOutA(bank, valve);
@@ -336,13 +347,13 @@ test('28 cam bearing bosses ride exactly on the cam axis line, 0.05 cm over ever
   }
 });
 
-test('32 head bolts at deckBoltRadius stand on the rails and clear every bore', async () => {
+test('48 head bolts at deckBoltRadius stand on the rails and clear every bore', async () => {
   const { headBoltSpecs } = await import('../src/render/heads.js');
   const { group } = await buildHeads();
   const specs = headBoltSpecs();
-  assert.equal(specs.length, 32);
+  assert.equal(specs.length, 4 * SPEC.cylinders.length);
   const bolts = group.getObjectByName('head-bolts');
-  assert.ok(bolts && bolts.isInstancedMesh && bolts.count === 32, 'head-bolts instanced mesh missing');
+  assert.ok(bolts && bolts.isInstancedMesh && bolts.count === specs.length, 'head-bolts instanced mesh missing');
   const hexR = H.deckBoltRadius / Math.cos(Math.PI / 6);
   for (const spec of specs) {
     const v = bankVectors(spec.bank);
@@ -396,7 +407,7 @@ test('bucket bores retain every bucket at every lift and clear the spring coils'
   }
 });
 
-test('nothing floats and nothing intrudes: 120 connected solids per bank, envelope clear of the piston', async () => {
+test(`nothing floats and nothing intrudes: ${PER_BANK} connected solids per bank, envelope clear of the piston`, async () => {
   const { group } = await buildHeads();
   const tdcCrown = C.radius + SPEC.rod.length + SPEC.piston.compressionHeight; // 22.4
   for (const bank of ['L', 'R']) {
@@ -474,4 +485,31 @@ test('dynamic clearance: valve disc edges never enter the piston crown plane, ov
   assert.ok(worst > 0.15, `worst valve/piston clearance ${worst} at ${JSON.stringify(worstAt)}`);
   assert.ok(ramp < V.maxLift * 0.75,
     `near-TDC lift ${ramp} at ${JSON.stringify(rampAt)} is off the ramp (ceiling ${V.maxLift * 0.75})`);
+});
+
+test('cam girder bridges clear every rotating lobe: no bridge box touches a lobe box', async () => {
+  const { group } = await buildHeads();
+  const vt = await buildValvetrain();
+  vt.update(0);
+  let bridges = 0;
+  for (const bank of ['L', 'R']) {
+    const head = group.getObjectByName(`head-${bank}`);
+    const boxes = [];
+    head.traverse((o) => {
+      if (o.userData.kind === 'bridge') boxes.push([o.name, new THREE.Box3().setFromObject(o)]);
+    });
+    assert.equal(boxes.length, 2 * STATION_JOINTS_X.length, `head-${bank} bridge count`);
+    for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
+      for (const valve of valves) {
+        const lobe = vt.group.getObjectByName(`lobe-cyl${cyl.num}-${valve}`);
+        assert.ok(lobe, `lobe cyl ${cyl.num} ${valve} missing`);
+        const lb = new THREE.Box3().setFromObject(lobe);
+        for (const [name, bb] of boxes) {
+          assert.ok(!bb.intersectsBox(lb), `${name} intrudes on lobe cyl ${cyl.num} ${valve} (${lb.min.x}..${lb.max.x})`);
+        }
+      }
+    }
+    bridges += boxes.length;
+  }
+  assert.equal(bridges, 4 * STATION_JOINTS_X.length, 'bridges on all four cam lines');
 });

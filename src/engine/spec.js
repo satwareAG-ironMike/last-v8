@@ -1,4 +1,4 @@
-// Cross-plane 90 degree DOHC V8 - single source of truth for every dimension.
+// 60 degree DOHC V12 - single source of truth for every dimension.
 // Units: centimetres. Angles: degrees.
 //
 // World frame:  X = crankshaft axis (engine front at +X), Y = transverse, Z = up.
@@ -6,19 +6,62 @@
 //   polarDir(az) = (0, sin az, cos az)
 // A crank throw at az = 0 points straight up, az = 90 points to +Y (engine right).
 //
-// Bank R (cylinders 2,4,6,8) leans to +Y: bore axis az = +45.
-// Bank L (cylinders 1,3,5,7) leans to -Y: bore axis az = -45.  -> 90 degree V.
+// Bank R (cylinders 2,4,6,8,10,12) leans to +Y: bore axis az = +30.
+// Bank L (cylinders 1,3,5,7,9,11) leans to -Y: bore axis az = -30.  -> 60 degree V.
 // "outboard" of a bank = away from the V: +90 polar for bank R, -90 for bank L.
 // Bank-local coordinates used throughout: `along` up the bore axis, `out` outboard.
+//
+// Why 60 degrees: six pins 60 degrees apart in azimuth, each shared by one L and
+// one R rod, put a power stroke every 60 crank degrees (test/v12.test.mjs). The
+// primary and secondary shaking forces of a 60 degree V12 also cancel as a set,
+// which is why the counterweights stay small.
 
 export const DEG = Math.PI / 180;
 
 export const polarDir = (azDeg) => [0, Math.sin(azDeg * DEG), Math.cos(azDeg * DEG)];
 
 export const BANKS = {
-  R: { az: 45, outSign: +1, cyls: [2, 4, 6, 8] },
-  L: { az: -45, outSign: -1, cyls: [1, 3, 5, 7] },
+  R: { az: 30, outSign: +1, cyls: [2, 4, 6, 8, 10, 12] },
+  L: { az: -30, outSign: -1, cyls: [1, 3, 5, 7, 9, 11] },
 };
+
+// ---- the X layout, derived once -------------------------------------------
+// Six cylinder stations at the published pitch. Every fore/aft plane downstream
+// (deck ends, main journals, cam bearings, the sprocket stack, the flywheel) is a
+// function of this row: lengthening or shortening the engine is one edit here and
+// nothing else, and no downstream plane may re-derive it by hand.
+const PITCH = 11.0;
+const SLAB = 4.5; // accessory-drive / bell-housing slab, symmetric fore and aft
+// Twin-rod pin geometry: each pin carries one L and one R big end side by side.
+// A 1.3 cm big end at +/- ROD_OFF spans s +/- 1.43, the webs stand off at WEB_IN,
+// and the pin runs through both slabs to +/- PIN_WIDTH/2 (test/v12.test.mjs).
+const WEB_IN = 1.55;
+const WEB_OUT = 2.65;
+const PIN_WIDTH = 2 * WEB_OUT; // pin ends flush with the outer faces of both webs
+const ROD_OFF = 0.78;
+// The counterweight is integral with the web pair, so its fore/aft half extent
+// is the web pair's own: nothing sticks out past WEB_OUT into the end discs.
+const COUNTER_LOBE_HALF_X = WEB_OUT;
+export const STATIONS = [27.5, 16.5, 5.5, -5.5, -16.5, -27.5]; // front -> rear
+/** Slab joints between two cylinder stations: where the interior main caps stand. */
+export const STATION_JOINTS_X = STATIONS.slice(0, -1).map((s, i) => (s + STATIONS[i + 1]) / 2);
+/** |x| where the deck slab ends (half a pitch beyond the outermost station). */
+export const DECK_END_X = Math.abs(STATIONS[0]) + PITCH / 2;
+/** |x| of the fore/aft end-disc outer faces: the flat the stand's jaws clamp. */
+const END_X = DECK_END_X + SLAB;
+/** Nose sprocket plane; everything cam-driven hangs off this. */
+const SPROCKET_X0 = END_X + 2.3;
+const OUTER_CAM_BEARING = DECK_END_X + PITCH / 2; // on the head casting's overhang past the end disc
+/** The seven main bearing journals, front -> rear: five on slab joints, two in the end discs. */
+export const MAIN_JOURNALS = [
+  [STATIONS[0] + WEB_OUT - 0.05, END_X],
+  ...STATION_JOINTS_X.map((j) => [j - 3.05, j + 3.05]),
+  [-END_X, -(STATIONS[0] + WEB_OUT - 0.05)],
+];
+/** Main cap centres, front -> rear: one per journal, the end ones inside their disc. */
+export const MAIN_CAPS_X = [DECK_END_X + 2.25, ...STATION_JOINTS_X, -(DECK_END_X + 2.25)];
+/** Free x windows between adjacent main cap lugs - the stand's mount stations. */
+const CAP_GAPS = MAIN_CAPS_X.slice(0, -1).map((c, i) => (c + MAIN_CAPS_X[i + 1]) / 2);
 
 export const SPEC = {
   banks: BANKS,
@@ -29,30 +72,36 @@ export const SPEC = {
     radius: 4.0, // half stroke
     mainRadius: 2.7,
     pinRadius: 2.4,
-    pinWidth: 5.8, // pin ends s +/- 2.9; runs through both web slabs
-    webIn: 1.4, // web slab occupies s +/- (1.4..2.5); rod gap is s +/- 1.4
-    webOut: 2.5,
+    pinWidth: PIN_WIDTH, // pin ends s +/- 3.1; runs through both web slabs
+    webIn: WEB_IN, // web slab occupies s +/- (1.55..2.65); rod gap is s +/- 1.55
+    webOut: WEB_OUT,
     webThickness: 1.1,
     webHalfU: 2.6, // web half-width perpendicular to the throw direction
+    // Each pin carries one L and one R big end side by side: the two 1.3 cm wide
+    // big ends span s +/- 1.43 and the webs stand off at 1.55, so a pair fits a
+    // pin with 0.13 cm of air per side and cannot rub a web (test/v12.test.mjs).
+    rodOff: ROD_OFF,
     counterRadius: 6.3,
-    counterLobeHalfX: 1.45, // one counter lobe per throw, s +/- 1.45, touches both webs
+    counterLobeHalfX: COUNTER_LOBE_HALF_X, // one counter lobe per throw, keyed into both webs
     counterInnerR: 2.2,
     counterArcDeg: 150,
     noseRadius: 3.0,
     flangeRadius: 5.2,
-    flywheel: { radius: 9.4, x0: -30.0, x1: -27.8, ringRadius: 9.95 },
+    flywheel: { radius: 9.4, x0: -(END_X + 3.5), x1: -(END_X + 1.3), ringRadius: 9.95 },
     // 18-tooth drive sprocket at the nose; cam sprockets have exactly 2x the
     // teeth AND 2x the pitch radius -> the 2:1 half-speed law is machined, not
     // faked, and both sprockets share one chain pitch (2 pi pitchR / teeth).
-    sprocket: { radius: 3.15, teeth: 18, pitchR: 3.45, toothH: 0.55, x0: 28.6, x1: 29.8 },
+    sprocket: { radius: 3.15, teeth: 18, pitchR: 3.45, toothH: 0.55, x0: SPROCKET_X0, x1: SPROCKET_X0 + 1.2 },
     // Absolute throw azimuth per station, front -> rear.
-    // Four throws 90 deg apart in azimuth -> cross-plane ("Chinese arm") crank.
-    pinAz: [315, 225, 45, 135],
+    // Six throws 60 deg apart in azimuth, one pin per station, both banks' rods
+    // on it: with the 60 deg bank angle every power stroke lands 60 crank
+    // degrees after the previous one, twelve to the cycle.
+    pinAz: [330, 30, 90, 150, 210, 270],
     // rotation: az(throw) = pinAz - crankAngle  -> crank turns toward -Y at the top
     sense: -1,
   },
 
-  rod: { length: 14.5, bigEndRadius: 3.1, capRadius: 3.1, smallEndRadius: 1.7, beamWidth: 2.4 },
+  rod: { length: 14.5, bigEndRadius: 3.1, bigEndWidth: 1.3, capRadius: 3.1, smallEndRadius: 1.7, beamWidth: 2.4 },
 
   // Skirt must clear the counterweight tips: at BDC the pin sits 10.5 up the
   // bore, the skirt bottom 10.5 - skirtLength = 6.5 > counterRadius + 0.15.
@@ -63,8 +112,8 @@ export const SPEC = {
     boreStartA: 5.5, // bottom of the bore tunnel
     boreRadius: 5.1,
     boreShellRadius: 5.3,
-    stations: [16.5, 5.5, -5.5, -16.5], // front -> rear
-    pitch: 11.0,
+    stations: STATIONS, // front -> rear
+    pitch: PITCH,
     crankcaseRadius: 9.4,
     caseOuterRadius: 11.6, // casting OD around the crankcase
     deckHalfWidth: 7.0,
@@ -72,9 +121,9 @@ export const SPEC = {
     deckCornerR: 1.6, // deck corner radius (head bolt bosses)
     mainBossR: 4.6, // fore main bearing hole (nose journal passes it)
     aftMainBossR: 5.7, // aft main bearing hole (flywheel flange passes it)
-    counterBayHalfX: 22.0, // all crank counterweights stay inside |x| < this, r <= counterRadius
-    slabFront: 4.5, // accessory-drive slab, +X of the first station
-    slabRear: 4.5, // rear main / bell housing slab, -X of the last station (symmetric)
+    counterBayHalfX: STATIONS[0] + COUNTER_LOBE_HALF_X + 0.35, // every counterweight stays inside |x| < this, r <= counterRadius
+    slabFront: SLAB, // accessory-drive slab, +X of the first station
+    slabRear: SLAB, // rear main / bell housing slab, -X of the last station (symmetric)
 
     // ---- the two faces the test stand is allowed to bolt onto ----
     // panFlangeZ: top plane of the cast pan rails; panRailZ: their bottom face,
@@ -131,7 +180,7 @@ export const SPEC = {
   // shell inflates an obstacle by up to half a cell, so the design keeps
   // >= 1.2 cm of real air everywhere the pipework runs beside the engine.
   manifold: {
-    // ---- exhaust: 4-into-1 header per bank, outboard ----
+    // ---- exhaust: 6-into-1 header per bank, outboard ----
     exFlangeT: 0.7, // flange plate standing on the head outboard stay face (out 7.00)
     exFlangeX: 1.55, // flange half width in x (the stay is 1.7, so 0.15 all round)
     exFlangeA0: 24.4,
@@ -145,24 +194,24 @@ export const SPEC = {
     // count and the spacing are load-bearing, not decoration.
     boltOffsetsAlong: [1.7, -1.7],
     boltHoleR: 0.36,
-    exPrimaryR: 1.05, // 4-into-1 primary tube
-    // Pair merge sits exactly midway between its two cylinder stations, so all
-    // four primaries travel the same 5.5 cm in x and come out the same length:
-    // (16.5 + 5.5) / 2 = 11, mirror -11.
-    exMergeX: 11.0,
+    exPrimaryR: 1.05, // primary tube, one per cylinder
+    // Pair merges sit exactly midway between the two stations of each pair, so
+    // every primary travels the same half pitch in x and all six come out the
+    // same length. Derived from the station row: (27.5 + 16.5) / 2 = 22, etc.
+    exMergeX: STATION_JOINTS_X.filter((_, i) => i % 2 === 0),
     exPairR: 1.5, // pair outlet: r^2 2.25 >= 2 primaries 2 x 1.1025 = 2.205
-    // A merged collector has to pass the flow of ALL four primaries, so its
-    // area is sized against 4 x the primary area, not against one of them:
-    // 2.15^2 = 4.62 >= 4 x 1.05^2 = 4.41.
-    exCollectorR: 2.15,
-    exOutletR: 2.7, // bolt-on outlet flange disc at the collector end
+    // A merged collector has to pass the flow of ALL six primaries, so its area
+    // is sized against 6 x the primary area, not against one of them:
+    // 2.65^2 = 7.02 >= 6 x 1.05^2 = 6.62.
+    exCollectorR: 2.65,
+    exOutletR: 3.15, // bolt-on outlet flange disc at the collector end
     exOutletT: 0.9,
     shieldOut0: 17.6, // heat shield: outboard of every primary tube surface (15.25)
     shieldOut1: 18.2,
     shieldA0: 14.5, // shield span in along: starts outboard of the collector
     shieldA1: 30.0,
-    shieldXFront: [9.5, 18.5], // wide enough to cover both primaries of its pair
-    shieldXAft: [-18.5, -9.5],
+    shieldHalfX: 4.5, // one shield per pair merge, centred on it, wide enough to
+    // cover both primaries of its pair
     shieldStayR: 0.35, // stand-off bracket from the clamp band up to the shield
     // Grip points along the two primaries a shield covers: the outer cylinder's
     // tube passes under the shield early, the inner cylinder's only near its
@@ -181,63 +230,73 @@ export const SPEC = {
     inNeckT: 1.9,
     inRunnerR: 1.2, // intake runner tube
     // The plenum hangs in the V, inboard of the cam bosses (the boss OD reaches
-    // |out| = 5.28 + 2.85 = 8.13 measured), so its outboard wall sits at -12.5:
-    // 4.4 cm of real air past the whole casting.
-    plenumOut0: -19.5,
-    plenumOut1: -12.5,
-    plenumA0: 30.5,
-    plenumA1: 37.5,
-    plenumX: 22.0, // half length: 6.6 cm clear of the 28.6 sprocket band
+    // |out| = 5.28 + 2.85 = 8.13 measured), so its outboard wall sits at -11:
+    // 2.9 cm of real air past the whole casting. A 60 degree bank is also much
+    // narrower across the centre plane: a bank-local point (a, o) sits at
+    // y = a sin 30 + o cos 30, so the bar's inner edge (33.5, -16.5) keeps 2.46
+    // cm of air from the centre plane and 4.9 cm from its own mirror image.
+    // Lower than this in `along` the bar would run into the other bank.
+    plenumOut0: -16.5,
+    plenumOut1: -11.0,
+    plenumA0: 33.5,
+    plenumA1: 40.0,
+    plenumX: 30.0, // half length: 9.8 cm clear of the nose sprocket band
     plenumR: 1.4, // cast fillet of the plenum bar
-    railAlong: 28.0, // fuel rail rides below + inboard of the plenum, out of its way
-    railOut: -20.5,
+    railAlong: 31.0, // fuel rail rides below + inboard of the plenum, out of its way
+    railOut: -15.5,
     railR: 0.62,
-    railX: 20.0,
+    railX: 29.0, // past the end stations (27.5) so every injector has rail above it
     injR: 0.5, // injector body from the rail up-outboard into its own runner
-    bracketX: [18.0, 19.2], // rail brackets cast into the plenum bar, hugging the rail
+    bracketX: [23.4, 24.6], // rail brackets cast into the plenum bar, hugging the rail
     bracketA: 1.2,     // bracket reach beside the rail in `along`
     bracketDrop: 1.1,  // how far below the rail axis its lower face sits
     bracketBite: 0.9,  // how deep it is cast into the plenum bar / starts into it
   },
 
-  // ---- industrial test stand (routing solved against the measured casting
-  // envelope: tmp/stand-lanes2.mjs, tmp/stand-faces.mjs, tmp/stand-candidate2.mjs)
+  // ---- industrial test stand (routing re-solved for the six-station block;
+  // tmp/stand-envelope-v12.mjs measures the frame against the rendered engine)
   // The engine is carried on two real casting interfaces only:
   //   A. the oil-pan flange - the block's cast pan rails (flat pads,
   //      |y| <= panFlangeHalfWidth(panFlangeZ), z panRailZ..panFlangeZ) and the
-  //      pan side wall at |y| = panWallHalfWidth(): 4 mounts, 2 clamp bolts each.
+  //      pan side wall at |y| = panWallHalfWidth(): 6 mounts (3 per side under
+  //      the longer pan), 2 clamp bolts each.
   //   B. the fore/aft end-disc flat x-faces at |x| = endDiscFaceX(): 4 locator
   //      jaws, one reaction frame per end, so crank torque has nowhere to go.
   // No cradle under the pan is possible: the pan bottom is z -14.6, its drain
   // plug reaches -15.05 and the floor is -16.5 - 1.45..1.90 cm of air. Every
   // frame member therefore travels the free lane floorZ..frameZ1 or the corridor
-  // outside |x| > 22, and the fore/aft frame has to dodge the rotating hardware:
-  // nose stub r 3.0, sprocket drum x 28.6..29.8 r 3.74, flywheel disc r 9.4 plus
-  // ring gear r 9.95. Non-mount members keep >= minAir of real air; mounts mate.
+  // outside |x| > DECK_END_X, and the fore/aft frame has to dodge the rotating
+  // hardware: nose stub r 3.0, sprocket drum r 4.0 beyond the end disc, flywheel
+  // disc r 9.4 plus ring gear r 9.95. Non-mount members keep >= minAir of real
+  // air; mounts mate. Every fore/aft number below derives from the station row.
   stand: {
     floorZ: -16.5, // test-cell floor plane: the stand's feet, nothing below
     frameZ1: -15.15, // top face of every frame beam (measured free lane ceiling)
-    bedX: [-35.5, 35.5], // bed rails under the block, outboard of everything
+    bedX: [-(END_X + 9.0), END_X + 9.0], // bed rails under the block, outboard of everything
     bedY: [13.2, 17.2],
-    skidX: [-30.5, 30.5], // centre skid rails under the oil pan lane
+    skidX: [-(DECK_END_X + 8.5), DECK_END_X + 8.5], // centre skid rails under the oil pan lane
     skidY: [4.4, 6.4],
-    tieForeX: [33.0, 35.5], // fore/aft cross ties: the frame's torsion box
-    tieAftX: [-35.5, -33.0],
-    sideTieX: [22.4, 24.4], // ties from each bed rail down to its skid rail
-    postX: [16.5, 19.5], // mount posts, one per corner, outboard of the pan
+    tieForeX: [END_X + 6.5, END_X + 9.0], // fore/aft cross ties: the frame's torsion box
+    tieAftX: [-(END_X + 9.0), -(END_X + 6.5)],
+    sideTieX: [DECK_END_X + 0.4, DECK_END_X + 2.4], // ties from each bed rail down to its skid rail
+    // Mount stations along the pan flange: the midpoints between adjacent main
+    // caps are the only x windows the cap lugs leave free (every cap lug reaches
+    // exactly down to the pan-rail plane, so a mount may not share its x). Every
+    // other gap is used, which keeps the row symmetric about the crank axis and
+    // supports the longer casting at four points per side.
+    mountX: [CAP_GAPS[0], CAP_GAPS[2], CAP_GAPS[3], CAP_GAPS[5]],
+    postHalf: 1.5, // post: mx +/- postHalf
+    padHalf: 2.5, // mount plate: mx +/- padHalf
     postY: [4.4, 6.4], // its bottom face sits on frameZ1 (derived), its top on padZ0
-    padInX: 15.5, // mount plate: its inboard edge and top face are DERIVED from
-    padOutX: 20.5, // the pan wall and the pan-rail plane plus `bite`, not pinned
     padOutY: 6.4,
     padZ0: -12.6,
-    colOutX: 27.6, // fore/aft locator pedestals, outboard of the flywheel ring gear
+    colOutX: END_X + 1.1, // fore/aft locator pedestals, clear of the end disc
     colY: [13.2, 17.2],
     colZ1: -13.8, // their base is frameZ1 (derived), so they stand on the bed rails
-    jawOutX: 27.0, // locator jaws clamping the end-disc faces; inboard face derived
+    jawOutX: END_X + 0.5, // locator jaws clamping the end-disc faces; inboard face derived
     jawY: [6.0, 10.0],
     jawZ: [-12.6, -5.2],
-    braceX: 18.0, // diagonal gussets: buried in the bed rail, buried in the mount post
-    braceR: 0.55,
+    braceR: 0.55, // diagonal gusset per mount: buried in the bed rail, buried in the post
     braceFootY: 14.4,
     braceFootZ: -15.55,
     braceHeadY: 6.0,
@@ -259,8 +318,13 @@ export const SPEC = {
   // recorded in G5d; every limit is published here, so the rig tests measure
   // what the rig actually does instead of what the author remembered.
   view: {
-    homePos: [84.4, -117.6, 104.5], // solved against the engine+stand union bbox
-    homeTarget: [-1.9, 1.9, 7.9],
+    // Solved against the measured engine+stand union bbox (x +-46.5, y +-30.66,
+    // z -16.5..42.38 -> bounding sphere r 63.00, centre (0, 0, 12.94)): the target
+    // IS that centre and the range is framingRange(r) with the published margin.
+    // The direction is the original swept three-quarter view, kept so the home
+    // framing still reads as the same test-cell photograph.
+    homePos: [87.22, -120.78, 110.57],
+    homeTarget: [0, 0, 12.94],
     fov: 48,
     aspect: 1280 / 713, // the size the headless gates render at
     distMin: 42, // close enough to read a valve spring through the section
@@ -300,28 +364,51 @@ export const SPEC = {
 
   cam: {
     halfSpeedRatio: 2,
-    journalAft: -28.7, // continuous journal: aft bearing ... through all 4 sprocket bands
-    journalFore: 29.95,
-    bearings: [-27.5, -22, -11, 0, 11, 22, 27.5], // 7 journals per camshaft
+    journalAft: -(OUTER_CAM_BEARING + 1.2), // continuous journal: aft bearing ... through all 4 sprocket bands
+    journalFore: SPROCKET_X0 + 1.35, // lands 0.15 past the sprocket stack
+    bearings: [
+      OUTER_CAM_BEARING,
+      DECK_END_X,
+      ...STATION_JOINTS_X,
+      -DECK_END_X,
+      -OUTER_CAM_BEARING,
+    ], // 9 journals per camshaft: one per slab joint, one per deck end, one per drive end
     bearingR: 2.05,
     bearingHalf: 1.1,
     // 36 teeth = 2x the 18-tooth crank sprocket; four flat chain bands on the
-    // front face, each 0.3 cm wide, exactly filling the 28.6..29.8 sprocket stack.
-    sprocket: { teeth: 36, pitchR: 6.9, toothH: 0.55, width: 0.3, bands: [28.6, 28.9, 29.2, 29.5] },
+    // front face, each 0.3 cm wide, exactly filling the sprocket stack.
+    sprocket: {
+      teeth: 36,
+      pitchR: 6.9,
+      toothH: 0.55,
+      width: 0.3,
+      bands: [0, 1, 2, 3].map((i) => SPROCKET_X0 + i * 0.3),
+    },
   },
 
   ignitionAdvance: 14, // crank degrees BTDC the spark fires
 
-  // Firing pulses exactly 90 crank degrees apart: 1-8-7-3-6-5-4-2
+  // Firing pulses exactly 60 crank degrees apart: 1-6-5-10-9-2-4-3-8-7-12-11.
+  // The order is not typed in here: it is what timing.firingOrder() derives from
+  // these power TDCs, and firingOrder() throws if any of them is not a physical
+  // top dead centre of that cylinder's own crank throw. The per-column choice
+  // (which rod of a pair fires in the first revolution, which in the second)
+  // alternates banks, the closest a 6-pin 60 degree V can come to strict
+  // alternation: two same-bank adjacencies are provably unavoidable, because the
+  // two events of one pin are 360 degrees apart and therefore share a parity.
   cylinders: [
     { num: 1, bank: 'L', station: 0, powerTDC: 0 },
-    { num: 2, bank: 'R', station: 0, powerTDC: 630 },
-    { num: 3, bank: 'L', station: 1, powerTDC: 270 },
-    { num: 4, bank: 'R', station: 1, powerTDC: 540 },
-    { num: 5, bank: 'L', station: 2, powerTDC: 450 },
-    { num: 6, bank: 'R', station: 2, powerTDC: 360 },
-    { num: 7, bank: 'L', station: 3, powerTDC: 180 },
-    { num: 8, bank: 'R', station: 3, powerTDC: 90 },
+    { num: 2, bank: 'R', station: 0, powerTDC: 300 },
+    { num: 3, bank: 'L', station: 1, powerTDC: 420 },
+    { num: 4, bank: 'R', station: 1, powerTDC: 360 },
+    { num: 5, bank: 'L', station: 2, powerTDC: 120 },
+    { num: 6, bank: 'R', station: 2, powerTDC: 60 },
+    { num: 7, bank: 'L', station: 3, powerTDC: 540 },
+    { num: 8, bank: 'R', station: 3, powerTDC: 480 },
+    { num: 9, bank: 'L', station: 4, powerTDC: 240 },
+    { num: 10, bank: 'R', station: 4, powerTDC: 180 },
+    { num: 11, bank: 'L', station: 5, powerTDC: 660 },
+    { num: 12, bank: 'R', station: 5, powerTDC: 600 },
   ],
 };
 
@@ -446,8 +533,8 @@ export function mainCapLug(halfOut0 = 3.0, halfOut1 = 4.6, zTop = -8.9, zBottom 
   };
 }
 
-/** X positions of the five main bearing caps (slab centres and slab joints). */
-export const MAIN_CAPS_X = [24.25, 11, 0, -11, -24.25];
+/** X positions of the main bearing caps are derived at the head of this file
+ * (MAIN_CAPS_X): one cap per main journal, interior caps on the slab joints. */
 
 /** Oil pan flange half-width at its bolt plane z = flangeZ. */
 export function panFlangeHalfWidth(flangeZ) {

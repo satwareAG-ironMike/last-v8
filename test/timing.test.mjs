@@ -24,18 +24,19 @@ import {
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 const CYLS = SPEC.cylinders;
 
-test('firing order derives from the cross-plane crank as 1-8-7-3-6-5-4-2 with 90 deg pulses', () => {
+test('firing order derives from the 60 deg V12 crank as 1-6-5-10-9-2-4-3-8-7-12-11 with 60 deg pulses', () => {
   const order = firingOrder();
-  assert.deepEqual(order.cyls, [1, 8, 7, 3, 6, 5, 4, 2]);
-  assert.deepEqual(order.angles, [0, 90, 180, 270, 360, 450, 540, 630]);
-  const gaps = order.angles.map((a, i) => wrap720(a - order.angles[(i + 7) % 8]));
-  assert.deepEqual(gaps, [90, 90, 90, 90, 90, 90, 90, 90]);
+  assert.deepEqual(order.cyls, [1, 6, 5, 10, 9, 2, 4, 3, 8, 7, 12, 11]);
+  assert.deepEqual(order.angles, [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660]);
+  const gaps = order.angles.map((a, i) => wrap720(a - order.angles[(i + 11) % 12]));
+  assert.deepEqual(gaps, new Array(12).fill(60));
 
-  // cross-plane: the four throws sit in four mutually perpendicular planes
+  // six throws 60 deg apart in azimuth: with the 60 deg bank angle that is what
+  // makes every one of the twelve power strokes land exactly 60 crank degrees later
   const az = [...new Set(CYLS.map((c) => wrap360(SPEC.crank.pinAz[c.station])))]
     .sort((a, b) => a - b);
-  assert.deepEqual(az, [45, 135, 225, 315]);
-  az.forEach((a) => assert.equal(wrap360(a - az[0]) % 90, 0));
+  assert.deepEqual(az, [30, 90, 150, 210, 270, 330]);
+  az.forEach((a) => assert.equal(wrap360(a - az[0]) % 60, 0));
 });
 
 test('rod length is conserved between crank pin and piston pin at every crank angle', () => {
@@ -139,7 +140,7 @@ test('each cylinder runs the four strokes with TDC/BDC aligned to the stroke bou
   }
 });
 
-test('16 valve events per cycle with a realistic overlap around the exhaust/intake TDC', () => {
+test('24 valve events per cycle with a realistic overlap around the exhaust/intake TDC', () => {
   let events = 0;
   for (const c of CYLS) {
     for (const valve of ['intake', 'exhaust']) {
@@ -154,7 +155,7 @@ test('16 valve events per cycle with a realistic overlap around the exhaust/inta
       events += openings;
     }
   }
-  assert.equal(events, 16);
+  assert.equal(events, 2 * CYLS.length);
 
   for (const c of CYLS) {
     const i = valveLift(c, 'intake', wrap720(c.powerTDC + 360));

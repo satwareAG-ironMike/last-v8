@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SPEC, ID } from '../src/engine/spec.js';
+import { SPEC, ID, endDiscFaceX } from '../src/engine/spec.js';
 import { crankPinPoint, pistonPinPoint, pistonAlong, firingOrder } from '../src/engine/timing.js';
 
 const C = SPEC.crank;
@@ -49,18 +49,18 @@ test('engine state: rpm default, clamping, start/stop, slow motion', async () =>
   assert.equal(st.theta, t);
 });
 
-test('engine state: firing pulses are 8 exactly-90-degree events per cycle', async () => {
+test('engine state: firing pulses are 12 exactly-60-degree events per cycle', async () => {
   const { createEngineState } = await import('../src/engine/animation.js');
   const st = createEngineState({ rpm: 1000 });
   const fires = [];
   st.onFire((cyl, at) => fires.push({ num: cyl.num, at }));
   st.start();
   for (let i = 0; i < 720; i++) st.step(1 / 600); // 10 deg per step -> 7200 deg = 10 cycles
-  assert.equal(fires.length, 10 * 8, `expected 80 pulses, got ${fires.length}`);
-  const first = fires.slice(0, 8);
+  assert.equal(fires.length, 10 * 12, `expected 120 pulses, got ${fires.length}`);
+  const first = fires.slice(0, 12);
   assert.deepEqual(first.map((f) => f.num), firingOrder().cyls);
   const angles = first.map((f) => f.at);
-  assert.deepEqual(angles, [0, 90, 180, 270, 360, 450, 540, 630]);
+  assert.deepEqual(angles, [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660]);
 });
 
 // ---- cranktrain build ------------------------------------------------------
@@ -87,9 +87,10 @@ test('crank solids: counterweights inside the bay at r <= counterRadius, mains a
   const crank = group.getObjectByName('crank');
   assert.ok(crank, 'crank group missing');
 
-  // Counterweights are integral with the web slabs (like a real cross-plane
-  // crank): each web reaches r = counterRadius, and none straddles the rod
-  // gap s +/- 1.4 - a rod cap must never sweep through counter material.
+  // Counterweights are integral with the web slabs (like a real one-piece crank):
+  // each web reaches r = counterRadius, and none straddles the twin-rod gap
+  // s +/- rodOff + bigEndWidth/2 - a rod cap must never sweep through counter
+  // material.
   const meshes = [];
   crank.traverse((o) => o.isMesh && meshes.push(o));
   let sawWeb = 0;
@@ -109,9 +110,10 @@ test('crank solids: counterweights inside the bay at r <= counterRadius, mains a
       const bb = new THREE.Box3().setFromObject(m);
       const cx = (bb.min.x + bb.max.x) / 2;
       const half = (bb.max.x - bb.min.x) / 2;
-      assert.ok(Math.abs(cx - s) >= 1.4 - 0.15 && Math.abs(cx - s) <= 1.95 + 0.01,
-        `${m.name}: slab centre ${cx} not outboard of the rod gap at station ${s}`);
-      assert.ok(Math.abs(cx) + half <= Math.abs(s) + 2.5 + EPS, `${m.name} slab beyond station span`);
+      const pairOuter = C.rodOff + SPEC.rod.bigEndWidth / 2; // a rod pair reaches this far
+      assert.ok(Math.abs(cx - s) >= pairOuter + 0.05 && Math.abs(cx - s) <= (C.webIn + C.webOut) * 0.5 + 0.01,
+        `${m.name}: slab centre ${cx} not clear of the rod pair at station ${s}`);
+      assert.ok(Math.abs(cx) + half <= Math.abs(s) + C.webOut + EPS, `${m.name} slab beyond station span`);
       assert.ok(maxR <= C.counterRadius + EPS, `${m.name} r=${maxR} exceeds counterRadius`);
       assert.ok(maxR >= C.counterRadius - 0.06, `${m.name} counter arc too small (${maxR})`);
       assert.ok(maxAbsX < SPEC.block.counterBayHalfX, `${m.name} enters end-disc territory`);
@@ -122,7 +124,7 @@ test('crank solids: counterweights inside the bay at r <= counterRadius, mains a
       assert.ok(maxR <= C.mainRadius + EPS, `${m.name} r=${maxR} binds the 2.75 bearing shell`);
     }
   }
-  assert.equal(sawWeb, 8, 'two counterweight webs per throw expected');
+  assert.equal(sawWeb, 12, 'two counterweight webs per throw, six throws');
 
   // everything inside the drum bay stays clear of the void wall (ID 9.4)
   let maxBayR = 0;
@@ -140,13 +142,14 @@ test('crank train rotates the throws by pinAzimuth(cyl, theta) (sense verified i
   const { group, update } = await buildCranktrain();
   update(90);
   const crank = group.getObjectByName('crank');
-  const pin = crank.getObjectByName('pin-s16.5');
-  assert.ok(pin, 'pin-s16.5 missing');
+  const s0 = SPEC.block.stations[0];
+  const pin = crank.getObjectByName(`pin-s${s0}`);
+  assert.ok(pin, `pin-s${s0} missing`);
   pin.updateWorldMatrix(true, false);
   const bb = new THREE.Box3().setFromObject(pin);
   const c = bb.getCenter(new THREE.Vector3());
-  const az = (315 - 90) * (Math.PI / 180);
-  assert.ok(Math.abs(c.x - 16.5) < 1e-4, `pin x=${c.x}`);
+  const az = (SPEC.crank.pinAz[0] - 90) * (Math.PI / 180);
+  assert.ok(Math.abs(c.x - s0) < 1e-4, `pin x=${c.x}`);
   assert.ok(Math.abs(c.y - 4 * Math.sin(az)) < EPS, `pin y=${c.y}`);
   assert.ok(Math.abs(c.z - 4 * Math.cos(az)) < EPS, `pin z=${c.z}`);
 });
@@ -178,11 +181,11 @@ test('pistons and rods track timing.js exactly at an arbitrary crank angle', asy
     assert.ok(Math.abs(rod.position.y - cp.y) < 1e-6 && Math.abs(rod.position.z - cp.z) < 1e-6,
       `cyl ${cyl.num}: rod big end off the crankpin`);
     const off = rod.position.x - cp.x;
-    assert.ok(Math.abs(Math.abs(off) - 0.7) < 1e-6, `cyl ${cyl.num}: rod offset on pin = ${off}`);
+    assert.ok(Math.abs(Math.abs(off) - C.rodOff) < 1e-6, `cyl ${cyl.num}: rod offset on pin = ${off}`);
     assert.ok((cyl.bank === 'R') === (off > 0), `cyl ${cyl.num}: rod sits on the wrong side`);
 
     // rod small end sits ON the shared pin: piston pin y/z exactly, laterally
-    // offset by its bank side (bank R +0.7, bank L -0.7 along the pin axis)
+    // offset by its bank side (+/- rodOff along the pin axis)
     const small = new THREE.Vector3(0, SPEC.rod.length, 0).applyQuaternion(rod.quaternion).add(rod.position);
     assert.ok(Math.abs(small.x - (pp.x + off)) < EPS,
       `cyl ${cyl.num}: small end x=${small.x}, expected ${pp.x + off} on the pin`);
@@ -211,7 +214,7 @@ test('rod big/small end BOSS MESHES physically sit on the crankpin and piston pi
     const cS = bbS.getCenter(new THREE.Vector3());
     const rS = Math.hypot(cS.y - pp.y, cS.z - pp.z);
     assert.ok(rS < 0.02, `cyl ${cyl.num}: small-end boss centre r=${rS.toFixed(3)} off piston pin`);
-    assert.ok(cS.x >= pp.x - 2.9 && cS.x <= pp.x + 2.9, `cyl ${cyl.num}: small end off the pin span`);
+    assert.ok(cS.x >= pp.x - C.pinWidth / 2 && cS.x <= pp.x + C.pinWidth / 2, `cyl ${cyl.num}: small end off the pin span`);
   }
 });
 
@@ -224,12 +227,13 @@ test('pistons: skirt clears the bore bottom and the counter tips at BDC', async 
   assert.ok(skirtBottom > C.counterRadius + 0.15, `skirt bottom ${skirtBottom} hits counter r=${C.counterRadius}`);
   assert.ok(skirtBottom > SPEC.block.boreStartA + 0.5, 'skirt leaves the bore liner');
 
-  // TDC crown stays under the deck (head gasket gap 1.7)
-  const tdcAlong = pistonAlong(cyl1, 315 + 45); // throwOffset 0
+  // TDC crown stays under the deck (head gasket gap 1.7). cyl 1's throw sits at
+  // pinAz[0] = 330 with the bank at -30, so its TDC is theta = 0 (mod 360).
+  const tdcAlong = pistonAlong(cyl1, 330 + 30); // throwOffset 0
   assert.ok(Math.abs(tdcAlong - 18.5) < 1e-9, `TDC along=${tdcAlong}`);
   assert.ok(tdcAlong + SPEC.piston.compressionHeight < SPEC.block.deckA - 1.6, 'crown breaches the deck');
 
-  // 8 piston groups (body mesh + 3 ring band meshes), 8 rod groups
+  // 12 piston groups (body mesh + 3 ring band meshes), 12 rod groups
   let pistons = 0;
   let rods = 0;
   let rings = 0;
@@ -239,9 +243,9 @@ test('pistons: skirt clears the bore bottom and the counter tips at BDC', async 
     if (o.name.startsWith('piston-cyl')) pistons += 1;
     if (o.name.startsWith('ring-cyl')) rings += 1;
   });
-  assert.equal(pistons, 8);
-  assert.equal(rods, 8);
-  assert.equal(rings, 24);
+  assert.equal(pistons, 12);
+  assert.equal(rods, 12);
+  assert.equal(rings, 36);
 });
 
 test('flywheel and sprocket sit outside the casting envelope', async () => {
@@ -250,8 +254,17 @@ test('flywheel and sprocket sit outside the casting envelope', async () => {
   const sp = group.getObjectByName('crank').getObjectByName('sprocket');
   assert.ok(fw && sp, 'flywheel/sprocket missing');
   const fbb = new THREE.Box3().setFromObject(fw);
-  assert.ok(Math.abs(fbb.min.x + 30.0) < 1e-3 && Math.abs(fbb.max.x + 26.4) < 0.15, `flywheel x ${fbb.min.x}..${fbb.max.x}`);
+  // disc outer face on the published x0, flange buried 0.05 into the aft end disc
+  assert.ok(
+    Math.abs(fbb.min.x - SPEC.crank.flywheel.x0) < 1e-3 &&
+      Math.abs(fbb.max.x + endDiscFaceX() - 0.05) < 1e-3,
+    `flywheel x ${fbb.min.x}..${fbb.max.x}`
+  );
+  assert.ok(fbb.max.x < -endDiscFaceX() + 0.1, 'flywheel must not enter the casting');
   assert.ok(Math.max(fbb.max.y, fbb.max.z) <= C.flywheel.radius + 0.56, 'flywheel radial');
   const sbb = new THREE.Box3().setFromObject(sp);
-  assert.ok(Math.abs(sbb.min.x - 28.6) < 1e-3 && Math.abs(sbb.max.x - 29.8) < 1e-3, `sprocket x ${sbb.min.x}..${sbb.max.x}`);
+  assert.ok(
+    Math.abs(sbb.min.x - C.sprocket.x0) < 1e-3 && Math.abs(sbb.max.x - C.sprocket.x1) < 1e-3,
+    `sprocket x ${sbb.min.x}..${sbb.max.x}`
+  );
 });

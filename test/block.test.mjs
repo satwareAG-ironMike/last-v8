@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SPEC,
+  BANKS,
+  DEG,
   OD,
   ID,
   arcHalfDepth,
@@ -13,7 +15,9 @@ import {
   supportColumn,
   mainCapLug,
   MAIN_CAPS_X,
+  STATION_JOINTS_X,
   panFlangeHalfWidth,
+  endDiscFaceX,
   bankPoint,
 } from '../src/engine/spec.js';
 
@@ -26,12 +30,14 @@ test('design dimensions are the pinned real-world values', () => {
   assert.ok(near(arcHalfDepth(B.deckHalfWidth), 9.2499, 1e-3)); // column base chord depth
   assert.ok(near(idHalfDepth(B.boreWallHalf), 7.7297, 1e-3)); // web tangent at void wall
   assert.ok(near(panFlangeHalfWidth(11.15), 3.1996, 1e-3)); // pan flange half-width
-  assert.deepEqual(MAIN_CAPS_X, [24.25, 11, 0, -11, -24.25]);
+  // seven caps, one per main bearing journal: five slab joints plus the fore/aft pair
+  assert.deepEqual(MAIN_CAPS_X, [35.25, 22, 11, 0, -11, -22, -35.25]);
   assert.ok(near(B.deckA, 24.1) && near(B.boreStartA, 5.5) && near(B.pitch, 11));
   assert.equal(B.mainBossR, 4.6);
   assert.equal(B.aftMainBossR, 5.7);
   // crank counterweights swing only inside the drum bay, never near the end discs
-  assert.equal(B.counterBayHalfX, B.stations[0] + B.pitch / 2);
+  assert.equal(B.counterBayHalfX, B.stations[0] + SPEC.crank.counterLobeHalfX + 0.35);
+  assert.ok(B.counterBayHalfX < endDiscFaceX(), 'the counter bay must stop inside the casting');
   assert.ok(SPEC.crank.counterRadius < ID, 'counterweights must clear the drum shell');
 });
 
@@ -66,9 +72,10 @@ test('inboard webs bridge the banks with exact tangency at the void edge', () =>
   const pL = bankPoint('L', B.deckA, -B.deckHalfWidth);
   const pR = bankPoint('R', B.deckA, -B.deckHalfWidth);
   assert.ok(near(pL.y, -pR.y, 1e-9) && near(pL.z, pR.z, 1e-9), 'web deck corners must mirror');
-  // deck corner world position: (deckA - deckHalfWidth)/sqrt2 for y/z pair
-  assert.ok(near(pR.y * Math.SQRT2, B.deckA - B.deckHalfWidth, 1e-9));
-  assert.ok(near(pR.z * Math.SQRT2, B.deckA + B.deckHalfWidth, 1e-9));
+  // deck corner world position, from the 60 deg bank azimuth: y = a sin az + o cos az
+  const az = BANKS.R.az * DEG;
+  assert.ok(near(pR.y, B.deckA * Math.sin(az) - B.deckHalfWidth * Math.cos(az), 1e-9));
+  assert.ok(near(pR.z, B.deckA * Math.cos(az) + B.deckHalfWidth * Math.sin(az), 1e-9));
 });
 
 test('liner bottom is buried in the drum wall, not floating in the bay', () => {
@@ -85,18 +92,19 @@ test('main caps ride the void wall and sit at slab joints and slab centres', () 
   assert.ok(near(lug.rCorner, ID, 0.02), `cap corner r=${lug.rCorner} must bear on the void wall`);
   assert.ok(lug.zBottom < -ID, 'cap must protrude below the void into the pan rail zone');
   assert.ok(lug.zBottom > -OD, 'cap must stay inside the casting OD envelope');
-  // interior caps at the slab joints: station x minus half pitch
-  for (let i = 0; i < 3; i++) {
-    assert.equal(MAIN_CAPS_X[i + 1], B.stations[i] - B.pitch / 2, `cap ${i + 1} not at slab joint`);
-  }
-  // fore/aft caps: symmetric at +/-24.25, inside their fore/aft slabs
+  // interior caps at the slab joints between two cylinder stations
+  assert.deepEqual(
+    MAIN_CAPS_X.filter((c) => Math.abs(c) <= B.stations[0] + B.pitch / 2),
+    STATION_JOINTS_X
+  );
+  // fore/aft caps: symmetric, each inside its own end slab
   const xFront = B.stations[0] + B.pitch / 2;
-  const xRear = B.stations[3] - B.pitch / 2;
+  const xRear = B.stations.at(-1) - B.pitch / 2;
   assert.equal(MAIN_CAPS_X[0], xFront + B.slabFront / 2);
-  assert.ok(MAIN_CAPS_X[4] < xRear && MAIN_CAPS_X[4] > xRear - B.slabRear, 'aft cap inside aft slab');
+  assert.ok(MAIN_CAPS_X.at(-1) < xRear && MAIN_CAPS_X.at(-1) > xRear - B.slabRear, 'aft cap inside aft slab');
   // symmetric about x = 0
-  assert.equal(MAIN_CAPS_X[0], -MAIN_CAPS_X[4]);
-  assert.equal(MAIN_CAPS_X[1], -MAIN_CAPS_X[3]);
+  assert.equal(MAIN_CAPS_X[0], -MAIN_CAPS_X.at(-1));
+  assert.equal(MAIN_CAPS_X[1], -MAIN_CAPS_X.at(-2));
 });
 
 test('pan flange width is the OD chord at the bolt plane', () => {
@@ -110,10 +118,10 @@ test('pan flange width is the OD chord at the bolt plane', () => {
 test('union sanity: every block solid family is anchored on the drum shell', () => {
   // drum shell x range equals station-slab x range; end discs close it
   const xFront = B.stations[0] + B.pitch / 2;
-  const xRear = B.stations[3] - B.pitch / 2;
-  assert.equal(xFront - xRear, 4 * B.pitch); // four station slabs
-  assert.equal(xFront + B.slabFront, 26.5); // fore end face
-  assert.equal(xRear - B.slabRear, -26.5); // aft end face
+  const xRear = B.stations.at(-1) - B.pitch / 2;
+  assert.equal(xFront - xRear, B.stations.length * B.pitch); // six station slabs
+  assert.equal(xFront + B.slabFront, 37.5); // fore end face
+  assert.equal(xRear - B.slabRear, -37.5); // aft end face
   // webs stand on the void wall at the tangent along-value the renderer uses
   assert.ok(idHalfDepth(B.boreWallHalf) < arcHalfDepth(B.boreWallHalf), 'web tangent is below column tangent');
 });
@@ -127,14 +135,21 @@ test('renderer instantiation: block builds as one group inside the design envelo
   const block = createBlock(fakeMats);
   const meshes = [];
   block.traverse((o) => o.isMesh && meshes.push(o));
-  assert.ok(meshes.length >= 45, `too few solids: ${meshes.length}`);
+  assert.ok(meshes.length >= 60, `too few solids: ${meshes.length}`);
   const bb = new THREE.Box3().setFromObject(block);
-  const E = { x: 26.5, y: 21.99, zLo: -15.05, zHi: 21.99 }; // deck corner: (deckA + deckHalfWidth)/sqrt2
+  const az = BANKS.R.az * DEG;
+  // x: the end discs; y: the outboard deck corner of a bank; z: the inboard one
+  const E = {
+    x: endDiscFaceX(),
+    y: B.deckA * Math.sin(az) + B.deckHalfWidth * Math.cos(az),
+    zLo: -15.05,
+    zHi: B.deckA * Math.cos(az) + B.deckHalfWidth * Math.sin(az),
+  };
   assert.ok(
     Math.abs(bb.min.x + E.x) < 0.2 && Math.abs(bb.max.x - E.x) < 0.2 &&
     Math.abs(bb.min.y + E.y) < 0.3 && Math.abs(bb.max.y - E.y) < 0.3 &&
     Math.abs(bb.min.z - E.zLo) < 0.3 && Math.abs(bb.max.z - E.zHi) < 0.35,
-    `block bbox ${JSON.stringify([bb.min.x, bb.max.x, bb.min.y, bb.max.y, bb.min.z, bb.max.z])}`
+    `block bbox ${JSON.stringify([bb.min.x, bb.max.x, bb.min.y, bb.max.y, bb.min.z, bb.max.z])} want ${JSON.stringify([E.x, E.y, E.zLo, E.zHi])}`
   );
   for (const m of meshes) {
     const pos = m.geometry.attributes.position;
@@ -144,7 +159,8 @@ test('renderer instantiation: block builds as one group inside the design envelo
     }
   }
   // liners must sit at their own station x - one per bore, none stacked
-  const wantX = { 1: 16.5, 2: 16.5, 3: 5.5, 4: 5.5, 5: -5.5, 6: -5.5, 7: -16.5, 8: -16.5 };
+  const wantX = Object.fromEntries(SPEC.cylinders.map((c) => [c.num, B.stations[c.station]]));
+  assert.equal(Object.keys(wantX).length, 12);
   for (const [num, want] of Object.entries(wantX)) {
     const liner = meshes.find((m) => m.name === `liner-cyl${num}`);
     assert.ok(liner, `liner-cyl${num} missing`);

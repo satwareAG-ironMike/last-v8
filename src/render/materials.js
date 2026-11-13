@@ -2,6 +2,7 @@
 // no image assets are downloaded or shipped with this project.
 import * as THREE from 'three';
 import { PMREMGenerator } from 'three';
+import { SPEC } from '../engine/spec.js';
 
 // ---- seeded noise --------------------------------------------------------
 
@@ -151,6 +152,19 @@ export function hazardCanvas(size = 512, { angle = Math.PI / 4, band = 0.09 } = 
   }
   ctx.restore();
   return cv;
+}
+
+/**
+ * The engine identity the cast plate carries, derived from the same authority the
+ * geometry is built from, so a plate can never name an engine that is not there:
+ * bank angle from the two bore-axis azimuths, cylinder count and swept volume
+ * from bore, stroke and the cylinder table.
+ */
+export function idPlateEngine() {
+  const bankAngle = Math.abs(SPEC.banks.R.az - SPEC.banks.L.az);
+  const sweptL =
+    (Math.PI * SPEC.piston.radius ** 2 * 2 * SPEC.crank.radius * SPEC.cylinders.length) / 1000;
+  return `V${SPEC.cylinders.length}-${bankAngle} DOHC  ${sweptL.toFixed(1)} L`;
 }
 
 /** Etched-plate label decal. */
@@ -361,8 +375,10 @@ export function createMaterials() {
       labelCanvas(
         [
           { text: 'SATWARE TEST CELL', bold: true, size: 44 },
-          { text: 'V8-90 DOHC  4.6 L', size: 34 },
-          { text: 'MULE 01  S/N 0008-V8', size: 24 },
+          // the plate reports the engine the renderer actually builds: bank angle,
+          // cylinder count and swept volume all come out of the spec authority
+          { text: idPlateEngine(), size: 34 },
+          { text: 'MULE 01  S/N 0012-V12', size: 24 },
         ],
         { w: 1024, h: 384 }
       ),

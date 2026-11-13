@@ -1,7 +1,7 @@
 // G7 oracle: the picture and the geometry behind it, measured on the live tree.
 //
 // G6 proves the controls work. This gate proves what the controls produce: that the
-// thing on screen is a cross-plane V8 whose parts are attached to each other and move
+// thing on screen is a 60 degree V12 whose parts are attached to each other and move
 // off one crank angle. Every law below is measured off the rendered meshes - live
 // vertices, live group transforms - and compared against src/engine/timing.js, which is
 // the authority the renderer is driven from. A mesh measured here is not a constant
@@ -27,15 +27,16 @@ import { join } from 'node:path';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Pinned crank angles the laws are measured at. 0 is TDC for cylinders 1 and 6 and BDC
-// for 4 and 7; 265 is peak exhaust lift on cylinder 1; 450 is peak intake lift on
-// cylinder 4. The others spread the four strokes over the 720 degree cycle.
-const ANGLES = [0, 90, 180, 265, 340, 450, 540, 719];
+// Pinned crank angles the laws are measured at, derived from timing.js and re-checked
+// there every run: 0 leaves cylinders 1 and 4 at top dead centre and 7 and 10 at bottom
+// dead centre; 265 is the cyl 1 exhaust lobe nose (lift 1.2); 460 is the cyl 1 intake
+// nose. The others spread the four strokes over the 720 degree cycle.
+const ANGLES = [0, 90, 180, 265, 340, 460, 540, 719];
 
 // ---- page-side: measure the rendered tree against the authority ----------------
 // No backticks inside: this whole body is inserted into a template literal below.
 const MEASURE = `(async () => {
-  const v = window.__v8, THREE = v.THREE, S = v.SPEC;
+  const v = window.__v12, THREE = v.THREE, S = v.SPEC;
   const tm = await import('/src/engine/timing.js');
   const r = (n, k) => +Number(n).toFixed(k === undefined ? 6 : k);
   const theta = v.state.theta;
@@ -104,7 +105,9 @@ const MEASURE = `(async () => {
     pistonG.updateWorldMatrix(true, true);
     const cp = tm.crankPinPoint(cyl, theta);
     const pp = tm.pistonPinPoint(cyl, theta);
-    const off = cyl.bank === 'R' ? 0.7 : -0.7; // two cylinders share one crankpin: their rods sit side by side on it
+    // Two cylinders share one crankpin and their rods sit side by side on it, at the
+    // published SPEC.crank.rodOff - never a number this file remembers.
+    const off = cyl.bank === 'R' ? S.crank.rodOff : -S.crank.rodOff;
     const big = new THREE.Vector3().setFromMatrixPosition(rodG.matrixWorld);
     const small = new THREE.Vector3(0, S.rod.length, 0).applyMatrix4(rodG.matrixWorld);
     const axis = new THREE.Vector3(...v.bankUp(cyl.bank));
@@ -358,13 +361,17 @@ const MEASURE = `(async () => {
       boreRadius: S.block.boreRadius, boreStartA: S.block.boreStartA, deckA: S.block.deckA,
       stroke: S.stroke, rodLength: S.rod.length, smallEndRadius: S.rod.smallEndRadius, maxLift: V.maxLift,
       retainerGap: H.retainerGap, halfSpeedRatio: S.cam.halfSpeedRatio,
+      // The tightest engineered gap between a rod and the forging it rides: the big
+      // end of a pair stands this far shy of its crank web. Derived, not remembered:
+      // webIn - (rodOff + half the big-end width) = 1.55 - 1.43 = 0.12 cm.
+      rodWebClearance: S.crank.webIn - (S.crank.rodOff + S.rod.bigEndWidth / 2),
     },
   };
 })()`;
 
 // ---- page-side: pixel stats over the drawing buffer, rendered in this call ------
 const PIXELS = `(() => {
-  const v = window.__v8;
+  const v = window.__v12;
   v.renderer.render(v.scene, v.camera);
   const gl = v.renderer.getContext();
   const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
@@ -453,12 +460,12 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   };
   /** Pin the crank angle and let the loop repaint the poses from it. */
   const pin = async (theta) => {
-    const from = await evalJs('window.__v8.frameCount()');
-    await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
-    await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
+    const from = await evalJs('window.__v12.frameCount()');
+    await evalJs('window.__v12.setRpm(0); window.__v12.start(); "ok"');
+    await evalJs('window.__v12.state.theta = ' + theta + '; window.__v12.settleView(); "ok"');
     for (let i = 0; i < 90; i++) {
       await sleep(120);
-      if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
+      if ((await evalJs('window.__v12.frameCount()')) - from >= 4) return;
     }
     throw new Error('the page produced no animation frames after pinning crank ' + theta);
   };
@@ -470,8 +477,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const measure = async () => await evalJs(`(async () => (${MEASURE}))()`, { timeoutMs: 120000 });
 
   const resetView = async () => {
-    await evalJs('window.__v8.clearInspect(); window.__v8.assemble(); window.__v8.cutaway(false); window.__v8.rig.reset(); "ok"');
-    await evalJs('window.__v8.settleView(); "ok"');
+    await evalJs('window.__v12.clearInspect(); window.__v12.assemble(); window.__v12.cutaway(false); window.__v12.rig.reset(); "ok"');
+    await evalJs('window.__v12.settleView(); "ok"');
   };
 
   // ---- the surfaces of this engine, measured off the live meshes ------------------
@@ -671,11 +678,11 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // ---- shots, and what the pixels say about them ------------------------------
   const shots = {};
   await resetView();
-  await evalJs('window.__v8.stop(); window.__v8.state.theta = 0; "ok"');
+  await evalJs('window.__v12.stop(); window.__v12.state.theta = 0; "ok"');
   await pin(0);
   shots.home = { ...(await shot('07-home.png')), pixels: await evalJs(`(${PIXELS})`) };
 
-  await evalJs('window.__v8.cutaway(true); "ok"');
+  await evalJs('window.__v12.cutaway(true); "ok"');
   await sleep(400);
   shots.cutaway = { ...(await shot('08-cutaway.png')), pixels: await evalJs(`(${PIXELS})`), theta: 0 };
   if (shots.home.pixels.hash === shots.cutaway.pixels.hash)
@@ -730,16 +737,22 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
       bad.push(`the worst luminance distance to the crank 180 picture changed from ${pair.maxDelta} to ${back.diff.maxDelta} across the round trip`);
   }
 
-  await evalJs('window.__v8.cutaway(false); "ok"');
+  await evalJs('window.__v12.cutaway(false); "ok"');
   await sleep(300);
 
-  // Cylinders 1 and 4 are the pair the gate pinned: crank 0 leaves 1 at top dead centre
-  // and 4 at bottom dead centre (measured off the meshes, not assumed), and crank 180 must
-  // swap them. Their crowns are the topmost vertex of each piston.
+  // The dead-centre pair is chosen, not remembered: the gate takes the measured crowns
+  // at crank 0 and picks the highest and the lowest. Those measurements were already
+  // proven equal to timing.js above (pistonGroupAlongError < 1e-9 on every cylinder), so
+  // the two it picks ARE the authority's top and bottom dead centre for this engine -
+  // 1 and 10 on the V12, and crank 180 has to swap them by exactly one stroke.
   const stroke = runs[0].m.spec.stroke;
   const at0 = runs[0].m.chain;
   const at180 = runs.find((z) => z.theta === 180).m.chain;
-  const swap = [1, 4].map((cyl) => {
+  const top = at0.reduce((a, b) => (b.pistonAlongHi > a.pistonAlongHi ? b : a));
+  const bottom = at0.reduce((a, b) => (b.pistonAlongHi < a.pistonAlongHi ? b : a));
+  if (top.station === bottom.station)
+    bad.push(`the gate picked cyl ${top.cyl} and cyl ${bottom.cyl} as opposite dead centres, but they share station ${top.station}`);
+  const swap = [top.cyl, bottom.cyl].map((cyl) => {
     const a = at0.find((c) => c.cyl === cyl);
     const b = at180.find((c) => c.cyl === cyl);
     return { cyl, crown0: a.pistonAlongHi, crown180: b.pistonAlongHi, travel: +(a.pistonAlongHi - b.pistonAlongHi).toFixed(4) };
@@ -748,7 +761,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (Math.abs(Math.abs(sw.travel) - stroke) > 0.3)
       bad.push(`cyl ${sw.cyl}: its crown stands ${sw.crown0} cm up the bore at crank 0 and ${sw.crown180} cm at crank 180, a travel of ${sw.travel} cm where the published stroke is ${stroke} cm`);
   if (!(swap[0].travel > 0 && swap[1].travel < 0))
-    bad.push(`cyl 1 moved ${swap[0].travel} cm and cyl 4 ${swap[1].travel} cm between crank 0 and crank 180: the two cylinders the gate pinned are not at opposite dead centres`);
+    bad.push(`cyl ${swap[0].cyl} moved ${swap[0].travel} cm and cyl ${swap[1].cyl} ${swap[1].travel} cm between crank 0 and crank 180: the two cylinders the gate picked are not at opposite dead centres`);
   console.log('dead centres at crank 0 vs 180: ' + swap.map((sw) => `cyl${sw.cyl} crown ${sw.crown0} -> ${sw.crown180} cm (travel ${sw.travel})`).join(', '));
 
   // determinism: the same pose twice must be the same picture, byte for byte in the
@@ -767,15 +780,15 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
       bad.push(`two renders of the same pinned pose differ by ${px.maxDelta} luminance at one pixel; the measured worst case on this build is 48`);
   }
 
-  await evalJs('window.__v8.setRpm(1800); window.__v8.setSlowmo(1); window.__v8.start(); "ok"');
+  await evalJs('window.__v12.setRpm(1800); window.__v12.setSlowmo(1); window.__v12.start(); "ok"');
   await sleep(700);
   shots.running = { ...(await shot('10-running.png')), pixels: await evalJs(`(${PIXELS})`) };
-  await evalJs('window.__v8.stop(); "ok"');
+  await evalJs('window.__v12.stop(); "ok"');
 
-  await evalJs('window.__v8.explode(); "ok"');
+  await evalJs('window.__v12.explode(); "ok"');
   for (let i = 0; i < 160; i++) {
     await sleep(100);
-    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v12.viewState())'));
     if (1 - vs.fraction < 1e-6 && vs.moved > 0) break;
     if (i === 159) bad.push('EXPLODED VIEW never settled to the published 34.25 cm hoist');
   }
@@ -783,7 +796,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   shots.exploded = { ...(await shot('11-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
   const apart = JSON.parse(
     await evalJs(`JSON.stringify((() => {
-      const v = window.__v8, THREE = v.THREE;
+      const v = window.__v12, THREE = v.THREE;
       const u = new THREE.Box3();
       for (const o of v.view.members.values()) { o.updateWorldMatrix(true, true); u.union(new THREE.Box3().setFromObject(o)); }
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity, worst = 0;
@@ -813,10 +826,10 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (shots.exploded.pixels.hash === shots.home.pixels.hash)
     bad.push('the separated assembly produced the same picture as the assembled one');
   console.log(`spread law: assembled ${home.join(' x ')} cm -> exploded ${apart.span.join(' x ')} cm, worst corner ndc ${apart.worstNdc}, ${apart.moved} members hoisted ${apart.engineZ} cm`);
-  await evalJs('window.__v8.assemble(); window.__v8.settleView(); "ok"');
+  await evalJs('window.__v12.assemble(); window.__v12.settleView(); "ok"');
   await sleep(1500);
 
-  await evalJs('window.__v8.inspect("piston-cyl1"); "ok"');
+  await evalJs('window.__v12.inspect("piston-cyl1"); "ok"');
   await sleep(1200);
   await pin(0);
   shots.inspect = { ...(await shot('12-inspect-piston.png')), pixels: await evalJs(`(${PIXELS})`) };
@@ -828,7 +841,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     `framing law: piston-cyl1 covers ${(runs[0].m.coverHome.fraction * 100).toFixed(1)}% of the frame assembled, ` +
     `${(framed.coverHome.fraction * 100).toFixed(1)}% when inspected`
   );
-  await evalJs('window.__v8.clearInspect(); window.__v8.rig.reset(); "ok"');
+  await evalJs('window.__v12.clearInspect(); window.__v12.rig.reset(); "ok"');
   await sleep(1400);
 
   for (const [name, s] of Object.entries(shots)) {
@@ -844,8 +857,11 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // contact numbers measured here, printed so the thresholds above are auditable
   const last = runs[0].m.pairs.map((q) => (q.missing ? `${q.a}<->${q.b} MISSING` : `${q.gap}cm ${q.a}<->${q.b}`));
   console.log('contacts at crank 0: ' + last.join('  '));
+  // The rod limit is not a remembered 0.06: it is the published web clearance of a
+  // side-by-side pair, which is the tightest engineered gap between rod and forging.
+  const rodWeb = runs[0].m.spec.rodWebClearance + 0.01;
   for (const [lim, pair] of [
-    [0.06, 'rod-cyl1<->crank'], [0.06, 'rod-cyl5<->crank'],
+    [rodWeb, 'rod-cyl1<->crank'], [rodWeb, 'rod-cyl5<->crank'],
     [2.0, 'rod-cyl1<->piston-cyl1'], [2.0, 'rod-cyl4<->piston-cyl4'],
     [0.08, 'headers-L<->head-L'], [0.08, 'headers-R<->head-R'],
     [0.08, 'intake-L<->head-L'], [0.08, 'intake-R<->head-R'],

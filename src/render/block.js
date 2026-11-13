@@ -1,4 +1,4 @@
-// The cross-plane V8 block casting as a union of primitives. Overlapping
+// The 60 degree V12 block casting as a union of primitives. Overlapping
 // solids in the same material render as one casting; every junction is
 // computed from src/engine/spec.js and pinned by test/block.test.mjs.
 //
@@ -23,12 +23,16 @@ import { boxInBank, worldBox, latheX, latheBank } from './parts.js';
 const B = SPEC.block;
 const CR = SPEC.crank;
 const LINER_OD = B.boreShellRadius + 0.15; // slips into the bore wall columns
-const X_FRONT = B.stations[0] + B.pitch / 2; // 22
-const X_REAR = B.stations[3] - B.pitch / 2; // -22
+const X_FRONT = B.stations[0] + B.pitch / 2; //  33: the deck slab ends here
+const X_REAR = B.stations[B.stations.length - 1] - B.pitch / 2; // -33
 const SHELL_IN = CR.mainRadius + 0.05; // bearing shell inner
 const SHELL_OUT = SHELL_IN + 0.7;
 const FLANGE_Z = B.panFlangeZ; // published: the test stand bolts onto these planes
 const RAIL_Z = B.panRailZ;
+// fore/aft bearing bushes: centred on the end caps, 1.1 cm of bearing each side
+const BUSH_HALF = 1.1;
+const BUSH_FORE = MAIN_CAPS_X[0];
+const BUSH_AFT = MAIN_CAPS_X[MAIN_CAPS_X.length - 1];
 
 /** Closed outer-first lathe profile for a ring about world X. */
 function ringX(rOut, rIn, x0, x1) {
@@ -72,8 +76,8 @@ export function createBlock(materials) {
   );
   const foreBush = B.mainBossR + 0.1;
   const aftBush = B.aftMainBossR + 0.1;
-  put('main-bush-fore', latheX(ringX(foreBush, SHELL_OUT - 0.05, 23.4, 25.6), 48), materials.castIronBlock);
-  put('main-bush-aft', latheX(ringX(aftBush, SHELL_OUT - 0.05, -25.6, -23.4), 48), materials.castIronBlock);
+  put('main-bush-fore', latheX(ringX(foreBush, SHELL_OUT - 0.05, BUSH_FORE - BUSH_HALF, BUSH_FORE + BUSH_HALF), 48), materials.castIronBlock);
+  put('main-bush-aft', latheX(ringX(aftBush, SHELL_OUT - 0.05, BUSH_AFT - BUSH_HALF, BUSH_AFT + BUSH_HALF), 48), materials.castIronBlock);
 
   // 3. outboard deck support columns (bottom corners on the OD chord plane)
   //    + inboard bridge webs (inner corners tangent to the void wall),
@@ -116,7 +120,7 @@ export function createBlock(materials) {
     const x0 = c - 0.9;
     const x1 = c + 0.9;
     put(`main-shell-x${c}`, latheX(ringX(SHELL_OUT, SHELL_IN, x0 + 0.05, x1 - 0.05), 40), materials.bearingShell);
-    if (c !== MAIN_CAPS_X[0] && c !== MAIN_CAPS_X[4]) {
+    if (c !== MAIN_CAPS_X[0] && c !== MAIN_CAPS_X[MAIN_CAPS_X.length - 1]) {
       // neck stays inside the web gap (|x-c| <= 0.8 < 0.95) and never enters
       // the shell bore (top at r 3.35 > main radius 2.7) but overlaps the shell ring
       put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, -3.1, 3.1, lug.zBottom, -SHELL_OUT + 0.1, 0.2), materials.castIronBlock);

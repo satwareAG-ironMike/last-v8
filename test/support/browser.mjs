@@ -110,7 +110,7 @@ export async function withPage(opts = {}, fn) {
 
   const server = await startServer(0);
   const pageUrl = `http://127.0.0.1:${server.address().port}/`;
-  const profile = mkdtempSync(join(tmpdir(), 'v8-browser-'));
+  const profile = mkdtempSync(join(tmpdir(), 'v12-browser-'));
   let browser = null;
   let cdp = null;
   const errors = [];
@@ -220,9 +220,9 @@ export async function withPage(opts = {}, fn) {
     };
 
     for (let i = 0; i < 60; i++) {
-      const frames = await evalJs('window.__v8 && typeof window.__v8.frameCount === "function" ? window.__v8.frameCount() : -1');
+      const frames = await evalJs('window.__v12 && typeof window.__v12.frameCount === "function" ? window.__v12.frameCount() : -1');
       if (frames >= minFrames) break;
-      if (i === 59) throw new Error(`window.__v8 never produced ${minFrames} animation frames`);
+      if (i === 59) throw new Error(`window.__v12 never produced ${minFrames} animation frames`);
       await sleep(250);
     }
 

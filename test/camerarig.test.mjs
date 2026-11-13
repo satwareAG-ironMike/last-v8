@@ -52,7 +52,7 @@ const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 // the whole assembly exactly as main.js hangs it: engine group + stand beside it
 function buildScene() {
   const engine = createBlock(materials);
-  engine.name = 'v8-block';
+  engine.name = 'v12-block';
   for (const u of [createCranktrain, createValvetrain, createHeads, createManifolds]) engine.add(u(materials).group);
   engine.updateMatrixWorld(true);
   const stand = createStand(materials).group;

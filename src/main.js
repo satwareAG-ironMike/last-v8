@@ -73,7 +73,7 @@ const stand = createStand(materials);
 scene.add(stand.group);
 
 const engine = createBlock(materials);
-engine.name = 'v8-block';
+engine.name = 'v12-block';
 scene.add(engine);
 
 // Rotating assembly lives in the same scene graph as the casting; the only
@@ -295,8 +295,8 @@ function grabFrame() {
   };
 }
 
-window.__v8 = {
-  version: 'v8-0.10-view',
+window.__v12 = {
+  version: 'v12.0.0',
   SPEC,
   bankOut,
   bankUp,

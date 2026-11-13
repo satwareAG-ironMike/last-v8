@@ -1,9 +1,9 @@
 // Manifolds unit - written RED first. Contract:
-// - 4-into-1 exhaust headers per bank: 4 primaries + flanges that mate exactly
-//   onto the head outboard port face, pair merges, one collector sized for the
-//   flow of all four primaries, an outlet, weld beads at every joint
-// - 4 intake runners per bank into one plenum sitting in the V, plus a fuel
-//   rail with 4 injectors
+// - 6-into-1 exhaust headers per bank: 6 primaries + flanges that mate exactly
+//   onto the head outboard port face, three pair merges, one collector sized for
+//   the flow of all six primaries, an outlet, weld beads at every joint
+// - 6 intake runners per bank into one plenum hanging in the V, plus a fuel
+//   rail with 6 injectors
 // - every primary the same length within 3 % (a real equal-length header)
 // - no manifold solid touches the block, heads, valvetrain or cranktrain:
 //   clearance is measured against a 1 cm voxel shell of the real meshes, so
@@ -174,34 +174,34 @@ test('manifold build contract: headers, plenums, runners, rail, injectors per ba
   const { group } = build();
   for (const bank of ['L', 'R']) {
     const c = kindCounts(group, bank);
-    assert.equal(c.exFlange, 4, `${bank} exhaust flanges`);
-    assert.equal(c.exNeck, 4, `${bank} port necks`);
-    assert.equal(c.exPrimary, 4, `${bank} primaries`);
-    assert.equal(c.exPair, 2, `${bank} pair outlets`);
+    const N = B.stations.length; // six cylinders per bank
+    const pairs = N / 2;
+    assert.equal(c.exFlange, N, `${bank} exhaust flanges`);
+    assert.equal(c.exNeck, N, `${bank} port necks`);
+    assert.equal(c.exPrimary, N, `${bank} primaries`);
+    assert.equal(c.exPair, pairs, `${bank} pair outlets`);
     assert.equal(c.exCollector, 1, `${bank} collector`);
     assert.equal(c.exOutletFlange, 1, `${bank} outlet flange`);
-    assert.equal(c.exShield, 2, `${bank} heat shields`);
-    assert.equal(c.clampBand, 4, `${bank} shield clamp bands`);
-    assert.equal(c.shieldStay, 4, `${bank} shield stand-offs`);
-    assert.equal(c.exBead, 11, `${bank} exhaust weld beads`);
-    assert.equal(c.inFlange, 4, `${bank} intake flanges`);
-    assert.equal(c.inNeck, 4, `${bank} intake necks`);
-    assert.equal(c.inRunner, 4, `${bank} runners`);
+    assert.equal(c.exShield, pairs, `${bank} heat shields`);
+    assert.equal(c.clampBand, N, `${bank} shield clamp bands`);
+    assert.equal(c.shieldStay, N, `${bank} shield stand-offs`);
+    assert.equal(c.exBead, 2 * N + pairs + 1, `${bank} exhaust weld beads`);
+    assert.equal(c.inFlange, N, `${bank} intake flanges`);
+    assert.equal(c.inNeck, N, `${bank} intake necks`);
+    assert.equal(c.inRunner, N, `${bank} runners`);
     assert.equal(c.inPlenum, 1, `${bank} plenum`);
-    assert.equal(c.inBead, 6, `${bank} intake weld/clamp beads`);
+    assert.equal(c.inBead, N + 2, `${bank} intake weld/clamp beads`);
     assert.equal(c.rail, 1, `${bank} fuel rail`);
-    assert.equal(c.injector, 4, `${bank} injectors`);
+    assert.equal(c.injector, N, `${bank} injectors`);
     assert.equal(c.bracket, 2, `${bank} rail brackets`);
-    assert.equal(c.injectorCollar, 4, `${bank} injector clamp collars`);
-    assert.equal(c.rail, 1, `${bank} fuel rail`);
-    assert.equal(c.injector, 4, `${bank} injectors`);
+    assert.equal(c.injectorCollar, N, `${bank} injector clamp collars`);
     // Physical minimum, not a tautology against the spec: a flange held by a
     // single bolt pivots on that bolt about the port axis and leaks. Every port
     // needs its pair, on both sides of the head.
     assert.ok(M.boltOffsetsAlong.length >= 2,
       `${bank} flange bolt pattern has ${M.boltOffsetsAlong.length} hole(s): one bolt cannot hold a flange`);
-    assert.equal(c.bolt, 2 * 4 * M.boltOffsetsAlong.length,
-      `${bank} flange bolts: ${c.bolt} instances for ${4} ports x ${M.boltOffsetsAlong.length} holes x 2 sides`);
+    assert.equal(c.bolt, 2 * N * M.boltOffsetsAlong.length,
+      `${bank} flange bolts: ${c.bolt} instances for ${N} ports x ${M.boltOffsetsAlong.length} holes x 2 sides`);
   }
 });
 
@@ -263,20 +263,20 @@ test('intake flanges mate onto the head inboard face and the plenum clears every
   }
 });
 
-test('equal-length 4-into-1: primaries run from their own port to the merge and match within 3 %', async () => {
+test('equal-length 6-into-1: primaries run from their own port to the merge and match within 3 %', async () => {
   const specs = manifoldSpecs();
   const lens = [];
   for (const bank of ['L', 'R']) {
     const s = specs[bank];
-    assert.equal(s.primary.length, 4, `${bank} primaries`);
-    for (let i = 0; i < 4; i++) {
+    assert.equal(s.primary.length, B.stations.length, `${bank} primaries`);
+    for (let i = 0; i < B.stations.length; i++) {
       const nodes = s.primary[i];
       // first node sits in that cylinder's own port neck, last node at the pair merge
       assert.ok(Math.abs(nodes[0][2] - B.stations[i]) < 0.35,
         `${bank} primary ${i} starts at x ${nodes[0][2]}, not its cylinder station ${B.stations[i]}`);
       assert.ok(Math.abs(nodes[0][1] - (H.gasketOd + M.exFlangeT + M.exNeckT)) < 0.6,
         `${bank} primary ${i} does not start inside the port neck (out ${nodes[0][1]})`);
-      const mergeX = M.exMergeX * (i < 2 ? 1 : -1);
+      const mergeX = M.exMergeX[Math.floor(i / 2)];
       const last = nodes[nodes.length - 1];
       assert.ok(Math.abs(last[2] - mergeX) < 0.4, `${bank} primary ${i} ends at x ${last[2]}, merge is ${mergeX}`);
       let len = 0;
@@ -385,7 +385,7 @@ test('every joint is fused: tubes butt their flanges, primaries their necks, run
   };
   for (const bank of ['L', 'R']) {
     const v = bankVectors(bank);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < B.stations.length; i++) {
       const st = B.stations[i];
       joint(group.getObjectByName(`ex-flange-${bank}-${st}`), group.getObjectByName(`ex-neck-${bank}-${st}`),
         `exhaust flange/neck ${bank} ${st}`);
@@ -419,7 +419,7 @@ test('every joint is fused: tubes butt their flanges, primaries their necks, run
     }
     // each pair outlet is buried in the collector, and the collector in its outlet flange
     const coll = group.getObjectByName(`collector-${bank}`);
-    for (const px of [M.exMergeX, -M.exMergeX]) {
+    for (const px of M.exMergeX) {
       joint(group.getObjectByName(`pair-${bank}-${px}`), coll, `pair outlet ${bank} x ${px}`, 1.6);
       inside(group.getObjectByName(`pair-${bank}-${px}`),
         localAABB(v, bank, vertsOf(coll)), `pair outlet ${bank} x ${px} vs the collector`);
@@ -427,7 +427,7 @@ test('every joint is fused: tubes butt their flanges, primaries their necks, run
     joint(coll, group.getObjectByName(`outlet-${bank}`), `collector/outlet ${bank}`, 1.2);
     // the injector nozzle reaches inside its own runner bore, measured against
     // the runner centre-line the mesh is built from, not against a loose box
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < B.stations.length; i++) {
       const st = B.stations[i];
       const inj = group.getObjectByName(`injector-${bank}-${st}`);
       const nodes = specs[bank].runner[i];
@@ -455,7 +455,7 @@ test('fuel rail rides the plenum and every injector aims at its own cylinder', a
     // mounting distance rather than overlap it
     assert.ok(railGap >= 0.8, `rail ${bank} sits ${railGap.toFixed(3)} cm from the plenum bar`);
     assert.ok(railGap <= 4.0, `rail ${bank} floats ${railGap.toFixed(2)} cm off the plenum - nothing holds it`);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < B.stations.length; i++) {
       const st = B.stations[i];
       const inj = group.getObjectByName(`injector-${bank}-${st}`);
       assert.ok(inj, `injector ${bank} ${st} missing`);
@@ -557,7 +557,7 @@ test('every mounting carries its part: shields, stands, bands, collars, brackets
 
     // injectors are clamped to their runner and fed from the rail: the collar
     // grips the injector body and bears on the rail
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < B.stations.length; i++) {
       const st = B.stations[i];
       const collar = group.getObjectByName(`injector-collar-${bank}-${st}`);
       const inj = S.injector[i];

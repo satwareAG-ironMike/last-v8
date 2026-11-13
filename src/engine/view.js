@@ -333,9 +333,17 @@ export function partLabel(name) {
   const intake = /^intake-([LR])$/.exec(name);
   if (intake) return `Intake plenum - ${intake[1] === 'L' ? 'left' : 'right'} bank`;
   const header = /^headers-([LR])$/.exec(name);
-  if (header) return `Exhaust headers (4 into 1) - ${header[1] === 'L' ? 'left' : 'right'} bank`;
+  if (header) {
+    const n = SPEC.block.stations.length;
+    return `Exhaust headers (${n} into 1) - ${header[1] === 'L' ? 'left' : 'right'} bank`;
+  }
   if (name === 'head-bolts') return 'Head bolts (both banks)';
-  if (name === 'crank') return 'Crankshaft - crossplane, throws at 315/225/45/135\u00b0';
+  // The throw list is printed from SPEC.crank.pinAz, so the identity the part
+  // reports is the geometry the renderer was actually built from.
+  if (name === 'crank') {
+    const az = SPEC.crank.pinAz.join('/');
+    return `Crankshaft - ${SPEC.cylinders.length / 2}-cylinder V, ${SPEC.crank.pinAz.length} pins at ${az}\u00b0, twin rods per pin`;
+  }
   if (name === 'flywheel') return 'Flywheel and ring gear';
   if (name === 'sprocket') return 'Cam drive sprocket (18 teeth -> cams turn at half crank)';
   if (/^main-cap-/.test(name)) return `Main bearing cap - station ${name.slice(9)}`;
