@@ -45,7 +45,7 @@ const KEYS = {
 // ReferenceError at line 1 of the evaluated snippet.
 const SNAP = `(() => {
   const r2 = (n) => +n.toFixed(2);
-  const v = window.__v8, THREE = v.THREE;
+  const v = window.__v12, THREE = v.THREE;
   const txt = (id) => { const e = document.getElementById(id); return e ? e.textContent : null; };
   const attr = (id, name) => { const e = document.getElementById(id); return e ? e.getAttribute(name) : null; };
   const sel = document.getElementById('part-select');
@@ -170,7 +170,7 @@ try {
     /** Wait for the damped easing to finish on the page's own clock. */
     const settle = async (want) => {
       for (let i = 0; i < 140; i++) {
-        const v = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+        const v = JSON.parse(await evalJs('JSON.stringify(window.__v12.viewState())'));
         // The easing is exponential (fraction += (goal-fraction)*k, SPEC.view.damping
         // 9/s): a goal of 1 is approached, never snapped. Reading the hoist at
         // fraction 0.9995 measured 34.23 against the published 34.25 - the gate was
@@ -185,15 +185,15 @@ try {
      * and the HUD on its own clock, so a measurement taken between frames is not a
      * measurement of what the user sees. */
     const breathe = async (frames = 40) => {
-      const from = await evalJs('window.__v8.frameCount()');
+      const from = await evalJs('window.__v12.frameCount()');
       for (let i = 0; i < 60; i++) {
         await sleep(150);
-        if ((await evalJs('window.__v8.frameCount()')) - from >= frames) return;
+        if ((await evalJs('window.__v12.frameCount()')) - from >= frames) return;
       }
       throw new Error(`the page produced fewer than ${frames} animation frames in 9 s`);
     };
 
-    const version = await evalJs('window.__v8.version');
+    const version = await evalJs('window.__v12.version');
 
     // ---- the panel is there, and its limits are the simulation's own limits ----
     const published = await evalJs("import('/src/engine/animation.js').then((m) => [m.RPM_MIN, m.RPM_MAX])");
@@ -248,12 +248,12 @@ try {
     if (atMin.stateRpm !== published[0]) bad.push(`Home key left rpm at ${atMin.stateRpm}, the published floor is ${published[0]}`);
     if (atMin.running !== true) bad.push('running the slider stopped the engine');
     // the clamp is the authority: whatever the code sets, the panel shows that
-    await evalJs('window.__v8.setRpm(99999); "ok"');
+    await evalJs('window.__v12.setRpm(99999); "ok"');
     await sleep(200);
     const clamped = await snap('7 setRpm(99999) clamped');
     if (clamped.stateRpm !== published[1] || clamped.rpm !== published[1])
       bad.push(`setRpm(99999): state ${clamped.stateRpm}, slider shows ${clamped.rpm} - the panel must echo the clamp`);
-    await evalJs('window.__v8.setRpm(1800); "ok"');
+    await evalJs('window.__v12.setRpm(1800); "ok"');
     await sleep(200);
 
     // ---- movement keys must not fire out of a form field --------------------
@@ -303,7 +303,7 @@ try {
     // than assumed to be plain numbers
     const home = JSON.parse(
       await evalJs(
-        `JSON.stringify((() => { const h = window.__v8.rig.home; const t = h.target.toArray ? h.target.toArray() : h.target; return { az: +h.az.toFixed(4), el: +h.el.toFixed(4), dist: +h.dist.toFixed(2), target: t.map((n) => +n.toFixed(2)) }; })())`
+        `JSON.stringify((() => { const h = window.__v12.rig.home; const t = h.target.toArray ? h.target.toArray() : h.target; return { az: +h.az.toFixed(4), el: +h.el.toFixed(4), dist: +h.dist.toFixed(2), target: t.map((n) => +n.toFixed(2)) }; })())`
       )
     );
     await sleep(1400);
@@ -329,7 +329,7 @@ try {
         await evalJs(`(async () => {
           const out = [];
           for (let i = 0; i < 8; i++) {
-            out.push({ line: document.getElementById('status').textContent, factor: window.__v8.state.slowmo, rpm: window.__v8.state.rpm });
+            out.push({ line: document.getElementById('status').textContent, factor: window.__v12.state.slowmo, rpm: window.__v12.state.rpm });
             await new Promise((res) => setTimeout(res, 190));
           }
           return JSON.stringify(out);
@@ -402,9 +402,9 @@ try {
           const text = el.textContent;
           const last = c.seen[c.seen.length - 1];
           if (!last || last.text !== text)
-            c.seen.push({ ms: Math.round(performance.now() - c.at), text: text, frame: window.__v8.frameCount() });
+            c.seen.push({ ms: Math.round(performance.now() - c.at), text: text, frame: window.__v12.frameCount() });
         };
-        const self = { at: performance.now(), seen: [], cad: [{ ms: 0, frame: window.__v8.frameCount() }] };
+        const self = { at: performance.now(), seen: [], cad: [{ ms: 0, frame: window.__v12.frameCount() }] };
         self.obs = new MutationObserver(rec);
         window.__conf = self;
         self.obs.observe(el, { characterData: true, childList: true, subtree: true });
@@ -415,7 +415,7 @@ try {
         // moment its own window is closed or superseded.
         const probe = () => {
           if (window.__conf !== self || !self.obs) return;
-          self.cad.push({ ms: Math.round(performance.now() - self.at), frame: window.__v8.frameCount() });
+          self.cad.push({ ms: Math.round(performance.now() - self.at), frame: window.__v12.frameCount() });
           if (self.cad.length < 6000) requestAnimationFrame(probe);
         };
         requestAnimationFrame(probe);
@@ -580,7 +580,7 @@ try {
     const confCut = await confirmLaw('18a the confirmation CUTAWAY wrote', /cutaway on - one plane through the crank axis/);
     const cutFacts = JSON.parse(
       await evalJs(`JSON.stringify((() => {
-        const v = window.__v8, THREE = v.THREE;
+        const v = window.__v12, THREE = v.THREE;
         const mats = (o) => (Array.isArray(o.material) ? o.material : [o.material]);
         const clipped = (root) => {
           let n = 0;
@@ -670,17 +670,17 @@ try {
     // has to hand back the run state it found: the steps after it read the panel,
     // and a control cycle that started somewhere else is a control cycle nobody ran.
     const foundState = await evalJs(`(async () => {
-      const v = window.__v8;
+      const v = window.__v12;
       return { rpm: v.state.rpm, slowmo: v.state.slowmo, running: v.state.running };
     })()`);
-    await evalJs(`window.__v8.setRpm(250); window.__v8.setSlowmo(0.02); window.__v8.start(); "ok"`);
+    await evalJs(`window.__v12.setRpm(250); window.__v12.setSlowmo(0.02); window.__v12.start(); "ok"`);
     await sleep(200);
     let liveSeen = [];
     for (let i = 0; i < 5; i++) {
       const sm = await evalJs(`(async () => {
         const t = await import('/src/engine/timing.js');
         const sp = await import('/src/engine/spec.js');
-        const v = window.__v8;
+        const v = window.__v12;
         const theta = v.state.theta;
         return {
           theta,
@@ -703,7 +703,7 @@ try {
     if (distinctLines < 4)
       bad.push(`the CYL 1 readout only produced ${distinctLines} distinct lines across 5 samples spread over 1.5 s at 250 rpm x 1/50 (${JSON.stringify(liveSeen.map((z) => z.line))}) - it repaints on stroke boundaries, not with the crank`);
     const restore = await evalJs(`(async () => {
-      const v = window.__v8;
+      const v = window.__v12;
       v.setRpm(${foundState.rpm});
       v.setSlowmo(${foundState.slowmo});
       if (${foundState.running}) v.start(); else v.stop();
@@ -729,7 +729,7 @@ try {
     await settle('apart');
     const picked = JSON.parse(
       await evalJs(`JSON.stringify((() => {
-        const v = window.__v8, THREE = v.THREE;
+        const v = window.__v12, THREE = v.THREE;
         const name = 'cam-R-exhaust';
         const obj = v.view.members.get(name);
         v.inspect(name); // frame it first, the way the panel would
@@ -758,14 +758,14 @@ try {
     if (clickedPart.outlines !== 1) bad.push(`click-picking put ${clickedPart.outlines} outlines in the scene`);
 
     // ---- the menu follows an inspection the panel did NOT cause -----------------
-    // window.__v8.inspect() writes view state and nothing else: no menu code runs on
+    // window.__v12.inspect() writes view state and nothing else: no menu code runs on
     // that path. The PART INSPECTION menu can only name the new member if the panel
     // repaints it out of view.state().inspected, which is what "the panel holds no
     // state of its own" is supposed to mean.
     const commanded = 'rod-cyl4';
     await clickControl('#btn-clear');
     const blankMenu = await snap('24a the menu after CLEAR');
-    await evalJs(`window.__v8.inspect(${JSON.stringify(commanded)}); "ok"`);
+    await evalJs(`window.__v12.inspect(${JSON.stringify(commanded)}); "ok"`);
     await sleep(700); // several frames of panel.sync(), no menu code involved
     const followed = await snap('24b an inspection commanded through the published setter');
     if (followed.view.inspected !== commanded)
@@ -815,7 +815,7 @@ try {
     const cross = await evalJs(`(async () => {
       const t = await import('/src/engine/timing.js');
       const sp = await import('/src/engine/spec.js');
-      const v = window.__v8;
+      const v = window.__v12;
       const theta = v.state.theta;
       return {
         theta,
@@ -860,7 +860,7 @@ try {
     // advances it) and lets the loop repaint the crank poses from it. Pistons and
     // valves travel with the crank: comparing live boxes at two angles measures the
     // kinematics, not the teardown.
-    await evalJs(`window.__v8.state.theta = ${refGeom.theta}; "pinned"`);
+    await evalJs(`window.__v12.state.theta = ${refGeom.theta}; "pinned"`);
     await breathe(40);
     const end = await snap('27 the assembly, at the reference crank angle');
     if (Math.abs(end.theta - refGeom.theta) > 1e-9)
@@ -888,11 +888,11 @@ try {
     if (end.outlines !== 0) bad.push(`${end.outlines} selection outlines left in the scene`);
     if (end.view.inspected !== null) bad.push(`the cycle left a part inspected: ${end.view.inspected}`);
     const endClean = JSON.parse(
-      await evalJs(`JSON.stringify((() => { const v = window.__v8; let n = 0; const mats = (o) => (Array.isArray(o.material) ? o.material : [o.material]); v.engine.traverse((o) => { if (o.isMesh) for (const m of mats(o)) if (m && (String(m.name).endsWith(':sectioned') || (Array.isArray(m.clippingPlanes) && m.clippingPlanes.length))) n += 1; }); return n; })())`)
+      await evalJs(`JSON.stringify((() => { const v = window.__v12; let n = 0; const mats = (o) => (Array.isArray(o.material) ? o.material : [o.material]); v.engine.traverse((o) => { if (o.isMesh) for (const m of mats(o)) if (m && (String(m.name).endsWith(':sectioned') || (Array.isArray(m.clippingPlanes) && m.clippingPlanes.length))) n += 1; }); return n; })())`)
     );
     if (endClean !== 0) bad.push(`${endClean} sectioned or clipped materials left on the engine`);
     const orphan = JSON.parse(
-      await evalJs(`JSON.stringify((() => { const v = window.__v8; let n = 0; v.engine.traverse((o) => { if (o.parent && String(o.parent.name).startsWith('explode:')) n += 1; }); return n; })())`)
+      await evalJs(`JSON.stringify((() => { const v = window.__v12; let n = 0; v.engine.traverse((o) => { if (o.parent && String(o.parent.name).startsWith('explode:')) n += 1; }); return n; })())`)
     );
     if (orphan !== 0) bad.push(`${orphan} engine meshes still parented to an explode wrapper after ASSEMBLE`);
 

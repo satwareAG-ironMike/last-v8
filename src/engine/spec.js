@@ -29,7 +29,7 @@ export const BANKS = {
 // Six cylinder stations at the published pitch. Every fore/aft plane downstream
 // (deck ends, main journals, cam bearings, the sprocket stack, the flywheel) is a
 // function of this row: lengthening or shortening the engine is one edit here and
-// nothing else, which is what keeps a V8 and a V12 build from drifting apart.
+// nothing else, and no downstream plane may re-derive it by hand.
 const PITCH = 11.0;
 const SLAB = 4.5; // accessory-drive / bell-housing slab, symmetric fore and aft
 // Twin-rod pin geometry: each pin carries one L and one R big end side by side.
@@ -180,7 +180,7 @@ export const SPEC = {
   // shell inflates an obstacle by up to half a cell, so the design keeps
   // >= 1.2 cm of real air everywhere the pipework runs beside the engine.
   manifold: {
-    // ---- exhaust: 4-into-1 header per bank, outboard ----
+    // ---- exhaust: 6-into-1 header per bank, outboard ----
     exFlangeT: 0.7, // flange plate standing on the head outboard stay face (out 7.00)
     exFlangeX: 1.55, // flange half width in x (the stay is 1.7, so 0.15 all round)
     exFlangeA0: 24.4,
@@ -318,8 +318,13 @@ export const SPEC = {
   // recorded in G5d; every limit is published here, so the rig tests measure
   // what the rig actually does instead of what the author remembered.
   view: {
-    homePos: [84.4, -117.6, 104.5], // solved against the engine+stand union bbox
-    homeTarget: [-1.9, 1.9, 7.9],
+    // Solved against the measured engine+stand union bbox (x +-46.5, y +-30.66,
+    // z -16.5..42.38 -> bounding sphere r 63.00, centre (0, 0, 12.94)): the target
+    // IS that centre and the range is framingRange(r) with the published margin.
+    // The direction is the original swept three-quarter view, kept so the home
+    // framing still reads as the same test-cell photograph.
+    homePos: [87.22, -120.78, 110.57],
+    homeTarget: [0, 0, 12.94],
     fov: 48,
     aspect: 1280 / 713, // the size the headless gates render at
     distMin: 42, // close enough to read a valve spring through the section

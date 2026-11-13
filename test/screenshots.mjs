@@ -1,7 +1,7 @@
 // G7 oracle: the picture and the geometry behind it, measured on the live tree.
 //
 // G6 proves the controls work. This gate proves what the controls produce: that the
-// thing on screen is a cross-plane V8 whose parts are attached to each other and move
+// thing on screen is a 60 degree V12 whose parts are attached to each other and move
 // off one crank angle. Every law below is measured off the rendered meshes - live
 // vertices, live group transforms - and compared against src/engine/timing.js, which is
 // the authority the renderer is driven from. A mesh measured here is not a constant
@@ -35,7 +35,7 @@ const ANGLES = [0, 90, 180, 265, 340, 450, 540, 719];
 // ---- page-side: measure the rendered tree against the authority ----------------
 // No backticks inside: this whole body is inserted into a template literal below.
 const MEASURE = `(async () => {
-  const v = window.__v8, THREE = v.THREE, S = v.SPEC;
+  const v = window.__v12, THREE = v.THREE, S = v.SPEC;
   const tm = await import('/src/engine/timing.js');
   const r = (n, k) => +Number(n).toFixed(k === undefined ? 6 : k);
   const theta = v.state.theta;
@@ -364,7 +364,7 @@ const MEASURE = `(async () => {
 
 // ---- page-side: pixel stats over the drawing buffer, rendered in this call ------
 const PIXELS = `(() => {
-  const v = window.__v8;
+  const v = window.__v12;
   v.renderer.render(v.scene, v.camera);
   const gl = v.renderer.getContext();
   const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
@@ -453,12 +453,12 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   };
   /** Pin the crank angle and let the loop repaint the poses from it. */
   const pin = async (theta) => {
-    const from = await evalJs('window.__v8.frameCount()');
-    await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
-    await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
+    const from = await evalJs('window.__v12.frameCount()');
+    await evalJs('window.__v12.setRpm(0); window.__v12.start(); "ok"');
+    await evalJs('window.__v12.state.theta = ' + theta + '; window.__v12.settleView(); "ok"');
     for (let i = 0; i < 90; i++) {
       await sleep(120);
-      if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
+      if ((await evalJs('window.__v12.frameCount()')) - from >= 4) return;
     }
     throw new Error('the page produced no animation frames after pinning crank ' + theta);
   };
@@ -470,8 +470,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const measure = async () => await evalJs(`(async () => (${MEASURE}))()`, { timeoutMs: 120000 });
 
   const resetView = async () => {
-    await evalJs('window.__v8.clearInspect(); window.__v8.assemble(); window.__v8.cutaway(false); window.__v8.rig.reset(); "ok"');
-    await evalJs('window.__v8.settleView(); "ok"');
+    await evalJs('window.__v12.clearInspect(); window.__v12.assemble(); window.__v12.cutaway(false); window.__v12.rig.reset(); "ok"');
+    await evalJs('window.__v12.settleView(); "ok"');
   };
 
   // ---- the surfaces of this engine, measured off the live meshes ------------------
@@ -671,11 +671,11 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // ---- shots, and what the pixels say about them ------------------------------
   const shots = {};
   await resetView();
-  await evalJs('window.__v8.stop(); window.__v8.state.theta = 0; "ok"');
+  await evalJs('window.__v12.stop(); window.__v12.state.theta = 0; "ok"');
   await pin(0);
   shots.home = { ...(await shot('07-home.png')), pixels: await evalJs(`(${PIXELS})`) };
 
-  await evalJs('window.__v8.cutaway(true); "ok"');
+  await evalJs('window.__v12.cutaway(true); "ok"');
   await sleep(400);
   shots.cutaway = { ...(await shot('08-cutaway.png')), pixels: await evalJs(`(${PIXELS})`), theta: 0 };
   if (shots.home.pixels.hash === shots.cutaway.pixels.hash)
@@ -730,7 +730,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
       bad.push(`the worst luminance distance to the crank 180 picture changed from ${pair.maxDelta} to ${back.diff.maxDelta} across the round trip`);
   }
 
-  await evalJs('window.__v8.cutaway(false); "ok"');
+  await evalJs('window.__v12.cutaway(false); "ok"');
   await sleep(300);
 
   // Cylinders 1 and 4 are the pair the gate pinned: crank 0 leaves 1 at top dead centre
@@ -767,15 +767,15 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
       bad.push(`two renders of the same pinned pose differ by ${px.maxDelta} luminance at one pixel; the measured worst case on this build is 48`);
   }
 
-  await evalJs('window.__v8.setRpm(1800); window.__v8.setSlowmo(1); window.__v8.start(); "ok"');
+  await evalJs('window.__v12.setRpm(1800); window.__v12.setSlowmo(1); window.__v12.start(); "ok"');
   await sleep(700);
   shots.running = { ...(await shot('10-running.png')), pixels: await evalJs(`(${PIXELS})`) };
-  await evalJs('window.__v8.stop(); "ok"');
+  await evalJs('window.__v12.stop(); "ok"');
 
-  await evalJs('window.__v8.explode(); "ok"');
+  await evalJs('window.__v12.explode(); "ok"');
   for (let i = 0; i < 160; i++) {
     await sleep(100);
-    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v12.viewState())'));
     if (1 - vs.fraction < 1e-6 && vs.moved > 0) break;
     if (i === 159) bad.push('EXPLODED VIEW never settled to the published 34.25 cm hoist');
   }
@@ -783,7 +783,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   shots.exploded = { ...(await shot('11-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
   const apart = JSON.parse(
     await evalJs(`JSON.stringify((() => {
-      const v = window.__v8, THREE = v.THREE;
+      const v = window.__v12, THREE = v.THREE;
       const u = new THREE.Box3();
       for (const o of v.view.members.values()) { o.updateWorldMatrix(true, true); u.union(new THREE.Box3().setFromObject(o)); }
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity, worst = 0;
@@ -813,10 +813,10 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (shots.exploded.pixels.hash === shots.home.pixels.hash)
     bad.push('the separated assembly produced the same picture as the assembled one');
   console.log(`spread law: assembled ${home.join(' x ')} cm -> exploded ${apart.span.join(' x ')} cm, worst corner ndc ${apart.worstNdc}, ${apart.moved} members hoisted ${apart.engineZ} cm`);
-  await evalJs('window.__v8.assemble(); window.__v8.settleView(); "ok"');
+  await evalJs('window.__v12.assemble(); window.__v12.settleView(); "ok"');
   await sleep(1500);
 
-  await evalJs('window.__v8.inspect("piston-cyl1"); "ok"');
+  await evalJs('window.__v12.inspect("piston-cyl1"); "ok"');
   await sleep(1200);
   await pin(0);
   shots.inspect = { ...(await shot('12-inspect-piston.png')), pixels: await evalJs(`(${PIXELS})`) };
@@ -828,7 +828,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     `framing law: piston-cyl1 covers ${(runs[0].m.coverHome.fraction * 100).toFixed(1)}% of the frame assembled, ` +
     `${(framed.coverHome.fraction * 100).toFixed(1)}% when inspected`
   );
-  await evalJs('window.__v8.clearInspect(); window.__v8.rig.reset(); "ok"');
+  await evalJs('window.__v12.clearInspect(); window.__v12.rig.reset(); "ok"');
   await sleep(1400);
 
   for (const [name, s] of Object.entries(shots)) {

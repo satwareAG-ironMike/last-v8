@@ -1,4 +1,4 @@
-// Industrial engine test stand. It carries the V8 on two real casting interfaces
+// Industrial engine test stand. It carries the V12 on two real casting interfaces
 // only, both derived from src/engine/spec.js and measured off the block group in
 // test/stand.test.mjs:
 //

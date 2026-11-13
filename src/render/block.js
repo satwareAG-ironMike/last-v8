@@ -1,4 +1,4 @@
-// The cross-plane V8 block casting as a union of primitives. Overlapping
+// The 60 degree V12 block casting as a union of primitives. Overlapping
 // solids in the same material render as one casting; every junction is
 // computed from src/engine/spec.js and pinned by test/block.test.mjs.
 //

@@ -1,9 +1,9 @@
 // Manifolds unit - written RED first. Contract:
-// - 4-into-1 exhaust headers per bank: 4 primaries + flanges that mate exactly
-//   onto the head outboard port face, pair merges, one collector sized for the
-//   flow of all four primaries, an outlet, weld beads at every joint
-// - 4 intake runners per bank into one plenum sitting in the V, plus a fuel
-//   rail with 4 injectors
+// - 6-into-1 exhaust headers per bank: 6 primaries + flanges that mate exactly
+//   onto the head outboard port face, three pair merges, one collector sized for
+//   the flow of all six primaries, an outlet, weld beads at every joint
+// - 6 intake runners per bank into one plenum hanging in the V, plus a fuel
+//   rail with 6 injectors
 // - every primary the same length within 3 % (a real equal-length header)
 // - no manifold solid touches the block, heads, valvetrain or cranktrain:
 //   clearance is measured against a 1 cm voxel shell of the real meshes, so

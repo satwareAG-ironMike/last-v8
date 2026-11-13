@@ -13,10 +13,10 @@ const fail = (why) => {
 
 try {
   await withPage({ minFrames: 8, watchdogMs: 90000 }, async ({ evalJs, capture, pageUrl, errors, warnings }) => {
-    const stats = JSON.parse(await evalJs('JSON.stringify(window.__v8.grabFrame())'));
-    const version = await evalJs('window.__v8.version');
-    const envOk = await evalJs('window.__v8.scene.environment ? window.__v8.scene.environment.isPMREMTexture === true || !!window.__v8.scene.environment.mapping : false');
-    const materialCount = await evalJs('Object.keys(window.__v8.materials).length');
+    const stats = JSON.parse(await evalJs('JSON.stringify(window.__v12.grabFrame())'));
+    const version = await evalJs('window.__v12.version');
+    const envOk = await evalJs('window.__v12.scene.environment ? window.__v12.scene.environment.isPMREMTexture === true || !!window.__v12.scene.environment.mapping : false');
+    const materialCount = await evalJs('Object.keys(window.__v12.materials).length');
 
     const shotDir = join(ROOT, 'shots');
     mkdirSync(shotDir, { recursive: true });

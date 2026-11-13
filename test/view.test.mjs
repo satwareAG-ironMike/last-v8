@@ -39,7 +39,7 @@ function buildWorld() {
   const materials = proxyMaterials();
   const units = engineUnits(materials);
   const engine = units.block;
-  engine.name = 'v8-block';
+  engine.name = 'v12-block';
   engine.add(units.cranktrain, units.valvetrain, units.heads, units.manifolds);
   engine.updateMatrixWorld(true);
   const scene = new THREE.Scene();
@@ -233,7 +233,11 @@ test('explode table: every rule lands on real parts, and no part is moved twice'
   assert.equal(partBank('head-L'), 'L');
   assert.equal(partBank('valve-cyl4-exhaust'), 'R');
   assert.equal(partBank('crankcase'), null);
-  assert.ok(partLabel('crank').includes('crossplane'));
+  // the part's identity string must be the geometry, not a remembered label:
+  // it names the pin count and every pin azimuth straight out of SPEC.crank.pinAz
+  assert.ok(partLabel('crank').includes(`${SPEC.crank.pinAz.length} pins`), partLabel('crank'));
+  assert.ok(SPEC.crank.pinAz.every((a) => partLabel('crank').includes(String(a))), partLabel('crank'));
+  assert.ok(partLabel('headers-L').includes(`${SPEC.block.stations.length} into 1`), partLabel('headers-L'));
   assert.ok(partLabel('piston-cyl3').includes('cylinder 3'));
 });
 

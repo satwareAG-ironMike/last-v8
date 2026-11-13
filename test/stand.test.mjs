@@ -237,7 +237,7 @@ test('feet stand exactly on the floor plane and nothing hangs below it', async (
   );
   let area = 0;
   for (const m of feet) area += (m.bb[1] - m.bb[0]) * (m.bb[3] - m.bb[2]);
-  assert.ok(area >= 600, `floor contact area ${area.toFixed(0)} cm^2 is too little to carry a V8`);
+  assert.ok(area >= 600, `floor contact area ${area.toFixed(0)} cm^2 is too little to carry a V12`);
 });
 
 test('eight engine mounts bite the measured oil-pan flange and hold it by area', async () => {
