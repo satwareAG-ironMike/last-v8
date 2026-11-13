@@ -296,7 +296,7 @@ function grabFrame() {
 }
 
 window.__v12 = {
-  version: 'v12-0.1-view',
+  version: 'v12.0.0',
   SPEC,
   bankOut,
   bankUp,
