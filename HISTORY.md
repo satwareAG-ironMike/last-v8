@@ -1,4 +1,4 @@
-# How the Last V8 was built
+# How the Last V8 was built - and how it became a V12
 
 The repo starts at the engine core; this file covers the story before commit one
 and the discipline that produced `GATES.md`.
@@ -39,3 +39,37 @@ Two audit tools are committed so the ledger's claims stay recomputable:
 
 The live review found the honest weak spot: the lighting/camera defaults, not
 the kinematic correctness. The defaults are taste calls; the math is gated.
+
+## The V12 (2026-11, same repo, same discipline)
+
+The follow-up goal: the same test stand, the same harness, a 60-degree V12 -
+twelve cylinders in two banks of six, six crankpins each carrying a pair of
+side-by-side rods, seven main bearings, twelve power pulses 60 crank degrees
+apart. The repo slug stayed `last-v8` because the history is the point: the V8
+won the challenge, and the V12 is what the same engine family becomes when you
+stretch it.
+
+What was kept on purpose and what changed is recorded in the G8 row of
+`GATES.md`: every transverse V8 dimension (stroke 8.0, rod 14.5, bore tunnel,
+head and valvetrain geometry, the pan and stand Z planes) survived; the bank
+angle went to 60 degrees, the station row to six, the crank from four throws to
+six pins carrying twin big ends. Everything fore/aft derives from the one
+`STATIONS` row - deck ends, seven main journals and caps, cam bearings,
+sprocket stack, flywheel, head faces - so the build cannot drift.
+
+The upgrade also fixed a class of test bug that the V8 had smuggled through:
+three control laws asserted numbers a specific engine had earned (133 menu
+entries, 107 separated members, a remembered hoist height). Each now measures
+its authority - the menu equals the inspectables the scene publishes, the
+separated count equals the members the teardown table claims, the hoist is
+checked by the floor law it exists to serve - so the same gates held the V8 and
+hold the V12 without being edited. The firing order is re-derived from the
+throws (`firingOrder()` -> 1-6-5-10-9-2-4-3-8-7-12-11, pulses 0..660 step 60),
+never typed, and the id plate, HUD header and part labels all generate
+themselves out of the spec, so an artifact that mislabels its own engine is
+structurally impossible.
+
+The V8 ledger rows G1..G7 stay verbatim - `scripts/ledger-name-evidence.py
+--prove` pins them against commit `345f71f` - and the V12 work closed into the
+same file as G8..G11, including the row that honestly declares which V8
+screenshot hashes the browser-gate re-runs overwrote.

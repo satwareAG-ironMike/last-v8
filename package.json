@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Interactive 3D simulation of a cross-plane 90 degree V8 on an industrial test stand (Three.js/WebGL, procedural geometry)",
+  "description": "Interactive 3D simulation of a 60 degree DOHC V12 on an industrial test stand (Three.js/WebGL, procedural geometry). Repo slug last-v8 is history: the tree first carried a cross-plane V8, the V12 was rebuilt on the same dimensions (GATES.md G8..G11).",
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "serve": "node scripts/serve.mjs",
