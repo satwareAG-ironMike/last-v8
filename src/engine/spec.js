@@ -60,6 +60,8 @@ export const MAIN_JOURNALS = [
 ];
 /** Main cap centres, front -> rear: one per journal, the end ones inside their disc. */
 export const MAIN_CAPS_X = [DECK_END_X + 2.25, ...STATION_JOINTS_X, -(DECK_END_X + 2.25)];
+/** Free x windows between adjacent main cap lugs - the stand's mount stations. */
+const CAP_GAPS = MAIN_CAPS_X.slice(0, -1).map((c, i) => (c + MAIN_CAPS_X[i + 1]) / 2);
 
 export const SPEC = {
   banks: BANKS,
@@ -273,11 +275,12 @@ export const SPEC = {
     tieForeX: [END_X + 6.5, END_X + 9.0], // fore/aft cross ties: the frame's torsion box
     tieAftX: [-(END_X + 9.0), -(END_X + 6.5)],
     sideTieX: [DECK_END_X + 0.4, DECK_END_X + 2.4], // ties from each bed rail down to its skid rail
-    // Mount stations along the pan flange, one post per station per side. The
-    // outer pair sits under the end cylinders, the centre one under the middle
-    // of the crankcase, so the longer casting is supported at three points
-    // per side instead of two.
-    mountX: [STATIONS[0] - 1.5, 0, -(STATIONS[0] - 1.5)],
+    // Mount stations along the pan flange: the midpoints between adjacent main
+    // caps are the only x windows the cap lugs leave free (every cap lug reaches
+    // exactly down to the pan-rail plane, so a mount may not share its x). Every
+    // other gap is used, which keeps the row symmetric about the crank axis and
+    // supports the longer casting at four points per side.
+    mountX: [CAP_GAPS[0], CAP_GAPS[2], CAP_GAPS[3], CAP_GAPS[5]],
     postHalf: 1.5, // post: mx +/- postHalf
     padHalf: 2.5, // mount plate: mx +/- padHalf
     postY: [4.4, 6.4], // its bottom face sits on frameZ1 (derived), its top on padZ0

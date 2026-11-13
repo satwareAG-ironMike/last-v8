@@ -97,22 +97,24 @@ export function standSpecs() {
   }
 
   // ---- 2. engine mounts: post -> rubber mount plate -> oil-pan flange --------
-  for (const end of ENDS) {
-    const e = endSign(end);
-    for (const side of SIDES) {
-      const s = sideSign(side);
-      const tag = `${end[0]}${side}`;
+  // One mount per station group per side: the outer pair sits under the end
+  // cylinders, the middle one under the middle of the crankcase, so the pan
+  // flange is supported along its whole length instead of at its corners only.
+  for (const side of SIDES) {
+    const s = sideSign(side);
+    for (const mx of S.mountX) {
+      const tag = `${side}${mx}`;
       put(`post-${tag}`, 'post',
-        e * S.postX[0], e * S.postX[1], s * S.postY[0], s * S.postY[1], S.frameZ1, S.padZ0);
+        mx - S.postHalf, mx + S.postHalf, s * S.postY[0], s * S.postY[1], S.frameZ1, S.padZ0);
       put(`pad-${tag}`, 'pad',
-        e * S.padInX, e * S.padOutX, s * I.padInY, s * S.padOutY, S.padZ0, I.padZ1);
+        mx - S.padHalf, mx + S.padHalf, s * I.padInY, s * S.padOutY, S.padZ0, I.padZ1);
       // gusset from the bed rail into the mount post: both ends buried in the
       // member it ties, so the brace cannot pull out of the frame
       out.push({
         name: `brace-${tag}`,
         kind: 'brace',
-        a: [e * S.braceX, s * S.braceFootY, S.braceFootZ],
-        b: [e * S.braceX, s * S.braceHeadY, S.braceHeadZ],
+        a: [mx, s * S.braceFootY, S.braceFootZ],
+        b: [mx, s * S.braceHeadY, S.braceHeadZ],
         r: S.braceR,
       });
     }
@@ -140,19 +142,17 @@ export function standSpecs() {
   return out;
 }
 
-/** The 8 clamp bolts: 2 per mount plate, axis along Y, head outboard in free air. */
+/** Two clamp bolts per mount plate, axis along Y, head outboard in free air. */
 export function standBolts() {
   const I = standInterfaces();
   const specs = [];
-  for (const end of ENDS) {
-    const e = endSign(end);
-    for (const side of SIDES) {
-      const s = sideSign(side);
-      const cx = e * (S.padInX + S.padOutX) / 2;
+  for (const side of SIDES) {
+    const s = sideSign(side);
+    for (const cx of S.mountX) {
       for (let i = 0; i < S.boltsPerMount; i++) {
         const off = (i - (S.boltsPerMount - 1) / 2) * S.boltOffX;
         specs.push({
-          name: `bolt-${end[0]}${side}-${i + 1}`,
+          name: `bolt-${side}${cx}-${i + 1}`,
           kind: 'bolt',
           p: [cx + off, s * S.padOutY, S.boltZ],
           dir: [0, s, 0], // instancedBolts turns local +Y (the hex head) onto dir

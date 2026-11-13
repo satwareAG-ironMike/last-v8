@@ -28,9 +28,11 @@ import {
 const S = SPEC.stand;
 const B = SPEC.block;
 const EPS = 1e-4;
+// four mounts per side on the longer pan flange, one reaction frame per end
+const MOUNTS = 2 * SPEC.stand.mountX.length;
 const KINDS = {
-  bed: 2, skid: 2, tie: 2, sideTie: 4, post: 4, pad: 4,
-  column: 4, arm: 2, jaw: 4, brace: 4,
+  bed: 2, skid: 2, tie: 2, sideTie: 4, post: MOUNTS, pad: MOUNTS,
+  column: 4, arm: 2, jaw: 4, brace: MOUNTS,
 };
 const MOUNT_KINDS = new Set(['pad', 'jaw', 'bolt']);
 
@@ -173,10 +175,10 @@ test('stand publishes its whole load path: members, mounts, clamp bolts', () => 
   }
 });
 
-test('stand builds exactly the published members: 32 members plus 8 clamp bolts', async () => {
+test(`stand builds exactly the published members: ${Object.values(KINDS).reduce((a,b)=>a+b,0)} members plus ${MOUNTS * S.boltsPerMount} clamp bolts`, async () => {
   const { group } = build();
   const c = kindCounts(group);
-  assert.deepEqual(c, { ...KINDS, bolt: 8 }, `rendered stand kinds ${JSON.stringify(c)}`);
+  assert.deepEqual(c, { ...KINDS, bolt: MOUNTS * S.boltsPerMount }, `rendered stand kinds ${JSON.stringify(c)}`);
   const published = new Set(standSpecs().map((m) => m.name));
   const built = new Map();
   group.traverse((o) => {
@@ -190,7 +192,7 @@ test('stand builds exactly the published members: 32 members plus 8 clamp bolts'
   for (const n of published) assert.ok(built.has(n), `published member ${n} was never rendered`);
   const bolts = group.getObjectByName('stand-bolts');
   assert.ok(bolts?.isInstancedMesh, 'stand-bolts InstancedMesh missing');
-  assert.equal(bolts.count, 8, 'clamp bolt instances');
+  assert.equal(bolts.count, MOUNTS * S.boltsPerMount, 'clamp bolt instances');
   assert.ok(bolts.castShadow, 'clamp bolts must cast shadows');
   // rendered member AABBs must be the published ones: a mesh may not drift away
   // from the member the clearance and joint tests measured
@@ -238,10 +240,10 @@ test('feet stand exactly on the floor plane and nothing hangs below it', async (
   assert.ok(area >= 600, `floor contact area ${area.toFixed(0)} cm^2 is too little to carry a V8`);
 });
 
-test('four engine mounts bite the measured oil-pan flange and hold it by area', async () => {
+test('eight engine mounts bite the measured oil-pan flange and hold it by area', async () => {
   const F = castFaces();
   const pads = standSpecs().filter((m) => m.kind === 'pad');
-  assert.equal(pads.length, 4, 'engine mounts: one per corner of the pan flange');
+  assert.equal(pads.length, MOUNTS, 'engine mounts: one per mount station on each side of the pan flange');
   const wall = panWallHalfWidth();
   const railZ = panRailPlane();
   for (const p of pads) {
@@ -280,7 +282,7 @@ test('clamp bolts are buried in the pan wall, their heads stand proud in free ai
   const pads = standSpecs().filter((m) => m.kind === 'pad');
   const perMount = {};
   bolts.forEach((b, i) => {
-    const pad = pads.find((p) => Math.sign(p.bb[2]) === Math.sign(b.p[1]) && Math.sign(p.bb[0]) === Math.sign(b.p[0]));
+    const pad = pads.find((p) => Math.sign(p.bb[2]) === Math.sign(b.p[1]) && b.p[0] >= p.bb[0] && b.p[0] <= p.bb[1]);
     assert.ok(pad, `bolt ${b.name} belongs to no mount pad`);
     perMount[pad.name] = (perMount[pad.name] ?? 0) + 1;
     // instancedBolts turns local +Y (the hex head side of boltGeometry) onto dir,
@@ -476,9 +478,12 @@ test('every member reaches a foot through a real joint: nothing floats apart', a
     assert.ok(adj[i].length >= need,
       `${m.name} (${m.kind}) joints with ${adj[i].length} member(s): ${adj[i].map((o) => o.name).join(', ') || 'none'}; ${m.kind} needs ${need}`);
   });
-  // the engine is held fore-aft and side-side: 4 mounts, 2 per end of the block
-  const mountEnds = standSpecs().filter((m) => m.kind === 'pad').map((m) => (m.bb[0] > 0 ? 'fore' : 'aft'));
-  assert.deepEqual(mountEnds.sort(), ['aft', 'aft', 'fore', 'fore'], 'mount corners');
+  // the engine is held fore-aft and side-side: the mount row is symmetric about
+  // the crank axis, one station fore, one aft and one in the middle, per side
+  const padX = standSpecs().filter((m) => m.kind === 'pad' && m.bb[2] > 0).map((m) => (m.bb[0] + m.bb[1]) / 2);
+  assert.deepEqual([...padX].sort((a, b) => a - b), [...S.mountX].sort((a, b) => a - b),
+    'mount stations are not the published row');
+  assert.equal(standSpecs().filter((m) => m.kind === 'pad').length, 2 * S.mountX.length, 'one mount row per side');
 });
 
 test('the stand is static: a test stand does not animate', async () => {
@@ -506,7 +511,8 @@ test('mount and jaw positions are derived from the casting, not pinned as magic 
   const railZ = panRailPlane();
   const faceX = endDiscFaceX();
   assert.ok(Math.abs(wall - 2.9496) < 1e-3, `derived oil-pan wall half-width ${wall.toFixed(4)}`);
-  assert.ok(Math.abs(faceX - 26.5) < EPS, `derived end-disc face x ${faceX}`);
+  assert.ok(Math.abs(faceX - (B.stations[0] + B.pitch / 2 + B.slabFront)) < EPS,
+    `derived end-disc face x ${faceX}`);
   assert.ok(railZ < B.panFlangeZ, 'the pan rail plane must sit below the pan flange plane');
   for (const p of standSpecs().filter((m) => m.kind === 'pad')) {
     const sgn = p.bb[2] > 0 ? 1 : -1;
@@ -570,7 +576,8 @@ test('the frame stays in the measured free lanes: it never reaches up beside the
   // the braces are the only diagonal members, and each one is buried at both ends
   for (const br of members.filter((m) => m.kind === 'brace')) {
     const bed = members.find((m) => m.kind === 'bed' && Math.sign(m.bb[2]) === Math.sign(br.a[1]));
-    const post = members.find((m) => m.kind === 'post' && Math.sign(m.bb[2]) === Math.sign(br.b[1]) && Math.sign(m.bb[0]) === Math.sign(br.b[0]));
+    const post = members.find((m) => m.kind === 'post' && Math.sign(m.bb[2]) === Math.sign(br.b[1]) &&
+      br.b[0] >= m.bb[0] && br.b[0] <= m.bb[1]);
     assert.ok(bed && post, `${br.name} has no bed rail / mount post to tie`);
     assert.ok(depthToBox(bed.bb, br.a) >= 0.1, `${br.name} foot is not buried in the bed rail`);
     assert.ok(depthToBox(post.bb, br.b) >= 0.1, `${br.name} head is not buried in the mount post`);
