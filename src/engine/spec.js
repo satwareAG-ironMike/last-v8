@@ -194,24 +194,24 @@ export const SPEC = {
     // count and the spacing are load-bearing, not decoration.
     boltOffsetsAlong: [1.7, -1.7],
     boltHoleR: 0.36,
-    exPrimaryR: 1.05, // 4-into-1 primary tube
-    // Pair merge sits exactly midway between its two cylinder stations, so all
-    // four primaries travel the same 5.5 cm in x and come out the same length:
-    // (16.5 + 5.5) / 2 = 11, mirror -11.
-    exMergeX: 11.0,
+    exPrimaryR: 1.05, // primary tube, one per cylinder
+    // Pair merges sit exactly midway between the two stations of each pair, so
+    // every primary travels the same half pitch in x and all six come out the
+    // same length. Derived from the station row: (27.5 + 16.5) / 2 = 22, etc.
+    exMergeX: STATION_JOINTS_X.filter((_, i) => i % 2 === 0),
     exPairR: 1.5, // pair outlet: r^2 2.25 >= 2 primaries 2 x 1.1025 = 2.205
-    // A merged collector has to pass the flow of ALL four primaries, so its
-    // area is sized against 4 x the primary area, not against one of them:
-    // 2.15^2 = 4.62 >= 4 x 1.05^2 = 4.41.
-    exCollectorR: 2.15,
-    exOutletR: 2.7, // bolt-on outlet flange disc at the collector end
+    // A merged collector has to pass the flow of ALL six primaries, so its area
+    // is sized against 6 x the primary area, not against one of them:
+    // 2.65^2 = 7.02 >= 6 x 1.05^2 = 6.62.
+    exCollectorR: 2.65,
+    exOutletR: 3.15, // bolt-on outlet flange disc at the collector end
     exOutletT: 0.9,
     shieldOut0: 17.6, // heat shield: outboard of every primary tube surface (15.25)
     shieldOut1: 18.2,
     shieldA0: 14.5, // shield span in along: starts outboard of the collector
     shieldA1: 30.0,
-    shieldXFront: [9.5, 18.5], // wide enough to cover both primaries of its pair
-    shieldXAft: [-18.5, -9.5],
+    shieldHalfX: 4.5, // one shield per pair merge, centred on it, wide enough to
+    // cover both primaries of its pair
     shieldStayR: 0.35, // stand-off bracket from the clamp band up to the shield
     // Grip points along the two primaries a shield covers: the outer cylinder's
     // tube passes under the shield early, the inner cylinder's only near its
@@ -230,20 +230,24 @@ export const SPEC = {
     inNeckT: 1.9,
     inRunnerR: 1.2, // intake runner tube
     // The plenum hangs in the V, inboard of the cam bosses (the boss OD reaches
-    // |out| = 5.28 + 2.85 = 8.13 measured), so its outboard wall sits at -12.5:
-    // 4.4 cm of real air past the whole casting.
-    plenumOut0: -19.5,
-    plenumOut1: -12.5,
-    plenumA0: 30.5,
-    plenumA1: 37.5,
-    plenumX: 22.0, // half length: 6.6 cm clear of the 28.6 sprocket band
+    // |out| = 5.28 + 2.85 = 8.13 measured), so its outboard wall sits at -11:
+    // 2.9 cm of real air past the whole casting. A 60 degree bank is also much
+    // narrower across the centre plane: a bank-local point (a, o) sits at
+    // y = a sin 30 + o cos 30, so the bar's inner edge (33.5, -16.5) keeps 2.46
+    // cm of air from the centre plane and 4.9 cm from its own mirror image.
+    // Lower than this in `along` the bar would run into the other bank.
+    plenumOut0: -16.5,
+    plenumOut1: -11.0,
+    plenumA0: 33.5,
+    plenumA1: 40.0,
+    plenumX: 30.0, // half length: 9.8 cm clear of the nose sprocket band
     plenumR: 1.4, // cast fillet of the plenum bar
-    railAlong: 28.0, // fuel rail rides below + inboard of the plenum, out of its way
-    railOut: -20.5,
+    railAlong: 31.0, // fuel rail rides below + inboard of the plenum, out of its way
+    railOut: -15.5,
     railR: 0.62,
-    railX: 20.0,
+    railX: 29.0, // past the end stations (27.5) so every injector has rail above it
     injR: 0.5, // injector body from the rail up-outboard into its own runner
-    bracketX: [18.0, 19.2], // rail brackets cast into the plenum bar, hugging the rail
+    bracketX: [23.4, 24.6], // rail brackets cast into the plenum bar, hugging the rail
     bracketA: 1.2,     // bracket reach beside the rail in `along`
     bracketDrop: 1.1,  // how far below the rail axis its lower face sits
     bracketBite: 0.9,  // how deep it is cast into the plenum bar / starts into it

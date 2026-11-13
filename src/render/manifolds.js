@@ -1,9 +1,11 @@
-// Manifolds: two 4-into-1 exhaust headers on the outboard head faces, and four
-// intake runners per bank into one plenum bar hanging in the V, with a fuel rail
-// and four injectors per bank. Every flange mates onto a real head face (out
-// |out| = gasketOd), every tube end is buried in its mating solid, and the
-// collector is sized for the flow of all four primaries. Routing comes from
-// SPEC.manifold, which was solved against the measured casting envelope
+// Manifolds: a 6-into-1 exhaust header per bank on the outboard head faces -
+// six primaries, three pair merges and one collector that runs the length of the
+// bank - and six intake runners per bank into one plenum bar hanging in the V,
+// with a fuel rail and six injectors per bank. Every flange mates onto a real
+// head face (out |out| = gasketOd), every tube end is buried in its mating
+// solid, and the collector is sized for the flow of all six primaries. Routing
+// comes from SPEC.manifold, which was solved against the measured casting
+// envelope
 // (tmp/block-envelope.mjs, tmp/head-faces.mjs): the block body reaches out 12.24
 // at mid-height, the head casting 8.13, so the pipework runs in the corridors
 // outside those with >= 1.2 cm of air. Pinned by test/manifolds.test.mjs.
@@ -96,30 +98,51 @@ function portNeck(bank, ax, rOut, rIn, len, dir) {
 // merge sits exactly midway between the two stations it joins, every primary
 // travels the same 5.5 cm in x and the four tubes come out the same length.
 const EX_PROFILE = [[27.0, 9.2], [25.5, 10.8], [23.0, 11.9], [20.0, 12.9], [17.0, 13.6], [14.5, 14.2]];
+// Exhaust pair merges (midway between the two stations of each pair) and the
+// collector axis they feed. The collector runs the length of the bank just
+// outboard and below the primaries, passes through every pair outlet, and turns
+// down at the aft end into the bolt-on outlet flange.
+const MERGE = SPEC.manifold.exMergeX;
+const COLLECTOR_END = [12.3, 15.5];
 const EX_BLEND = [1, 0.78, 0.56, 0.36, 0.16, 0];
 
 // Intake runner: straight in x at its own cylinder station, sweeping inboard and
 // up from the head port face into the plenum bar. Last node is inside the bar.
-const IN_PROFILE = [[26.8, -9.2], [29.6, -11.4], [32.0, -13.2], [34.8, -15.6]];
+const IN_PROFILE = [[27.0, -8.6], [29.2, -10.4], [31.6, -12.4], [35.6, -14.8]];
 
-const COLLECTOR = [[12.4, 14.9, 0], [10.5, 15.5, -2.0], [8.5, 16.1, -4.5], [6.5, 16.7, -7.0], [4.5, 17.2, -9.0]];
+/** The collector centre-line: closed past the front merge, open at the aft end. */
+function collectorNodes() {
+  const f = MERGE[0];
+  const l = MERGE[MERGE.length - 1];
+  return [
+    [13.9, 14.0, f + 7.5],
+    [...COLLECTOR_END, f],
+    [11.9, 16.0, f / 2],
+    [11.7, 16.3, 0],
+    [11.9, 16.0, -f / 2],
+    [...COLLECTOR_END, l],
+    [10.6, 15.2, l - 5.5],
+  ];
+}
 
 function primaryNodes(st, mergeX) {
   return EX_PROFILE.map(([a, o], k) => [a, o, mergeX + (st - mergeX) * EX_BLEND[k]]);
 }
+/** Pair outlet: from the merge straight down-outboard into the collector. */
 function pairNodes(mergeX) {
   return [
     [14.5, 14.2, mergeX],
-    [13.7, 14.7, mergeX * 0.55],
-    [12.8, 15.1, mergeX * 0.25],
-    [11.9, 15.1, mergeX * 0.12],
+    [13.7, 14.7, mergeX],
+    [13.0, 15.15, mergeX],
+    [...COLLECTOR_END, mergeX],
   ];
 }
+/** Injector: from the rail surface down-outboard, nozzle inside its own runner. */
 function injectorNodes(st) {
   return [
-    [M.railAlong, M.railOut + 0.6, st],
-    [M.railAlong + 0.6, M.railOut + 2.6, st],
-    [M.railAlong + 1.7, M.railOut + 8.3, st],
+    [M.railAlong, M.railOut + M.railR - 0.35, st],
+    [M.railAlong - 0.3, M.railOut + 2.4, st],
+    [M.railAlong - 0.6, M.railOut + 4.1, st],
   ];
 }
 
@@ -159,32 +182,32 @@ export function manifoldSpecs() {
   for (const bank of ['L', 'R']) {
     const sgn = bank === 'L' ? 1 : -1;
     out[bank] = {
-      primary: FACE_A.map((st, i) => primaryNodes(st, M.exMergeX * (i < 2 ? 1 : -1))),
-      pair: [pairNodes(M.exMergeX), pairNodes(-M.exMergeX)],
-      collector: COLLECTOR,
+      primary: FACE_A.map((st, i) => primaryNodes(st, MERGE[Math.floor(i / 2)])),
+      pair: MERGE.map((mx) => pairNodes(mx)),
+      collector: collectorNodes(),
       runner: FACE_A.map((st) => IN_PROFILE.map(([a, o]) => [a, o, st])),
       injector: FACE_A.map((st) => injectorNodes(st)),
       rail: [[M.railAlong, M.railOut, -M.railX], [M.railAlong, M.railOut, M.railX]],
-      shields: [
-        [M.shieldA0, M.shieldA1, M.shieldOut0, M.shieldOut1, M.shieldXFront[0], M.shieldXFront[1]],
-        [M.shieldA0, M.shieldA1, M.shieldOut0, M.shieldOut1, M.shieldXAft[0], M.shieldXAft[1]],
-      ],
+      shields: MERGE.map((mx) => [
+        M.shieldA0, M.shieldA1, M.shieldOut0, M.shieldOut1,
+        mx - M.shieldHalfX, mx + M.shieldHalfX,
+      ]),
       // Mounting hardware, derived from the primary routing so the test can
       // measure against exactly what the renderer builds. The outer cylinder of
       // a pair (|station| 16.5) passes under its shield early; the inner one
       // (|station| 5.5) only reaches the shield footprint near its merge end,
       // so each needs its own grip parameter.
-      bands: [0, 1].flatMap((k) => (k === 0 ? [0, 1] : [2, 3]).map((i) => {
-        const nodes = primaryNodes(B.stations[i], M.exMergeX * (i < 2 ? 1 : -1));
-        const t = Math.abs(B.stations[i]) > M.exMergeX ? M.clampBandT[0] : M.clampBandT[1];
+      bands: MERGE.flatMap((mx, k) => [2 * k, 2 * k + 1].map((i) => {
+        const nodes = primaryNodes(B.stations[i], mx);
+        const t = Math.abs(B.stations[i]) > Math.abs(mx) ? M.clampBandT[0] : M.clampBandT[1];
         const at = polyAt(nodes, t);
         return { at, dir: polyDirAt(nodes, t), shield: k, cyl: i };
       })),
-      stands: [0, 1].flatMap((k) => {
+      stands: MERGE.flatMap((mx, k) => {
         const shInner = M.shieldOut0;
-        return (k === 0 ? [0, 1] : [2, 3]).map((i) => {
-          const nodes = primaryNodes(B.stations[i], M.exMergeX * (i < 2 ? 1 : -1));
-          const t = Math.abs(B.stations[i]) > M.exMergeX ? M.clampBandT[0] : M.clampBandT[1];
+        return [2 * k, 2 * k + 1].map((i) => {
+          const nodes = primaryNodes(B.stations[i], mx);
+          const t = Math.abs(B.stations[i]) > Math.abs(mx) ? M.clampBandT[0] : M.clampBandT[1];
           const p = polyAt(nodes, t);
           return {
             root: [p[0], p[1] + M.exPrimaryR + 0.1, p[2]],
@@ -237,7 +260,7 @@ export function createManifolds(materials) {
     const beadIn = [];
     const bolts = [];
     const primaryCurves = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < B.stations.length; i++) {
       const st = B.stations[i];
       // ---- exhaust: flange plate on the outboard stay face, neck boss, primary
       const flG = flangePlate(bank, ax, M.exFlangeX, (M.exFlangeA1 - M.exFlangeA0) / 2,
@@ -277,7 +300,10 @@ export function createManifolds(materials) {
       const rcurve = pipeCurve(rn.map((n) => P(bank, n)));
       inSub.add(mesh(`runner-${bank}-${st}`, new THREE.TubeGeometry(rcurve, 48, M.inRunnerR, 20, false),
         materials.castAluminumIntake, 'inRunner'));
-      beadIn.push(weldBead(rcurve, 0.06, M.inRunnerR + 0.2, 0.22));
+      // the runner's weld bead sits where it enters the plenum bar: the root of
+      // the runner is inside the port neck, a ring there would rub the head's
+      // inboard stay face behind it
+      beadIn.push(weldBead(rcurve, 0.9, M.inRunnerR + 0.2, 0.22));
 
       // ---- injectors: from the rail up-outboard, nozzle inside its own runner
       const inj = s.injector[i];
@@ -312,8 +338,8 @@ export function createManifolds(materials) {
     }
 
     // ---- pair outlets and the merged collector
-    for (let k = 0; k < 2; k++) {
-      const mx = k === 0 ? M.exMergeX : -M.exMergeX;
+    for (let k = 0; k < MERGE.length; k++) {
+      const mx = MERGE[k];
       const nodes = s.pair[k];
       const c = pipeCurve(nodes.map((n) => P(bank, n)));
       exSub.add(mesh(`pair-${bank}-${mx}`, new THREE.TubeGeometry(c, 40, M.exPairR, 22, false),
@@ -326,7 +352,7 @@ export function createManifolds(materials) {
     beadEx.push(weldBead(cc, 0.985, M.exCollectorR + 0.22, 0.24));
 
     // bolt-on collector outlet: a disc plus its short stub, on the collector axis
-    const end = P(bank, s.collector[4]);
+    const end = P(bank, s.collector.at(-1));
     const tan = cc.getTangentAt(1).normalize();
     const disc = cylinderBetween(end, end.clone().add(tan.multiplyScalar(M.exOutletT)), M.exOutletR, 30);
     const stub = cylinderBetween(end.clone().add(tan.multiplyScalar(M.exOutletT)),
