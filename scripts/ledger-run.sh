@@ -32,9 +32,12 @@ mkdir -p "$(dirname "$out")"
 # same bare CHECK line therefore hashed differently per host, which broke this tool's own
 # gate on the runner. A tool whose entire job is to make a hash reproducible has to fix the
 # shape it records, so the reporter is pinned through NODE_OPTIONS - one mechanism, which
-# also reaches a recorded `npm test`, whose own script this tree does not control. An
-# explicit `--test-reporter` in the command still wins: node applies CLI args over
-# NODE_OPTIONS, measured by recording the same file in both shapes.
+# also reaches a recorded `npm test` whose script names `--test` inside npm rather than in
+# the argv handed to this script. A command that names its own reporter is not pinned again:
+# measured here, node rejects the option twice (`ERR_INVALID_ARG_VALUE`, thrown from
+# internal/test_runner/utils when the environment and the command both supply it), so the
+# recorder removes its own pin instead and an explicit `--test-reporter=tap` control stays a
+# genuine tap control.
 argv=("$@")
 has_test=0; has_reporter=0
 for a in "${argv[@]}"; do
@@ -43,6 +46,22 @@ for a in "${argv[@]}"; do
     --test-reporter*) has_reporter=1 ;;
   esac
 done
+# A recorded `npm test` is the same run under a wrapper: the runner CI executes is
+# `npm test`, so its reporter has to be pinned too or the CI record and the local record of
+# one CHECK are different shapes. npm hides the node argv, so the script text is read from
+# package.json instead: a script that already names a reporter is left alone (measured: node
+# rejects the option twice, so pinning on top of an explicit one breaks the run it records).
+case "$(basename "${argv[0]}")" in
+  npm | pnpm | yarn | npmjs)
+    case "${argv[1]:-}" in
+      test) has_test=1 ;;
+      run) [ "${argv[2]:-}" = test ] && has_test=1 ;;
+    esac
+    if [ "$has_test" = 1 ] && grep -E '"test"[[:space:]]*:' package.json 2>/dev/null | grep -q -- '--test-reporter'; then
+      has_reporter=1
+    fi
+    ;;
+esac
 # Exactly one source of the reporter, always. This recorder also runs inside
 # test/ledger.test.mjs, which records a run of its own, so a pin set by an outer recorded run
 # is already in NODE_OPTIONS when the inner one starts - and node refuses the same option
