@@ -115,7 +115,11 @@ test('scripts/ledger-run.sh records a gate run so its hash is re-derivable', () 
   // A stand-in for `node --test`: two passing tests, each stamped with a wall-clock
   // duration, plus the run total. Only the digits differ between two invocations.
   writeFileSync(noisy, "import test from 'node:test';\ntest('a', () => {});\ntest('b', () => {});\n");
-  const first = spawnSync('bash', ['scripts/ledger-run.sh', log, process.execPath, '--test', noisy], { encoding: 'utf8', env: runnerEnv() });
+  // The reporter is named out loud, not left to node's default: node 22 (the CI runner)
+  // defaults to TAP and node 24 (this workstation) defaults to spec, so a record made by a
+  // bare `node --test` hashes differently per node version. Measured on CI run 43917583366,
+  // where exactly this made the recorded gate fail on its own record.
+  const first = spawnSync('bash', ['scripts/ledger-run.sh', log, process.execPath, '--test', '--test-reporter=spec', noisy], { encoding: 'utf8', env: runnerEnv() });
   assert.equal(first.status, 0, `ledger-run.sh did not pass the recorded command's exit code through:\n${first.stderr}`);
   const text = readFileSync(log, 'utf8');
   assert.match(text, /^✔ a$/m, 'the record lost a passing test line');
@@ -126,8 +130,20 @@ test('scripts/ledger-run.sh records a gate run so its hash is re-derivable', () 
 
   const hashOf = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
   const second = join(dir, 'run2.out');
-  spawnSync('bash', ['scripts/ledger-run.sh', second, process.execPath, '--test', noisy], { encoding: 'utf8', env: runnerEnv() });
+  spawnSync('bash', ['scripts/ledger-run.sh', second, process.execPath, '--test', '--test-reporter=spec', noisy], { encoding: 'utf8', env: runnerEnv() });
   assert.equal(hashOf(log), hashOf(second), 'two runs of the same CHECK hashed differently: the record is a stopwatch, not a measurement');
+
+  // Cross-version re-derivability: the same CHECK recorded through node's TAP reporter -
+  // what node 22 prints on the CI runner - must normalize to the same record. This is the
+  // RED control CI already paid for: the first version of the recorder only stripped the
+  // spec shape, so a CI-made record kept `duration_ms:` lines and hashed per run.
+  const tap = join(dir, 'run-tap.out');
+  const tapRun = spawnSync('bash', ['scripts/ledger-run.sh', tap, process.execPath, '--test', '--test-reporter=tap', noisy], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(tapRun.status, 0, `the TAP-shaped run failed to record:\n${tapRun.stderr}`);
+  const tapText = readFileSync(tap, 'utf8');
+  assert.ok(!/duration_ms/.test(tapText), 'a TAP-shaped record kept node duration_ms lines, so its hash cannot be re-derived');
+  assert.match(tapText, /^ok 1 - a$/m, 'the TAP-shaped record lost its test lines');
+  assert.match(tapText, /^RECORD: command=.* exit=0 tests=2 pass=2 fail=0$/m, `the TAP-shaped record did not read node's own counts:\n${tapText}`);
 
   // The point of the tool: a failing gate must fail the tool, and must be recorded anyway.
   const bad = join(dir, 'bad.out');
