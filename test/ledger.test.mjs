@@ -119,7 +119,7 @@ test('scripts/ledger-run.sh records a gate run so its hash is re-derivable', () 
   assert.equal(first.status, 0, `ledger-run.sh did not pass the recorded command's exit code through:\n${first.stderr}`);
   const text = readFileSync(log, 'utf8');
   assert.match(text, /^✔ a$/m, 'the record lost a passing test line');
-  assert.match(text, /^ℹ pass 2$/m, 'the record lost node.ts own summary');
+  assert.match(text, /^ℹ pass 2$/m, "the record lost node's own summary");
   assert.ok(!/\([0-9.]+ms\)$/.test(text), 'the record still carries per-test wall-clock durations, so its hash cannot be re-derived');
   assert.ok(!/^ℹ duration_ms/m.test(text), 'the record still carries the run total, so its hash cannot be re-derived');
   assert.match(text, /^RECORD: command=.* exit=0 tests=2 pass=2 fail=0$/m, `the record does not name its own command, exit and counts:\n${text}`);
@@ -147,6 +147,23 @@ test('scripts/ledger-name-evidence.py --prove runs without the gitignored scratc
   assert.equal(Number(seen[1]), titles.length,
     `--prove reads ${seen[1]} rows but GATES.md declares ${titles.length}: the phase-prefixed rows are invisible to it`);
   assert.match(out, /rows added since the base: \[[^\]]*'P1-G1'/, 'the proof does not list issue #8 rows as added since its base');
+});
+
+test('scripts/branch-gate.sh is the committed oracle of row P1-G1 and reads every setting that row names', () => {
+  const sh = readFileSync('scripts/branch-gate.sh', 'utf8');
+  const r = spawnSync('bash', ['-n', 'scripts/branch-gate.sh'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `the oracle of row P1-G1 does not parse:\n${r.stderr}`);
+  // Every word the P1-G1 EXPECT names must be read by the tool that closes the row,
+  // including the two GitHub calls that measure "no force push" and "no delete".
+  for (const need of ['is-ancestor', 'branches/$branch', 'protection/required_status_checks',
+    'protection/required_pull_request_reviews', 'allow_force_pushes', 'allow_deletions',
+    'rulesets', 'non_fast_forward', 'deletion', 'bypass_actors']) {
+    assert.ok(sh.includes(need), `scripts/branch-gate.sh never reads ${need}, so row P1-G1's EXPECT is not what the tool measures`);
+  }
+  // A ruleset LIST endpoint is a summary (conditions null, rules absent), so the tool
+  // must read each ruleset object; the row's no-force-push claim lives in those rules.
+  assert.match(sh, /rulesets\/\$id|rulesets\/\$\{id\}/, 'the tool filters the ruleset list instead of reading each ruleset object, where the rules actually live');
+  assert.match(sh, /PROTECTION OK|PROTECTION GATE FAILED/, 'the tool does not publish its own verdict, so its run record would be a transcript instead of an oracle');
 });
 
 test('both tools read the same gate-id grammar (the row-id authority is the ledger, not a regex)', () => {
