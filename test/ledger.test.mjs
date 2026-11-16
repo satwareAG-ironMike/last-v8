@@ -6,7 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +20,17 @@ const bare = ids.filter((id) => !/^[A-Z][0-9]+-/.test(id));
 
 const python = spawnSync('python3', ['-c', 'pass']);
 const HAS_PY = python.status === 0;
+
+// A nested `node --test` must not inherit this runner's markers: with NODE_TEST_CONTEXT
+// set, node prints "node:test run() is being called recursively within a test file.
+// skipping running files." and records nothing at all, which would make the
+// scripts/ledger-run.sh gate below measure an empty file instead of a run.
+const runnerEnv = () => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_TEST_WORKER_ID;
+  return env;
+};
 
 /** Run scripts/ledger-audit.mjs in a scratch tree holding ONLY GATES.md + the tool:
  *  no tmp/, no shots/, no .git. That is the honest reproduction of "fresh checkout". */
@@ -94,6 +106,35 @@ test('scripts/ledger-audit.mjs indexes every declared row and survives a tree wi
     const b = blocks.get(id).join('\n');
     assert.match(b, /manual/i, `row ${id} carries no oracle but its evidence does not name the human act that closes it`);
   }
+});
+
+test('scripts/ledger-run.sh records a gate run so its hash is re-derivable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-ledger-run-'));
+  const log = join(dir, 'run.out');
+  const noisy = join(dir, 'noisy.mjs');
+  // A stand-in for `node --test`: two passing tests, each stamped with a wall-clock
+  // duration, plus the run total. Only the digits differ between two invocations.
+  writeFileSync(noisy, "import test from 'node:test';\ntest('a', () => {});\ntest('b', () => {});\n");
+  const first = spawnSync('bash', ['scripts/ledger-run.sh', log, process.execPath, '--test', noisy], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(first.status, 0, `ledger-run.sh did not pass the recorded command's exit code through:\n${first.stderr}`);
+  const text = readFileSync(log, 'utf8');
+  assert.match(text, /^✔ a$/m, 'the record lost a passing test line');
+  assert.match(text, /^ℹ pass 2$/m, 'the record lost node.ts own summary');
+  assert.ok(!/\([0-9.]+ms\)$/.test(text), 'the record still carries per-test wall-clock durations, so its hash cannot be re-derived');
+  assert.ok(!/^ℹ duration_ms/m.test(text), 'the record still carries the run total, so its hash cannot be re-derived');
+  assert.match(text, /^RECORD: command=.* exit=0 tests=2 pass=2 fail=0$/m, `the record does not name its own command, exit and counts:\n${text}`);
+
+  const hashOf = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+  const second = join(dir, 'run2.out');
+  spawnSync('bash', ['scripts/ledger-run.sh', second, process.execPath, '--test', noisy], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(hashOf(log), hashOf(second), 'two runs of the same CHECK hashed differently: the record is a stopwatch, not a measurement');
+
+  // The point of the tool: a failing gate must fail the tool, and must be recorded anyway.
+  const bad = join(dir, 'bad.out');
+  const r = spawnSync('bash', ['scripts/ledger-run.sh', bad, process.execPath, '-e', 'console.error("boom"); process.exit(3)'], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(r.status, 3, 'ledger-run.sh swallowed the gate run\'s failure');
+  assert.match(readFileSync(bad, 'utf8'), /RECORD: command=.* exit=3/, 'a failed run was recorded without its exit code');
+  assert.ok(!existsSync(`${log}.raw`), 'the unnormalised scratch copy was left behind next to the record');
 });
 
 test('scripts/ledger-name-evidence.py --prove runs without the gitignored scratch files and sees every row', { skip: !HAS_PY }, () => {
