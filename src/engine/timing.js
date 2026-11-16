@@ -79,11 +79,24 @@ export function strokeOf(cyl, theta) {
   return 'COMPRESSION';
 }
 
-/** True when the cylinder fires at the finest resolution step around its spark. */
-export function firingProgress(cyl, theta) {
+const finite = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+
+/**
+ * Position inside this cylinder's burn window: 0 at the instant the spark fires,
+ * 1 at the end of the visible burn window, -1 outside it. The window opens at
+ * `powerTDC - advance` (cycle position 720 - advance), runs through power TDC
+ * (the 720 wrap) and closes `SPEC.ignition.burnDeg` crank degrees after TDC, so
+ * it is a burn window and not 686 degrees of the cycle. `advance` is the live
+ * total advance from src/engine/ignition.js; its caller is the spark flash.
+ */
+export function firingProgress(cyl, theta, advance = SPEC.ignition.baseDeg) {
+  const adv = Math.max(0, finite(advance, SPEC.ignition.baseDeg));
+  const burn = SPEC.ignition.burnDeg;
   const c = cycleAngle(cyl, theta);
-  if (c < SPEC.ignitionAdvance || c > 700) return -1;
-  return c;
+  let since = null;
+  if (c >= 720 - adv) since = c - (720 - adv);
+  else if (c <= burn) since = c + adv;
+  return since === null ? -1 : since / (adv + burn);
 }
 
 /** Crank angle (0..720) at which a cylinder reaches a given cycle position. */

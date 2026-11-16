@@ -310,7 +310,26 @@ export const SPEC = {
     sprocket: { teeth: 36, pitchR: 6.9, toothH: 0.55, width: 0.3, bands: [28.6, 28.9, 29.2, 29.5] },
   },
 
-  ignitionAdvance: 14, // crank degrees BTDC the spark fires
+  // ---- ignition timing: the base is one named value, the two advance curves
+  // and the load model keep every breakpoint here (#8 items 1, 3, 4).
+  // Sources: baseDeg 14 is this repo's own v1.0.0 value (the retired
+  // SPEC.ignitionAdvance); the curve shapes are ordinary small-block
+  // distributor behaviour - mechanical advance starts just above idle and
+  // reaches its cap below mid-range, vacuum advance only lives at part throttle,
+  // and a distributor carries a total-advance limit.
+  ignition: {
+    baseDeg: 14, // crank degrees BTDC the spark fires at idle
+    burnDeg: 20, // crank degrees the spark flash stays visible after TDC
+    maxTotalDeg: 40, // total-advance limit: base + centrifugal + vacuum is clamped here
+    centri: { startRpm: 800, fullRpm: 3200, maxDeg: 18 },
+    vacuum: { startKpa: 25, fullKpa: 60, maxDeg: 12 },
+    // Manifold model: two documented corners, a linear blend between them.
+    //   closed throttle - the deepest vacuum, falling away as rpm rises because
+    //     the same charge must be pulled past the same plate more times a second.
+    //   wide-open throttle - the manifold sits near atmospheric and only the
+    //     induction pumping loss remains, which grows with rpm.
+    vacuumModel: { atmKpa: 101.325, closedKpa: 88, closedFall: 0.25, wotLossKpa: 20 },
+  },
 
   // Firing pulses exactly 90 crank degrees apart: 1-8-7-3-6-5-4-2
   cylinders: [
