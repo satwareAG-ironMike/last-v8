@@ -190,3 +190,160 @@ threshold, count or sig in any row was edited.
   GATE FLAWS in this gate, re-declared from measurement instead of weakened: (1) the span law first measured the stroke ends on the same 20 degree grid as the interval law, and a 20 degree grid cannot land closer than half a step to a dead centre, so four cylinders read 7.8785 cm for an 8.0 cm stroke (tmp/g7-run9.out); the ends now have their own 5 degree grid while the interval law keeps its declared 20 degree grid byte-for-byte, and the 0.05 threshold stayed. (2) A one-degree step across a dead centre reads 0 cm for a piston plainly on its way down (mirror images), so the motion law is cycle-wide monotonicity per stroke, not a short step (tmp/g7-probe.out measured -0.000777 / 0.000441 / +-0.0697..0.0700 cm at one degree). (3) shots/09 was first pinned at crank 0 like its neighbour and came out the identical picture (tmp/g7-run5.out printed one hash 2334976422 for both); a shot that duplicates its neighbour proves nothing, so the pair is pinned at 0 and 180 and compared only after both exist. (4) The tree fingerprint shared the pixel accumulator, so a rasteriser-only difference moved `tree` too and the law blamed the assembly for a SwiftShader event (tmp/g7-run4.out); tree and pixels are now separate numbers read in that order. (5) Contact pairs were once declared for parts whose nearest members are not each other (gasket<->crankcase 12.5, head-bolts<->head-L 21.6, head-bolts<->crankcase 22.4): those are printed as audit rows and only the driven and bolted joints carry limits. (6) The determinism spread law was first written as a pixel-area comparison; it is the union growing on every axis plus uncropped framing. (7) The gate read `withPage({ ..., errors, warnings })` only as `{ evalJs, capture }`: the harness had been collecting every console.error, page exception, CDP log entry of level error and target crash for five gates and this oracle ignored them, so an erroring page could still have printed SHOTS OK. It is now a law, and it measures `console/CDP errors: 0`.
   HARNESS FIXES this gate needed (no measured threshold in any law changed): `CDP timeout: Runtime.evaluate` cut the heavy measurement off mid-flight with every law intact (tmp/g7-run6.out), so test/support/browser.mjs takes a per-call timeout (`evalJs(expr, { timeoutMs: 120000 })` for the measurement, 30000 default elsewhere); one teardown is shared by the watchdog and the finally, because `process.exit()` skips the finally and a timed-out gate left a ~390 MB SwiftShader Chromium burning a core for every gate after it (measured load average 25 on 16 cores); the gate watchdogs (G6 300000 -> 900000, G7 420000 -> 900000) are sized to the measured wall time of gates that wait for real animation frames on a busy host, where tmp/hud-fps-probe.out measured 1.0-1.6 fps at rpm 1800, rpm 4000 and stopped alike. Watchdogs and timeouts are guards on the harness, never laws of the engine.
   Earlier green G7 runs against earlier trees, each recomputable: tmp/g7-run5.out output-sha256=81f23456c4ae4056707553f450f9ba9e33624f95d398b5e6c25c291543a2a05b, tmp/g7-run7.out output-sha256=c4e45e1ccb0c24a74590b7d5409ed52bedd9b7e00e01a70214f1929e6cba40f9, tmp/g7-run8.out output-sha256=9fc6c0a1bfd87aa18c19e05f3a3b476b17a086dd5c0bb114e9ca3e4967d98ded, tmp/g7-run10.out output-sha256=61e098e09970fb6d3ba83a3a35f508f95a9c3ea2537c7c2316215fbd7ec0ba80, tmp/g7-run11.out output-sha256=2dbebbb6f469ff7b895b55d80abfe4c4c939d953bcf546db42b5119c0ba3d930 (run11 first carried the span and dead-centre laws; the pair/round-trip thresholds were measured in tmp/g7-pair-probe.out). The red runs that produced the re-declared laws above are kept as evidence too: tmp/g7-run4.out output-sha256=1f850ed63571ccefbf0c30301d61e4796a74c3793481f886559f876114078d8f (shared fingerprint accumulator), tmp/g7-run6.out output-sha256=6add6b1c032b53567d6b38c904dddae3c8b852677de03ff9c42c6b08dd2623ea (CDP timeout cutting the measurement off), tmp/g7-run9.out output-sha256=10bc88c4c2aca3cbdd40749c6a9d4f726ae5bfcd70b3bd9400872c0878c8b4b2 (7.8785 cm spans on the 20 degree grid).
+
+
+## Issue #8 and its addendum, declared 2026-11-16: ignition before TDC, visible spark, advance curves, an OHV variant, and the five mechanical complaints
+
+Rows for the Phase 1 work on the `v8` branch (released as `v8.0.0`): `P1-*` from issue #8,
+`A1-*` from its addendum comment. Phase 2 rows (`P2-*`, `A2-*`) are declared here for the
+same two issues on the `v12` branch (`v12.1.0`) and are filled in that tree's own ledger
+run. Titles, oracles and expectations are the issues' own wording.
+
+Declaration order, stated rather than implied: these rows were written into this file
+BEFORE the work they judge was committed, all of them with `EVIDENCE: pending` (git log of
+the commit that adds this block). `EVIDENCE: pending` on a row that carries a `CHECK:` is
+an open gate, not a green one. The branch this work is cut on is `feat/v8-ignition-spark`,
+not the `v8/ignition-spark` the issue sketches: git refuses `refs/heads/v8/ignition-spark`
+because `refs/heads/v8` already exists, so the intended meaning travels in a name git
+accepts, and that deviation is a fact about git, not a change of plan.
+
+gate-lint over this ledger: `node /home/mw/internal/harness/skills/unlazy/scripts/gate-lint.mjs
+GATES.md` - 0 errors. Six warnings remain, all on the three rows the issues declare manual
+(`P1-G9`, `A1-G8`, `A1-G9`: `manual-gate` + `unmeasured-number`), which is the lint saying
+out loud that a hand-judged row is only as good as its reader. Those three rows carry no
+oracle on purpose and their evidence names the human act that closes them.
+
+- [ ] P1-G1: `v8` exists, branched from `v1.0.0`, and is protected (require-PR, `test` check strict, up-to-date, no force push, no delete)
+  CHECK: git merge-base --is-ancestor v1.0.0 v8 && ! git merge-base --is-ancestor v12.0.0 v8 && gh api repos/satwareAG-ironMike/last-v8/branches/v8/protection
+  EXPECT: exit 0 on both ancestry checks; protection shows required_status_checks.contexts = test, strict true, allow_force_pushes false
+  EVIDENCE: pending; gate-sig=e7a84cdf79c5bbc3
+
+- [ ] P1-G2: each cylinder fires exactly once per 720 deg, at powerTDC - totalAdvance, in the order 1-8-7-3-6-5-4-2, 90 deg apart, at several rpm and throttle settings (new tests next to the existing onFire test at test/cranktrain.test.mjs:56)
+  CHECK: node --test test/cranktrain.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=1981bca2697e79d4
+
+- [ ] P1-G3: firingProgress() window opens BTDC, runs through TDC, closes after the burn window
+  CHECK: node --test test/timing.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=282539060820f335
+
+- [ ] P1-G4: centrifugal curve, vacuum model, vacuum curve and total advance match their SPEC breakpoints, including the clamps
+  CHECK: node --test test/timing.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=282539060820f335
+
+- [ ] P1-G5: 8 spark plugs, procedural and inspectable; inspectable count measured from the scene in the DOHC build, the OHV count stated in the README
+  CHECK: node --test test/view.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=e366d4743b4be898
+
+- [ ] P1-G6: screenshot evidence via test/screenshots.mjs: the spark visible in CUTAWAY at 1/10 and 1/50, the OHV valvetrain in CUTAWAY and EXPLODED
+  CHECK: node test/screenshots.mjs
+  EXPECT: SHOTS OK
+  EVIDENCE: pending; gate-sig=c5527127c3f7ff77
+
+- [ ] P1-G7: valvetrain tests cover the OHV variant (one cam, 16 lobes, pushrod and rocker kinematics, the valve events from the lobe profile)
+  CHECK: node --test test/valvetrain.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=6034c616c73d98a2
+
+- [ ] P1-G8: release identity gate green on the v8 tree (package version 8.0.0, shell stamp v8.0.0, demo path, HISTORY.md entry agree)
+  CHECK: node --test test/release.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=d9f891b53044bfd4
+
+- [ ] P1-G9: npm test passes in CI on the PR into v8; tag v8.0.0 cut on v8; the live demo updated per specs/deploy.md
+  EVIDENCE: pending (manual: CI run conclusion, tag + release, deploy re-pin)
+
+- [ ] A1-G1: no geometric penetration: each follower face (DOHC bucket and, once #8 item 5 exists, each OHV hydraulic lifter) stays in contact with its lobe surface and does not intersect it, sampled over a full 720 deg crank cycle; cam-drive teeth / chain links do not interpenetrate (contact, not overlap). New tests in the existing test/valvetrain.test.mjs (do not leave the knife-edge bucket oracle at :196 as a conflicting check)
+  CHECK: node --test test/valvetrain.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=6034c616c73d98a2
+
+- [ ] A1-G2: the 2:1 cam drive is both numbered and geometric, in DOHC and in OHV: tooth counts and pitch radii (or the replacement SPEC values) realise halfSpeedRatio, and a chain wrap or a gear mesh at the pitch-sum centre distance actually connects crank to cam
+  CHECK: node --test test/valvetrain.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=6034c616c73d98a2
+
+- [ ] A1-G3: valve lift is consistent with the machined lobe profile and the contact law of the follower in use (flat tappet / HLA or roller, not the single-ray radius); the mesh profile has a base circle, ramps, lift and duration, and journal / base-circle stepping is realistic. Extend the existing profile tests in test/timing.test.mjs and test/valvetrain.test.mjs
+  CHECK: node --test test/timing.test.mjs test/valvetrain.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=4e77adc46e172dc2
+
+- [ ] A1-G4: oil-path connectivity: every main, rod and cam bearing has a feed path from the pump; the OHV variant also feeds the lifter gallery. New file test/oil.test.mjs
+  CHECK: node --test test/oil.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=81240c9ae907e8af
+
+- [ ] A1-G5: screenshot evidence via the existing test/screenshots.mjs: CUTAWAY shows water jackets and coolant passages, the oil galleries / drillings, and the working cam drive, in DOHC and in OHV; smallEndInsidePiston remains true at the sampled crank angles
+  CHECK: node test/screenshots.mjs
+  EXPECT: SHOTS OK
+  EVIDENCE: pending; gate-sig=c5527127c3f7ff77
+
+- [ ] A1-G6: jackets, passages, cam-drive parts, bearing shells, pump, pickup and galleries are procedural and inspectable; the inspectable count is measured from the scene, not copied from a projection; EXPLODED / ASSEMBLE / CUTAWAY work for both variants. Extend test/block.test.mjs, test/heads.test.mjs and test/view.test.mjs
+  CHECK: node --test test/block.test.mjs test/heads.test.mjs test/view.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=dab8ef59f745ce95
+
+- [ ] A1-G7: cam bearings are manufacturable: DOHC caps split in the head and line-bored; OHV bearings sit in the block (front-insert tunnel or valley caps); no load-bearing full-ring boss with a bore smaller than the lobe nose; shells and oil holes present. Extend test/heads.test.mjs (and the OHV coverage in test/valvetrain.test.mjs / test/block.test.mjs)
+  CHECK: node --test test/heads.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=224e8c3684a7738b
+
+- [ ] A1-G8: npm test passes in CI on the PR into v8; this addendum's GATES.md rows are filled; README / HISTORY / AGENTS updated; tag v8.0.0 still carries #8's identity gate (P1-G8 / P1-G9)
+  EVIDENCE: pending (manual: CI run conclusion, filled rows, doc pass, tag)
+
+- [ ] A1-G9: re-ask @Bassmaster187 for a grade on the v8.0.0 cutaway, with the target 2+ (fully good). Manual; Michael posts the request himself, never automated, and never without a later explicit go in chat
+  EVIDENCE: pending (manual: Michael posts it himself in the #8 thread)
+
+- [ ] P2-G1: v12 recreated from v12.0.0 and protected; git merge-base --is-ancestor v12.0.0 v12 succeeds
+  CHECK: git merge-base --is-ancestor v12.0.0 v12 && ! git merge-base --is-ancestor v8.0.0 v12 && gh api repos/satwareAG-ironMike/last-v8/branches/v12/protection
+  EXPECT: exit 0 on both ancestry checks; protection shows contexts = test and strict true
+  EVIDENCE: pending; gate-sig=1f4a1d3a6068540a
+
+- [ ] P2-G2: every Phase 1 test exists in its V12 form (12 cylinders, firing order 1-6-5-10-9-2-4-3-8-7-12-11 at 60 deg, 24-lobe OHV cam, counts measured from 187 plus the new parts) and passes
+  CHECK: node --test test/*.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=220797e21f3b9068
+
+- [ ] P2-G3: screenshot evidence for the spark and the OHV variant, as in P1-G6
+  CHECK: node test/screenshots.mjs
+  EXPECT: SHOTS OK
+  EVIDENCE: pending; gate-sig=c5527127c3f7ff77
+
+- [ ] P2-G4: release identity gate green on the v12 tree (RELEASE = 12.1.0), npm test passes in CI on the PR into v12, tag v12.1.0 cut on v12, live demo updated per specs/deploy.md
+  CHECK: node --test test/release.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=d9f891b53044bfd4
+
+- [ ] P2-G5: the V8 (v8, v8.0.0) is untouched by Phase 2 (no ref movement, no tag movement)
+  CHECK: git rev-parse v8 v8.0.0 && git rev-parse origin/v8
+  EXPECT: the two v8 revs recorded here, unchanged
+  EVIDENCE: pending; gate-sig=8351f7210db2b044
+
+- [ ] A2-G1: v12 recreated from v12.0.0 and protected; Phase 2 starts only after v8.0.0 is tagged; the work is an adaptation, not a merge or cherry-pick from v8
+  CHECK: git merge-base --is-ancestor v12.0.0 v12 && ! git merge-base --is-ancestor v8 v12
+  EXPECT: exit 0 on the first ancestry check and on the negated second
+  EVIDENCE: pending; gate-sig=d8e7f415d0872bd9
+
+- [ ] A2-G2: every Phase 1 addendum test exists in its V12 form (12 cylinders, 9 journals per DOHC cam, 24-lobe OHV cam, V12 oil paths, measured counts from 187 plus the new parts) and passes, including the no-penetration, 2:1, lobe-vs-lift and oil-path oracles
+  CHECK: node --test test/oil.test.mjs test/valvetrain.test.mjs test/heads.test.mjs test/block.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=c8e5cea09a5f68a0
+
+- [ ] A2-G3: screenshot evidence for jackets, oil galleries, the cam drive and smallEndInsidePiston, in DOHC and OHV, as in A1-G5
+  CHECK: node test/screenshots.mjs
+  EXPECT: SHOTS OK
+  EVIDENCE: pending; gate-sig=c5527127c3f7ff77
+
+- [ ] A2-G4: release identity gate green on the v12 tree (RELEASE = 12.1.0), npm test passes in CI on the PR into v12, tag v12.1.0 cut on v12, live demo updated per specs/deploy.md
+  CHECK: node --test test/release.test.mjs
+  EXPECT: fail 0
+  EVIDENCE: pending; gate-sig=d9f891b53044bfd4
+
+- [ ] A2-G5: the V8 (v8, v8.0.0) is untouched by Phase 2 (no ref movement, no tag movement)
+  CHECK: git rev-parse v8 v8.0.0
+  EXPECT: the two revs recorded by the P2-G5 row, unchanged
+  EVIDENCE: pending; gate-sig=4d5399a929ce7a05
+
