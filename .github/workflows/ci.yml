@@ -11,7 +11,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is not cosmetic. scripts/ledger-name-evidence.py --prove compares
+      # this tree's GATES.md against commit 345f71f, and test/ledger.test.mjs runs it.
+      # checkout@v4 defaults to fetch-depth: 1, which carries only the head commit, so the
+      # proof aborted `fatal: invalid object name '345f71f'` - measured on run 43917583366.
+      # A runner that cannot read the base cannot check the ledger, and a gate that silently
+      # skips itself in CI is not a gate.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
