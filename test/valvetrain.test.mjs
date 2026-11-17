@@ -237,6 +237,7 @@ test('A1-G1 the drawn lobes never cross a bucket face, and every follower stands
   const STAND_TOL = 5e-3, PEN_TOL = 1e-3; // cm
   const faceR = H.bucketRadius, faceLimit = faceR - 0.15; // the published walk limit
   let pen = 0, penAt = null, stand = 0, standAt = null, walk = 0, walkAt = null, lifted = 0;
+  let maxVerts = 0, maxOutlineR = 0, lobeWidth = 0;
   for (let theta = 0; theta < 720; theta += 1) {
     update(theta);
     group.updateMatrixWorld(true);
@@ -261,11 +262,17 @@ test('A1-G1 the drawn lobes never cross a bucket face, and every follower stands
           `cyl ${cyl.num} ${valve} at theta ${theta}: bucket face at ${face.toFixed(4)} cm is inside the cam base circle ${H.camBaseRadius}`);
         let reach = -Infinity, reachAcross = 0;
         const pos = lobe.geometry.attributes.position;
+        if (pos.count > maxVerts) maxVerts = pos.count;
+        lobe.geometry.computeBoundingBox();
+        const bb = lobe.geometry.boundingBox;
+        if (bb && bb.max.x - bb.min.x > lobeWidth) lobeWidth = bb.max.x - bb.min.x;
         for (let i = 0; i < pos.count; i++) {
           q.fromBufferAttribute(pos, i).applyMatrix4(lobe.matrixWorld).sub(cap);
           const depth = -q.dot(d); // cm below the cam axis, along the follower axis
           if (depth - face > pen) { pen = depth - face; penAt = [cyl.num, valve, theta, +depth.toFixed(4), +face.toFixed(4)]; }
           if (depth > reach) { reach = depth; reachAcross = Math.abs(q.dot(across)); }
+          const radial = Math.hypot(q.dot(d), q.dot(across)); // out of the cam axis, in the profile plane
+          if (radial > maxOutlineR) maxOutlineR = radial;
         }
         const gap = face - reach;
         if (gap > stand) { stand = gap; standAt = [cyl.num, valve, theta, +lift.toFixed(4)]; }
@@ -273,6 +280,12 @@ test('A1-G1 the drawn lobes never cross a bucket face, and every follower stands
       }
     }
   }
+  // Printed so a GATES row can quote the measured half of this oracle from the
+  // run record itself, instead of hand-copying numbers into the doc.
+  console.log(`A1-G1 mesh audit: 720 crank samples x 16 followers, verts/lobe ${maxVerts}, ` +
+    `lobe width ${lobeWidth.toFixed(4)} cm, max outline radius ${maxOutlineR.toFixed(4)} cm, ` +
+    `worst penetration ${pen.toFixed(4)} cm, worst stand-off gap ${stand.toFixed(4)} cm, ` +
+    `worst contact walk ${walk.toFixed(4)} cm of ${faceLimit.toFixed(2)} cm, lifted samples ${lifted}`);
   assert.ok(pen < PEN_TOL,
     `a lobe mesh crosses its follower face by ${pen.toFixed(4)} cm at ${JSON.stringify(penAt)} (tol ${PEN_TOL})`);
   assert.ok(stand < STAND_TOL,
