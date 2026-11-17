@@ -51,13 +51,32 @@ done
 # one CHECK are different shapes. npm hides the node argv, so the script text is read from
 # package.json instead: a script that already names a reporter is left alone (measured: node
 # rejects the option twice, so pinning on top of an explicit one breaks the run it records).
+# Which package.json: npm resolves the script it runs from the nearest one AT OR ABOVE its own
+# cwd, and it stops there. Measured here: `npm test` in an empty subdirectory of a tree whose
+# package.json names the script runs that script and exits 0; and a subdirectory carrying its
+# own package.json with no test script makes npm report "Missing script: test" rather than
+# walking out to the parent's. This guard read the CWD's file, so in the first shape it saw no
+# reporter, pinned its own, and node refused the reporter twice on a run that never started
+# (`TypeError [ERR_INVALID_ARG_VALUE]: The argument '--test-reporter' must match the number of
+# specified '--test-reporter-destination'. Received [ 'spec', 'spec' ]`, exit 1, no counts).
+nearest_package_json() {
+  local dir=$PWD name
+  while :; do
+    name=$dir/package.json
+    if [ -f "$name" ]; then printf '%s' "$name"; return 0; fi
+    [ "$dir" = / ] && return 1
+    dir=${dir%/*}
+    [ -n "$dir" ] || return 1
+  done
+}
 case "$(basename "${argv[0]}")" in
   npm | pnpm | yarn | npmjs)
     case "${argv[1]:-}" in
       test) has_test=1 ;;
       run) [ "${argv[2]:-}" = test ] && has_test=1 ;;
     esac
-    if [ "$has_test" = 1 ] && grep -E '"test"[[:space:]]*:' package.json 2>/dev/null | grep -q -- '--test-reporter'; then
+    if [ "$has_test" = 1 ] && pkg=$(nearest_package_json) \
+       && grep -E '"test"[[:space:]]*:' "$pkg" | grep -q -- '--test-reporter'; then
       has_reporter=1
     fi
     ;;

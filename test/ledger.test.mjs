@@ -153,6 +153,75 @@ test('scripts/ledger-run.sh records a gate run so its hash is re-derivable', () 
   assert.ok(!existsSync(`${log}.raw`), 'the unnormalised scratch copy was left behind next to the record');
 });
 
+// --- scripts/ledger-run.sh and the package.json its npm guard reads (PR #10 review finding 13)
+// Measured first: `npm test` resolves its script from the nearest package.json AT or ABOVE its
+// cwd - run in an empty subdirectory of a tree whose package.json names the script, it runs
+// that script and exits 0 - and it does NOT walk past a package.json that has no test script
+// (measured: it stops there and reports "Missing script: test"). The recorder's guard asked
+// the CWD for package.json, so in that same subdirectory it saw no reporter, pinned its own,
+// and node then refused the reporter twice:
+//   TypeError [ERR_INVALID_ARG_VALUE]: The argument '--test-reporter' must match the number of
+//   specified '--test-reporter-destination'. Received [ 'spec', 'spec' ]
+// with the recorder exiting 1 on a run that never started, its record carrying no counts at all.
+const HAS_NPM = spawnSync('npm', ['--version'], { encoding: 'utf8' }).status === 0;
+
+/** A tree whose root package.json names one test script, with an empty sub/ standing for the
+ *  directory a reviewer or a CI step happens to invoke the recorder from. */
+const npmRunTree = (rootScript, subPackage) => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-run-cwd-'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'rundir', private: true, type: 'module', scripts: { test: rootScript } }));
+  writeFileSync(join(dir, 'g.test.mjs'), "import test from 'node:test';\ntest('a', () => {});\ntest('b', () => {});\n");
+  const sub = join(dir, 'sub');
+  mkdirSync(sub, { recursive: true });
+  if (subPackage) writeFileSync(join(sub, 'package.json'), JSON.stringify(subPackage));
+  return { dir, sub };
+};
+
+/** Record `npm test` from the subdirectory, which is what the guard has to survive. */
+const recordFromSub = (tree, name) => {
+  const rec = spawnSync('bash', [resolve('scripts/ledger-run.sh'), join(tree.dir, name), 'npm', 'test'], {
+    cwd: tree.sub, encoding: 'utf8', env: runnerEnv(),
+  });
+  const body = existsSync(join(tree.dir, name)) ? readFileSync(join(tree.dir, name), 'utf8') : '';
+  return { status: rec.status, out: `${rec.stdout}${rec.stderr}`, body };
+};
+
+test('scripts/ledger-run.sh reads the package.json the recorded npm run really uses, not the one in cwd', { skip: !HAS_NPM }, () => {
+  const tree = npmRunTree('node --test --test-reporter=spec g.test.mjs');
+  const r = recordFromSub(tree, 'spec-from-sub.out');
+  assert.ok(!/ERR_INVALID_ARG_VALUE/.test(r.out),
+    'the recorder pinned its own reporter because the cwd carried no package.json, while npm ran a\n' +
+    `script that already names one, and node refused it twice:\n${r.out.slice(-700)}`);
+  assert.equal(r.status, 0, `recording \`npm test\` from a subdirectory of the tree that names the script exited ` +
+    `${r.status}, so a gate run made that way cannot be recorded at all:\n${r.out.slice(-700)}`);
+  assert.match(r.body, /^RECORD: command=npm test exit=0 tests=2 pass=2 fail=0$/m,
+    `the record of that run carries no counts, so it proves nothing about the run it names:\n${r.body}`);
+  assert.match(r.body, /^ℹ pass 2$/m, 'the recorded run is not in the pinned spec shape');
+});
+
+test('scripts/ledger-run.sh: an outer script naming TAP is recorded as TAP from a subdirectory, not double-pinned', { skip: !HAS_NPM }, () => {
+  // The same defect with the other reporter: reading the cwd instead of the resolved file
+  // would pin spec on top of a script that names tap, and the recorded shape - which the
+  // row's hash depends on - would be whatever survived, not what the run printed.
+  const tree = npmRunTree('node --test --test-reporter=tap g.test.mjs');
+  const r = recordFromSub(tree, 'tap-from-sub.out');
+  assert.equal(r.status, 0, `the TAP-naming script recorded from a subdirectory exited ${r.status}:\n${r.out.slice(-700)}`);
+  assert.match(r.body, /^ok 1 - a$/m, `the run npm resolved is a TAP run, but the record is not shaped like one:\n${r.body}`);
+  assert.ok(!/^✔ /m.test(r.body), `the recorder pinned its own reporter over an explicit tap one:\n${r.body}`);
+  assert.match(r.body, /^RECORD: command=npm test exit=0 tests=2 pass=2 fail=0$/m, `the TAP record lost its counts:\n${r.body}`);
+});
+
+test('scripts/ledger-run.sh does not read past the package.json npm stops at: a nested one naming no reporter still gets the pin', { skip: !HAS_NPM }, () => {
+  const tree = npmRunTree('node --test --test-reporter=tap g.test.mjs', { name: 'inner', private: true, type: 'module', scripts: { test: 'node --test g.test.mjs' } });
+  writeFileSync(join(tree.sub, 'g.test.mjs'), "import test from 'node:test';\ntest('a', () => {});\ntest('b', () => {});\ntest('c', () => {});\n");
+  const r = recordFromSub(tree, 'nested.out');
+  assert.equal(r.status, 0, `the nested run exited ${r.status}:\n${r.out.slice(-500)}`);
+  // The resolved script names NO reporter, so the pin must apply: the record is spec-shaped,
+  // and it counts the nested tree's three tests, not the outer two.
+  assert.match(r.body, /^ℹ pass 3$/m, `the outer package.json's reporter was read for a run npm resolved \ninside the nested tree:\n${r.body}`);
+  assert.match(r.body, /^RECORD: command=npm test exit=0 tests=3 pass=3 fail=0$/m, `the nested record lost its counts:\n${r.body}`);
+});
+
 test('scripts/ledger-name-evidence.py --prove runs without the gitignored scratch files and sees every row', { skip: !HAS_PY }, () => {
   const r = spawnSync('python3', ['scripts/ledger-name-evidence.py', '--prove'], { encoding: 'utf8' });
   assert.equal(r.status, 0, `--prove aborted because a scratch file from an earlier tree is absent:\n${r.stderr.slice(-800)}`);
