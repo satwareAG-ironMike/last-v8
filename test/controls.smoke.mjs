@@ -66,7 +66,7 @@ const SNAP = `(() => {
     explodePressed: attr('btn-explode', 'aria-pressed'),
     assemblePressed: attr('btn-assemble', 'aria-pressed'),
     inspectPressed: attr('btn-inspect', 'aria-pressed'),
-    menuSize: sel.options.length, selected: sel.value, selectedLabel: sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : null,
+    menuSize: sel.options.length, inspCount: v.view.inspectables().length, selected: sel.value, selectedLabel: sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : null,
     cycle: txt('cycle-out'),
     view: {
       cutaway: vs.cutaway,
@@ -206,7 +206,14 @@ try {
     if (!panelIds.every(Boolean)) bad.push(`panel controls missing: ${JSON.stringify(panelIds)}`);
     if (start.rpmMin !== String(published[0]) || start.rpmMax !== String(published[1]))
       bad.push(`slider bounds ${start.rpmMin}..${start.rpmMax} are not the published RPM limits ${published.join('..')}`);
-    if (start.menuSize !== 133) bad.push(`PART INSPECTION menu holds ${start.menuSize} entries, the scene publishes 133 inspectable members`);
+    // The menu must be the scene's own list, read live. A number typed into the gate
+    // is a projection: it passes while the part set is what it was when someone typed
+    // it, and says nothing the moment parts are added or removed - which is exactly
+    // what this branch does to the scene.
+    if (start.menuSize !== start.inspCount)
+      bad.push(
+        `PART INSPECTION menu holds ${start.menuSize} entries while the scene's own view.inspectables() publishes ${start.inspCount} - the menu is the scene's list, not a count typed into the gate`
+      );
     if (start.outlines !== 0) bad.push('the scene starts with a selection outline in it');
 
     // ---- START / STOP ---------------------------------------------------------
@@ -913,7 +920,9 @@ try {
     note(`\nshell ${version} at ${pageUrl}`);
     note(`chromium: ${CHROMIUM}`);
     note(`buffer ${end.buffer} webgl2=${end.webgl2} frames=${end.frames} drawCalls=${end.calls}`);
-    note(`menu entries ${start.menuSize}, published rpm ${published.join('..')}, slowmo options read back as ${start.slowmoSel}/${start.stateSlowmo}`);
+    note(
+      `menu entries ${start.menuSize} read live against view.inspectables() = ${start.inspCount}, published rpm ${published.join('..')}, slowmo options read back as ${start.slowmoSel}/${start.stateSlowmo}`
+    );
     note(`screenshot: ${shotPath}`);
     if (warnings.length) note(`warnings: ${warnings.length} (${warnings.slice(0, 3).join(' | ')})`);
     note(`console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
