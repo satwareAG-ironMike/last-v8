@@ -41,7 +41,7 @@ const ref = (bank) => SPEC.cylinders.find((c) => c.bank === bank); // the statio
 // casting top planes, all derived from the cam axis rather than invented
 const WEB_TOP = CAM_A - 2.55; // 33.045 cam column tops, just under the boss belt
 const PORT_TOP = CAM_A - 3.4; // 32.195 exhaust port bulkheads, clear of every boss
-const STAY_TOP = 30.0; // deck ribs under the bucket towers
+const STAY_TOP = H.stayTopA; // 30.0 deck ribs under the bucket towers
 const CAP_TOP = CAM_A + 3.095; // 38.69 machined cover bolt-on plane above each boss
 const COVER_CEIL = HEAD_TOP_A - H.coverPlate; // 39.895 cover ceiling: clears the lobe sweep
 // Bearing clamps sit below the cam line: their innermost corner stays outside

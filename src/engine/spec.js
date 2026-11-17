@@ -126,6 +126,8 @@ export const SPEC = {
     // 0.68 over the 1.57 spring coil OD - the spring rides inside this bore
     bossClr: 0.05, // cam-bearing running clearance inside each head boss
     coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
+    stayTopA: 30.0, // top plane of the deck ribs the bucket towers stand on; the
+    // plug boss face the spark plug's hex clamps against stands off this plane
 
     // ---- machined rings around each valve axis ----
     // Each ring is a published wall over the bore it surrounds, not an outside
@@ -141,6 +143,27 @@ export const SPEC = {
     springTubeClr: 0.33,   // spring-tube bore over the 1.57 compressed-coil OD
     springTubeWall: 0.3,   // spring-tube OD over its own bore
     collarWall: 0.9,       // bucket-bore collar OD over its bore
+  },
+
+  // ---- spark plug: one published silhouette on every cylinder axis (issue #11) ----
+  // The channel law in test/heads.test.mjs measures the machined void against these
+  // radii, so the plug the repo renders and the bore it screws into are the same
+  // published numbers. M14-class proportions: 14 mm threaded reach, 21 mm hex across
+  // flats (1.05 corner radius). The stack is measured from the plug's seat face at
+  // PLUG_BOSS_A: the segments below it stand in the head and the chamber, the
+  // segments above it stand in air beside the two cam covers.
+  plug: {
+    bossOff: 0.5,      // plug-boss face stands this far above head.stayTopA
+    clr: 0.05,         // air the channel must keep around the whole silhouette
+    wallCasting: 0.25, // aluminium the head keeps between the bore and its own rings
+    crownAir: 0.5,     // the plug's lowest point stays this far above the TDC crown plane
+    thread: { r: 0.7, len: 4.9 },   // screwed into the head from the boss face down
+    shell: { r: 0.58, len: 1.0 },   // smooth metal shell below the threads
+    nose: { r: 0.45, len: 1.2 },    // insulator nose standing in the combustion chamber
+    electrode: { r: 0.25, len: 0.5 },
+    hex: { r: 1.05, len: 1.6 },     // 21 mm across flats, seated on the boss face
+    boot: { r: 0.7, len: 2.5 },     // insulator boot above the hex
+    terminal: { r: 0.45, len: 1.5 },
   },
 
   // ---- intake + exhaust topology (pinned by test/manifolds.test.mjs) ----
@@ -421,6 +444,9 @@ export const camAxisStation = H.stemToTip + H.shim + H.bucketHeight + H.camBaseR
 
 export const HEAD_TOP_A =
   H.seatA + Math.cos(H.valveAngle * DEG) * camAxisStation + H.camBaseRadius + H.coverExtra;
+
+/** Bank-local `along` of the machined plug-boss face the plug's hex seats on. */
+export const PLUG_BOSS_A = H.stayTopA + SPEC.plug.bossOff;
 
 /** Cam axis bank coordinates: [along, out]. */
 export function camAxisBank(bank, valve) {

@@ -34,7 +34,7 @@ const key = (x, y, z) => `${Math.round(x / TRI_CELL)},${Math.round(y / TRI_CELL)
  * World-space triangle shell of everything the engine renders.
  * Returns { tris, hash, stats }.
  */
-export function engineTriangles(materials = proxyMaterials()) {
+export function engineTriangles(materials = proxyMaterials(), opts = {}) {
   const tris = [];
   const hash = new Map();
   let meshes = 0, instances = 0, verts = 0;
@@ -62,7 +62,14 @@ export function engineTriangles(materials = proxyMaterials()) {
       }
     }
   };
-  for (const root of Object.values(engineUnits(materials))) {
+  // opts.units names which units to keep in the shell (default: all of them). A law
+  // that measures a plug bore against the castings it is machined into needs the
+  // casting-only shell; a law that measures the same bore against the moving valve
+  // heads beside it needs the whole engine. Both readings are the same triangles.
+  const units = engineUnits(materials);
+  const keep = opts.units ?? Object.keys(units);
+  for (const k of keep) {
+    const root = units[k];
     root.updateMatrixWorld(true);
     root.traverse((o) => {
       if (!o.isMesh) return;
