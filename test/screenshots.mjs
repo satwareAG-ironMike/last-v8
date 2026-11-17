@@ -24,13 +24,23 @@
 import { ROOT, withPage } from './support/browser.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SPEC } from '../src/engine/spec.js';
+import { crankEvent, eventMid } from '../src/engine/timing.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Pinned crank angles the laws are measured at. 0 is TDC for cylinders 1 and 6 and BDC
-// for 4 and 7; 265 is peak exhaust lift on cylinder 1; 450 is peak intake lift on
-// cylinder 4. The others spread the four strokes over the 720 degree cycle.
-const ANGLES = [0, 90, 180, 265, 340, 450, 540, 719];
+// for 4 and 7; the two peak-lift angles are DERIVED from the published cam events in
+// src/engine/spec.js - crankEvent(cyl, eventMid(valve)) is where a lobe nose faces its
+// follower - so this audit re-derives them whenever the events are re-tuned instead of
+// keeping a stale number. Cylinder 2 drives the intake pin because its peak lands at
+// 389, inside cylinder 1's intake stroke (360..540), so the same pin also proves that
+// the four strokes really go round. The rest spread the cycle.
+const CYL1 = SPEC.cylinders.find((c) => c.num === 1);
+const CYL2 = SPEC.cylinders.find((c) => c.num === 2);
+const PEAK_EXH_CYL1 = crankEvent(CYL1, eventMid('exhaust'));
+const PEAK_INT_CYL2 = crankEvent(CYL2, eventMid('intake'));
+const ANGLES = [0, 90, 180, PEAK_EXH_CYL1, 340, PEAK_INT_CYL2, 540, 719];
 
 // ---- page-side: measure the rendered tree against the authority ----------------
 // No backticks inside: this whole body is inserted into a template literal below.
@@ -654,9 +664,9 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   }
 
   // peak lift lands with the lobe nose facing the follower
-  const peak = runs.find((z) => z.theta === 265).m.valves.find((x) => x.cyl === 1 && x.valve === 'exhaust');
-  if (Math.abs(peak.authority - 1.2) > 1e-9)
-    bad.push(`cyl 1 exhaust at cycle ${peak.cycle} is ${peak.authority} cm off its seat; the published maxLift is 1.2 and this angle is the lobe nose`);
+  const peak = runs.find((z) => z.theta === PEAK_EXH_CYL1).m.valves.find((x) => x.cyl === 1 && x.valve === 'exhaust');
+  if (Math.abs(peak.authority - SPEC.valves.maxLift) > 1e-9)
+    bad.push(`cyl 1 exhaust at cycle ${peak.cycle} is ${peak.authority} cm off its seat; the published maxLift is ${SPEC.valves.maxLift} and crank ${PEAK_EXH_CYL1} is this lobe's nose`);
   if (Math.abs(peak.noseAz - peak.followerAz) > 1e-6)
     bad.push(`at peak lift the cyl 1 exhaust lobe nose is at ${peak.noseAz} degrees and the follower is at ${peak.followerAz}`);
   const closed = runs.find((z) => z.theta === 90).m.valves.filter((x) => x.cyl === 1 && x.valve === 'intake')[0];
@@ -861,7 +871,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const u0 = runs[0].m.union;
   console.log(`assembled union at crank 0: ${u0.min.join(',')} .. ${u0.max.join(',')}`);
   console.log(`chain at crank 0: cyl1 big-end error ${runs[0].m.chain[0].bigEndToCrankPinPlusOff}, rod span ${runs[0].m.chain[0].rodSpan}, piston along ${runs[0].m.chain[0].pistonAlong} in liner ${runs[0].m.chain[0].linerAlong}, radial ${runs[0].m.chain[0].pistonRadial} against hole ${runs[0].m.chain[0].linerHoleRadius} (liner outer ${runs[0].m.chain[0].linerOuterRadius})`);
-  console.log(`valves at crank 265: cyl1 exhaust authority ${runs.find((z) => z.theta === 265).m.valves[1].authority} spring ${runs.find((z) => z.theta === 265).m.valves[1].fromSpring}`);
+  console.log(`valves at crank ${PEAK_EXH_CYL1}: cyl1 exhaust authority ${runs.find((z) => z.theta === PEAK_EXH_CYL1).m.valves[1].authority} spring ${runs.find((z) => z.theta === PEAK_EXH_CYL1).m.valves[1].fromSpring}`);
 
   // A picture rendered by a page that logged an error is not a working simulation: the
   // harness (test/support/browser.mjs) collects every console.error, page exception, CDP
