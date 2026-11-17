@@ -126,6 +126,21 @@ export const SPEC = {
     // 0.68 over the 1.57 spring coil OD - the spring rides inside this bore
     bossClr: 0.05, // cam-bearing running clearance inside each head boss
     coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
+
+    // ---- machined rings around each valve axis ----
+    // Each ring is a published wall over the bore it surrounds, not an outside
+    // diameter remembered from the last casting. src/render/heads.js builds every
+    // one of them from these, so re-proportioning the valve row - the fix issue
+    // #11 asks for before a spark plug can stand on a cylinder axis - moves the
+    // rings with the centres instead of leaving stale casting literals behind.
+    // Reading: seat insert flange stands this far proud of its valve disc radius.
+    seatInsertClr: { intake: 0.15, exhaust: 0.2 },
+    guideWall: 0.57,       // guide OD over its 0.48 bore: 0.48 + 0.57 = 1.05
+    seatPilotClr: 0.55,    // the insert's pilot boss stands this much proud of the guide OD
+    springFloorWall: 0.8,  // spring-seat floor OD over the 2.25 bucket/spring bore
+    springTubeClr: 0.33,   // spring-tube bore over the 1.57 compressed-coil OD
+    springTubeWall: 0.3,   // spring-tube OD over its own bore
+    collarWall: 0.9,       // bucket-bore collar OD over its bore
   },
 
   // ---- intake + exhaust topology (pinned by test/manifolds.test.mjs) ----

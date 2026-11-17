@@ -22,6 +22,7 @@ import { alignYTo, boltGeometry, instancedBolts } from './primitives.js';
 const H = SPEC.head;
 const B = SPEC.block;
 const CAM = SPEC.cam;
+const V = SPEC.valves;
 
 const FACE = B.deckA + H.gasketT; // 24.25 head deck face, above the compressed gasket
 const RAIL = H.railTopA; // 27.0 machined clamping plane the head bolts stand on
@@ -167,33 +168,41 @@ function headCasting(bank, materials) {
   //    profile is CLOSED by repeating its first point (parts.js convention) -
   //    an open profile would show as a hole in the bore under cutaway.
   const closed = (pairs) => [...pairs, pairs[0]];
+  // Ring outside diameters, every one derived from the bore it surrounds
+  // (SPEC.head wall fields): a re-proportioned valve row moves these with it.
+  const guideOd = H.guideBoreR + H.guideWall; // 1.05
+  const pilotOd = guideOd + H.seatPilotClr; // 1.60
+  const floorOd = H.bucketBoreR + H.springFloorWall; // 3.05
+  const tubeId = V.springRadius + V.springWireRadius + H.springTubeClr; // 1.90 over the 1.57 coil OD
+  const tubeOd = tubeId + H.springTubeWall; // 2.20
+  const collarOd = H.bucketBoreR + H.collarWall; // 3.15
   for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
     for (const valve of valves) {
       // Hardened seat insert: a thin OD ring (its outboard edge must stay
       // inside the 5.1 bore tunnel where it droops below the deck) with a
       // pilot boss that presses into the guide bore.
-      const seatOd = valve === 'intake' ? 2.85 : 2.6;
+      const seatOd = H.headDia[valve] / 2 + H.seatInsertClr[valve];
       add(`seat-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
-        [1.05, 0], [seatOd, 0], [seatOd, 0.18], [1.6, 0.35], [1.6, 0.7], [1.05, 0.7],
+        [guideOd, 0], [seatOd, 0], [seatOd, 0.18], [pilotOd, 0.35], [pilotOd, 0.7], [guideOd, 0.7],
       ])), valve === 'intake' ? materials.valveIntake : materials.valveExhaust, 'seatRing');
 
       add(`guide-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
-        [H.guideBoreR, 0.4], [1.05, 0.4], [1.05, 3.4], [H.guideBoreR, 3.4],
+        [H.guideBoreR, 0.4], [guideOd, 0.4], [guideOd, 3.4], [H.guideBoreR, 3.4],
       ])), materials.bearingShell, 'guide');
 
       add(`springfloor-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
-        [1.05, H.guideLength - H.floorT], [3.05, H.guideLength - H.floorT],
-        [3.05, H.guideLength], [1.05, H.guideLength],
+        [guideOd, H.guideLength - H.floorT], [floorOd, H.guideLength - H.floorT],
+        [floorOd, H.guideLength], [guideOd, H.guideLength],
       ])), rib, 'floor');
 
       add(`springtube-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
-        [1.9, H.guideLength], [2.2, H.guideLength], [2.2, 5.75], [1.9, 5.75],
+        [tubeId, H.guideLength], [tubeOd, H.guideLength], [tubeOd, 5.75], [tubeId, 5.75],
       ])), rib, 'springtube');
 
       // the bore is machined straight through from the spring seat to above the
       // bucket skirt at full lift; this mesh is the wall the flange rides in
       add(`bucketbore-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
-        [H.bucketBoreR, 5.75], [3.15, 5.75], [3.15, 6.95], [H.bucketBoreR, 6.95],
+        [H.bucketBoreR, 5.75], [collarOd, 5.75], [collarOd, 6.95], [H.bucketBoreR, 6.95],
       ])), rib, 'bucketbore',
       { boreR: H.bucketBoreR, boreS0: H.guideLength, boreS1: 9.25 });
     }
