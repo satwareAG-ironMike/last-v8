@@ -9,6 +9,10 @@ import {
   strokeOf,
   valveLift,
   lobeProfileRadius,
+  lobeMaxWalk,
+  lobeMinCurvature,
+  lobeMaxRadius,
+  lobeHalfCamDeg,
   lobeAzimuth,
   camAzimuth,
   followerAzimuth,
@@ -25,6 +29,34 @@ import { RPM_MAX } from '../src/engine/animation.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 const CYLS = SPEC.cylinders;
+const DEG = Math.PI / 180;
+
+// ---- flat-follower contact law oracles (#8 item 3, addendum A1-G1 / A1-G3) --
+// The buckets are flat discs, so the follower rides on the plane the lobe
+// presents to the follower axis. Sampled from the machined outline itself:
+// max over the outline of r * cos(angle from the follower normal). FACE_TOL
+// covers the 0.05 cam-degree sampling of the outline (3e-6 cm) with room.
+const FACE_TOL = 2e-4; // cm
+const OUTLINE_STEP = 0.05; // cam degrees
+
+function lobeOutline(valve, step = OUTLINE_STEP) {
+  const pts = [];
+  for (let a = -180; a < 180; a += step) pts.push({ az: a, r: lobeProfileRadius(valve, a) });
+  return pts;
+}
+
+const outlines = { intake: lobeOutline('intake'), exhaust: lobeOutline('exhaust') };
+
+/** Tangent-plane distance of the lobe along a normal at `normalAz` cam degrees
+ *  from the lobe nose, plus the polar angle of the point it touches. */
+function lobeSupport(valve, normalAz) {
+  let dist2 = -Infinity, az = 0;
+  for (const q of outlines[valve]) {
+    const d = q.r * Math.cos((q.az - normalAz) * DEG);
+    if (d > dist2) { dist2 = d; az = q.az; }
+  }
+  return { dist: dist2, az };
+}
 
 test('firing order derives from the cross-plane crank as 1-8-7-3-6-5-4-2 with 90 deg pulses', () => {
   const order = firingOrder();
@@ -99,12 +131,13 @@ test('valve lift is the cam lobe profile rise, peaked at the documented cycle an
         const theta = wrap720(c.powerTDC + cycle);
         const lift = valveLift(c, valve, theta);
         peak = Math.max(peak, lift);
-        // what the follower actually rides on: nose radius minus base circle
+        // what a flat follower actually rides on: the tangent plane the lobe
+        // presents to the follower axis, not the radius along that ray (#8 item 3)
         const alpha = signedAngle(lobeAzimuth(c, valve, theta) - fAz);
-        const profile = lobeProfileRadius(valve, alpha) - base;
+        const sup = lobeSupport(valve, -alpha);
         assert.ok(
-          Math.abs(lift - Math.max(0, profile)) < 1e-9,
-          `cyl ${c.num} ${valve}: valve ${lift} vs cam profile ${profile}`
+          Math.abs(lift - Math.max(0, sup.dist - base)) < FACE_TOL,
+          `cyl ${c.num} ${valve}: valve ${lift} vs lobe contact distance ${sup.dist - base}`
         );
         if (dc === 0) {
           assert.ok(Math.abs(lift - SPEC.valves.maxLift) < 1e-9, `cyl ${c.num} ${valve} peak ${lift}`);
@@ -193,6 +226,106 @@ test('valvetrain stays in contact: bucket to cam axis distance equals base circl
         `cyl ${c.num} camshafts collide`
       );
     }
+  }
+});
+
+// ---- A1-G1: nothing ever crosses a follower face -----------------------------
+
+test('A1-G1 no lobe crosses its follower face and no follower flies: contact over a full 720 deg cycle', () => {
+  const base = SPEC.head.camBaseRadius;
+  let worstPen = 0, penAt = null, worstGap = 0, gapAt = null, walkMax = 0, walkAt = null;
+  for (const c of CYLS) {
+    for (const valve of ['intake', 'exhaust']) {
+      for (let cycle = 0; cycle < 720; cycle += 2) {
+        const theta = wrap720(c.powerTDC + cycle);
+        const alpha = signedAngle(lobeAzimuth(c, valve, theta) - followerAzimuth(c, valve));
+        const sup = lobeSupport(valve, -alpha);
+        const face = base + valveLift(c, valve, theta);
+        const pen = sup.dist - face; // > 0: the lobe reaches past the face into the bucket
+        if (pen > worstPen) { worstPen = pen; penAt = [c.num, valve, cycle, alpha.toFixed(2), sup.dist.toFixed(4), face.toFixed(4)]; }
+        if (-pen > worstGap) { worstGap = -pen; gapAt = [c.num, valve, cycle, pen.toFixed(4)]; }
+        const walk = Math.abs(sup.az + alpha); // contact offset off the follower ray, cam deg
+        if (walk > walkMax) { walkMax = walk; walkAt = [c.num, valve, cycle, sup.az.toFixed(2)]; }
+      }
+    }
+  }
+  assert.ok(worstPen < FACE_TOL,
+    `lobe penetrates the flat follower face by ${worstPen.toFixed(4)} cm at ${JSON.stringify(penAt)} (tol ${FACE_TOL})`);
+  assert.ok(worstGap < FACE_TOL,
+    `follower loses contact, gap ${worstGap.toFixed(4)} cm at ${JSON.stringify(gapAt)} (tol ${FACE_TOL})`);
+  assert.ok(walkMax < 60, `contact runs ${walkMax.toFixed(2)} cam deg off the follower ray at ${JSON.stringify(walkAt)}`);
+  // the contact law in centimetres, against the part that has to carry it:
+  // dh/dpsi is how far the contact patch moves across the flat tappet face, and
+  // the outline radius of curvature has to stay positive or the lobe cuts the
+  // bucket instead of riding it.
+  const faceR = SPEC.head.bucketRadius;
+  for (const valve of ['intake', 'exhaust']) {
+    const walk = lobeMaxWalk(valve);
+    const curv = lobeMinCurvature(valve);
+    assert.ok(walk <= faceR - 0.15,
+      `${valve}: contact walks ${walk.toFixed(4)} cm across a ${faceR} cm tappet face (limit ${faceR - 0.15})`);
+    assert.ok(curv > 0,
+      `${valve}: the machined outline undercuts a flat follower, tightest radius of curvature ${curv.toFixed(4)} cm`);
+  }
+});
+
+// ---- A1-G3: the lobe is a machined profile, not a cosine drawn on a ray ------
+
+test('A1-G3 the machined lobe: base circle, ramps, flanks, nose, lift, duration, grinder-stepped', () => {
+  const base = SPEC.head.camBaseRadius;
+  const quote = 0.127; // 0.050 in: the lift height a duration is quoted at
+  for (const valve of ['intake', 'exhaust']) {
+    const V = SPEC.valves;
+    const halfCam = (valve === 'intake' ? V.intakeClose - V.intakeOpen : V.exhaustClose - V.exhaustOpen) / 4;
+    const event = 4 * halfCam;
+    // the contact law, not the ray: at a cam offset the follower rides on the
+    // tangent plane the lobe presents, so every band below is a lift band
+    const liftAt = (camDeg) => Math.max(0, lobeSupport(valve, camDeg).dist - base);
+    const at = (target) => {
+      let lo = 0, hi = 180;
+      for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; if (liftAt(m) > target) lo = m; else hi = m; }
+      return (lo + hi) / 2;
+    };
+    const durZero = 4 * at(1e-9);
+    const durQuote = 4 * at(quote);
+    const noseBand = 4 * at(V.maxLift - quote);
+    const rampEach = (durZero - durQuote) / 2;
+    const flankEach = (durZero - 2 * rampEach - noseBand) / 2;
+    const report = `zero-lift duration ${durZero.toFixed(2)} | quoted at ${quote} cm ${durQuote.toFixed(2)} (${((100 * durQuote) / durZero).toFixed(1)}%) | ` +
+      `ramp each side ${rampEach.toFixed(2)} | main flank each side ${flankEach.toFixed(2)} | nose band ${noseBand.toFixed(2)} | ` +
+      `lift at nose ${liftAt(0).toFixed(4)} at half width ${liftAt(halfCam * 0.5).toFixed(4)} at ${halfCam + 5} cam deg ${liftAt(halfCam + 5).toFixed(4)}`;
+    // Band windows are the shape a cam grinder actually produces on a
+    // flat-tappet lobe, quoted the way a cam is quoted: at 0.050 in / 0.127 cm
+    // of lift, which sits out on the ramps. A ground cam measures its
+    // zero-lift duration 8..25 crank deg longer per side than that quoted
+    // duration (80..98 % of the event), keeps at least 25 crank deg of working
+    // flank on each side, and holds its nose band 40..120 crank deg wide.
+    // A1-G3 also demands the profile be convex, so a nose narrower than the
+    // ground arc undercuts: see the p / p_undercut headroom in
+    // scripts/valve-train-audit.mjs.
+    assert.ok(
+      Math.abs(Math.round(durZero) - event) < 0.5 &&
+        Math.abs(liftAt(0) - V.maxLift) < FACE_TOL &&
+        liftAt(halfCam + 5) < 1e-6 &&
+        liftAt(halfCam * 0.5) > 0.3 * V.maxLift &&
+        rampEach >= 8 && rampEach <= 25 &&
+        flankEach >= 25 && noseBand >= 40 && noseBand <= 120 &&
+        durQuote / durZero >= 0.8 && durQuote / durZero <= 0.98,
+      `${valve} lobe bands off a ground profile: ${report}`
+    );
+  }
+  // journal / base-circle / nose stepping: everything turned or ground lands on the
+  // 0.05 cm increment a grinder or a cam journal grinder works in
+  const step = 0.05;
+  const names = { 'cam base circle': SPEC.head.camBaseRadius, 'cam journal': SPEC.head.camJournalRadius, 'cam bearing': SPEC.cam.bearingR, 'max lift': SPEC.valves.maxLift };
+  if (SPEC.valves.lobeNoseRadius !== undefined) names['lobe nose radius'] = SPEC.valves.lobeNoseRadius;
+  for (const [name, v] of Object.entries(names)) {
+    assert.ok(Math.abs(v / step - Math.round(v / step)) < 1e-9, `${name} ${v} is not stepped to ${step} cm`);
+  }
+  for (const valve of ['intake', 'exhaust']) {
+    assert.ok(Math.abs(lobeProfileRadius(valve, 0) - (SPEC.head.camBaseRadius + SPEC.valves.maxLift)) < 1e-9,
+      `${valve}: machined nose radius must be base circle + maxLift`);
+    assert.ok(lobeProfileRadius(valve, 180) === SPEC.head.camBaseRadius, `${valve}: opposite the nose must be the base circle`);
   }
 });
 
