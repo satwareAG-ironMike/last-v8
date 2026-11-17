@@ -12,6 +12,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const ROW_TITLE = /^- \[( |x)\] (\S+): /;
+const SPAN_PARAGRAPH = /(G\d+(?:-G\d+)?) carry sigs written by an earlier runner/;
+
+/** Row ids in file order, read off any GATES.md text (the live file or a damaged copy). */
+const declaredIds = (text) => text.split('\n').filter((l) => ROW_TITLE.test(l)).map((l) => ROW_TITLE.exec(l)[2]);
+
+/** The rows the RECIPE paragraph's exception span excuses, read off the given text. Matched
+ *  by id NUMBER, not as text: "G10" is not greater than "G3" (same 'G', then '1' < '3'), so a
+ *  text range on "G1-G3" excuses G10 through G19 as well in any ledger grown past G9.
+ *  scripts/ledger-audit.mjs matched this span by number once the fix series started; this
+ *  harness reader had the same defect and a grown ledger shows where the two disagree. */
+const excusedBy = (text, span) => {
+  const [lo, hi] = span.split('-').map((s) => Number(s.trim().slice(1)));
+  return declaredIds(text).filter((id) => /^G\d+$/.test(id) && Number(id.slice(1)) >= lo && Number(id.slice(1)) <= hi);
+};
 const gates = readFileSync('GATES.md', 'utf8');
 const titles = gates.split('\n').filter((l) => ROW_TITLE.test(l));
 const ids = titles.map((l) => ROW_TITLE.exec(l)[2]);
@@ -87,10 +101,9 @@ test('scripts/ledger-audit.mjs indexes every declared row and survives a tree wi
   // the RECIPE paragraph at the head of this ledger declares as written by an earlier,
   // unrecorded runner. The exception list is read from that paragraph, not typed here, so
   // a fourth broken row cannot hide behind it.
-  const named = gates.match(/(G\d+(?:-G\d+)?) carry sigs written by an earlier runner/);
+  const named = gates.match(SPAN_PARAGRAPH);
   assert.ok(named, 'the ledger does not name the rows whose recorded sig predates the recipe');
-  const span = named[1].split('-').map((s) => s.trim());
-  const documented = [...blocks.keys()].filter((id) => /^G\d+$/.test(id) && id >= span[0] && id <= span[1]);
+  const documented = excusedBy(gates, named[1]);
   assert.ok(documented.length >= 3, `the ledger's exception span "${named[1]}" reads as ${documented.join(', ')}`);
   const unrec = [...out.matchAll(/NOT RECOMPUTABLE: (\S+)(?: recorded|:)/g)].map((m) => m[1]).sort();
   assert.deepEqual(unrec, [...documented].sort(), `rows the recipe cannot recompute beyond the documented ones: ${unrec.join(', ')}`);
@@ -337,6 +350,65 @@ test('the clean ledger passes every one of those four checks, so the failure pat
   const r = damagedAudit((text) => text);
   assert.equal(r.status, 0, `the refusal path fires against this repo's own ledger:\n${r.out.slice(0, 900)}`);
   assert.match(r.out, /LEDGER AUDIT OK/, 'the audit publishes no verdict for a ledger it accepts');
+});
+
+// --- the exception span read by NUMBER, not as text (the exception-span review finding) --
+// This ledger's own exception span is `G1-G3`. Compared as text, "G10" is NOT greater than
+// "G3": 'G'=='G', then '1' < '3'. So a ledger grown past G9 sweeps G10 through G19 into the
+// exemption the RECIPE paragraph grants to three rows, and a fourth row whose recorded sig
+// cannot be re-derived hides there. Measured: the audit read this span by number from the
+// commit that first added the exemption (64adb69), and this file had carried the text
+// comparison since its own first version (9dc51eb), so the two readers of one paragraph
+// disagreed about which rows are exempt - which is why the control below measures BOTH.
+const GROWN_ROWS = ['- [x] G10: a row a ledger grown past G9 adds', '- [x] G11: a second such row'].map((title) =>
+  `${title}\n  CHECK: node --test test/zz.test.mjs\n  EXPECT: fail 0\n  EVIDENCE: exit 0, gate-sig=0000000000000000\n`).join('\n');
+
+test('the exception span excuses rows by id NUMBER: "G1-G3" cannot reach a grown ledger G10', () => {
+  const grown = `${gates}\n${GROWN_ROWS}\n`;
+  const declared = declaredIds(grown);
+  assert.ok(declared.includes('G10') && declared.includes('G11'),
+    `the grown copy does not even carry the ids this control is about:\n${declared.join(', ')}`);
+  assert.deepEqual(excusedBy(grown, 'G1-G3'), ['G1', 'G2', 'G3'],
+    `the span "G1-G3" read as text excuses ${excusedBy(grown, 'G1-G3').join(', ')} of the grown copy's ` +
+    `rows: text order puts G10 and G11 before G3, so a fourth row whose gate-sig cannot be ` +
+    `re-derived would hide in an exemption the RECIPE paragraph never granted it`);
+  // The other half of the same law: a span that really does reach past G9 excuses them, so the
+  // fix is numbering the ids and not simply refusing everything with two digits. The expected
+  // set is derived from the grown copy's own declared ids, not typed.
+  const numeric = (id) => /^G\d+$/.test(id);
+  const everyNumeric = declaredIds(grown).filter(numeric);
+  assert.deepEqual(excusedBy(grown, 'G1-G11'), everyNumeric,
+    `the span "G1-G11" excuses ${excusedBy(grown, 'G1-G11').join(', ')} while the grown copy declares ` +
+    `these bare numeric ids: ${everyNumeric.join(', ')}`);
+  const n = (id) => Number(id.slice(1));
+  assert.ok(everyNumeric.some((id) => n(id) <= 3) && everyNumeric.some((id) => n(id) >= 4 && n(id) <= 9) &&
+    everyNumeric.some((id) => n(id) >= 10),
+    `the grown copy has no id on both sides of the G9 boundary this control is about ` +
+    `(need one <=3, one in 4..9 and one >=10, it has ${everyNumeric.join(', ')})`);
+});
+
+test('the audit and this file agree on which grown rows the declared exception does NOT cover', () => {
+  const grown = `${gates}\n${GROWN_ROWS}\n`;
+  const r = damagedAudit(() => grown);
+  assert.equal(r.status, 1, `two grown rows carrying a sig that cannot recompute still exited ${r.status}, ` +
+    `although neither is inside the exception the RECIPE paragraph declares:\n${r.out.slice(0, 900)}`);
+  for (const id of ['G10', 'G11']) {
+    assert.match(r.out, new RegExp(`DEFECT: ${id}: its recorded gate-sig does not recompute[^\\n]*not covered by the exception "G1-G3"`),
+      `the audit does not name ${id} as outside the declared exception:\n${r.out.slice(0, 900)}`);
+  }
+  for (const id of ['G1', 'G2', 'G3']) {
+    assert.ok(!new RegExp(`DEFECT: ${id}:`).test(r.out), `the audit refuses ${id}, which the RECIPE paragraph ` +
+      `declares as written by the earlier runner - the exemption stopped working:\n${r.out.slice(0, 900)}`);
+  }
+  const claimed = excusedBy(grown, SPAN_PARAGRAPH.exec(grown)[1]);
+  assert.deepEqual(claimed, ['G1', 'G2', 'G3'],
+    `one paragraph, two readers, two answers: the audit above refuses ${['G10', 'G11'].filter((id) => new RegExp(`DEFECT: ${id}:`).test(r.out)).join(', ')} ` +
+    `as outside the exception while this file excuses ${claimed.join(', ')} - and an exemption the ` +
+    `RECIPE paragraph never granted is how a fourth broken row hides`);
+  for (const id of ['G1', 'G2', 'G3']) {
+    assert.ok(claimed.includes(id), `this file no longer excuses ${id}, which the RECIPE paragraph declares as ` +
+      `written by the earlier runner:\n${claimed.join(', ')}`);
+  }
 });
 
 // --- scripts/branch-gate.sh measured against a stub forge (PR #10 review findings 9, 12) --
