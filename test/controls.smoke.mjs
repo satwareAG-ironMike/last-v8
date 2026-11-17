@@ -49,6 +49,7 @@ const SNAP = `(() => {
   const txt = (id) => { const e = document.getElementById(id); return e ? e.textContent : null; };
   const attr = (id, name) => { const e = document.getElementById(id); return e ? e.getAttribute(name) : null; };
   const sel = document.getElementById('part-select');
+  const thr = document.getElementById('throttle');
   const pose = v.cameraPose();
   const vs = v.viewState();
   const box = new THREE.Box3().setFromObject(v.engine);
@@ -59,6 +60,18 @@ const SNAP = `(() => {
     rpm: Number(document.getElementById('rpm').value),
     rpmMin: document.getElementById('rpm').min, rpmMax: document.getElementById('rpm').max,
     rpmOut: txt('rpm-out'),
+    // The load control may not exist yet in the build under test, so every read of it
+    // is guarded: a missing control has to surface as a named law below, not as a
+    // ReferenceError that aborts the rest of the gate.
+    hasThrottle: !!thr,
+    throttle: thr ? Number(thr.value) : null,
+    throttleMin: thr ? thr.min : null,
+    throttleMax: thr ? thr.max : null,
+    throttleStep: thr ? Number(thr.step) : null,
+    throttleOut: txt('throttle-out'),
+    stateThrottle: v.state.throttle,
+    hasSetThrottle: typeof v.setThrottle === 'function',
+    advLine: txt('advance-out'),
     slowmoSel: Number(document.getElementById('slowmo').value),
     slowmoLabel: document.getElementById('slowmo').selectedOptions[0].textContent,
     stateRpm: v.state.rpm, stateSlowmo: v.state.slowmo, running: v.state.running, theta: v.state.theta,
@@ -913,6 +926,211 @@ try {
     if (rpmAfter.stateRpm !== beforePress + 25)
       bad.push(`one ArrowRight moved rpm ${beforePress} -> ${rpmAfter.stateRpm}, the published slider step is 25`);
     if (rpmAfter.running !== false) bad.push('the rpm control started the engine on its own');
+
+    // ---- the LOAD control: the throttle the ignition model reads -------------
+    // Row P1-G12. Nothing below is a number typed into this file: the bounds are the
+    // animation module's published load surface read in the page, the step is the
+    // control's own attribute, the four advance terms are compared against
+    // src/engine/ignition.js and against state.advance() - the very object the
+    // renderer is fed - and the last law closes the loop the issue asks for: the load
+    // the control sets is the load that decides when the spark fires in the live scene.
+    const loadLimits = await evalJs("import('/src/engine/animation.js').then((m) => [m.THROTTLE_MIN, m.THROTTLE_MAX])");
+    const [loadLo, loadHi] = loadLimits;
+    const tslider = await rectOf('#throttle');
+    if (!tslider) bad.push('the panel carries no load control: #throttle is not in the page, so the 0..100 % load the ignition model reads cannot be set from the UI at all');
+    if (start.hasSetThrottle !== true) bad.push('window.__v8 publishes no setThrottle beside setRpm, so the exported product surface has no load control');
+    if (start.advLine === null) bad.push('the HUD prints no ignition advance breakdown: #advance-out is not in the page');
+
+    // Printed to one decimal, so the comparison tolerance is half of that last digit.
+    const ADV = /^IGNITION - base (-?[\d.]+)° - centrifugal (-?[\d.]+)° - vacuum (-?[\d.]+)° - total (-?[\d.]+)°(?: - clamped at (-?[\d.]+)°)? - at (\d+) rpm at (-?[\d.]+) %$/;
+    const EPS = 0.05;
+    /** Shortest distance between two crank angles on the 720 degree cycle. */
+    const angularGap = (a, b) => {
+      const d = Math.abs((((a - b) % 720) + 720) % 720);
+      return Math.min(d, 720 - d);
+    };
+
+    /**
+     * Drive the load and read the HUD line back beside both authorities the same page
+     * runs: state.advance() (what the renderer is fed) and the four functions
+     * src/engine/ignition.js publishes for the rpm and load the state module holds.
+     */
+    const loadLaw = async (tag, rpm, throttle) => {
+      await evalJs(`window.__v8.setRpm(${rpm}); window.__v8.setThrottle(${throttle}); "ok"`);
+      await sleep(240); // several panel.sync() frames, so the readout is the authority's own value
+      const shown = JSON.parse(
+        await evalJs(
+          `JSON.stringify((() => { const v = window.__v8; const e = document.getElementById('advance-out'); return { line: e ? e.textContent : null, live: v.state.advance(), rpm: v.state.rpm, throttle: v.state.throttle }; })())`
+        )
+      );
+      const model = await evalJs(
+        `import('/src/engine/ignition.js').then(async (m) => { const s = await import('/src/engine/spec.js'); const rpm = window.__v8.state.rpm, load = window.__v8.state.throttle; const kpa = m.manifoldVacuum(rpm, load); return { rpm, load, base: s.SPEC.ignition.baseDeg, centri: m.centrifugalAdvance(rpm), kpa, vacuum: m.vacuumAdvance(kpa), limit: s.SPEC.ignition.maxTotalDeg, total: m.totalAdvance(rpm, load) }; })`
+      );
+      const m = ADV.exec(shown.line ?? '');
+      if (!m) {
+        bad.push(`${tag}: the HUD advance line is unreadable: "${shown.line}" - it has to name base, centrifugal, vacuum and total`);
+        return null;
+      }
+      const p = { base: Number(m[1]), centri: Number(m[2]), vacuum: Number(m[3]), total: Number(m[4]), clamp: m[5] === undefined ? null : Number(m[5]), rpm: Number(m[6]), load: Number(m[7]) };
+      const term = (got, want, name) => {
+        if (Math.abs(got - want) > EPS) bad.push(`${tag}: the HUD prints ${name} ${got}° where src/engine/ignition.js says ${want}° at ${model.rpm} rpm and ${model.load} % load`);
+      };
+      term(p.base, model.base, 'base');
+      term(p.centri, model.centri, 'centrifugal');
+      term(p.vacuum, model.vacuum, 'vacuum');
+      const sum = model.base + model.centri + model.vacuum;
+      term(p.total, Math.min(sum, model.limit), 'total');
+      // Four printed terms, each rounded to the last decimal it shows: the widest a
+      // faithful print can drift from the model is half of that digit per number, so
+      // the comparison band is 4 x EPS. What has to hold regardless is that the HUD
+      // prints the model's own terms, and that its total is those terms clamped.
+      const printedSum = p.base + p.centri + p.vacuum;
+      if (Math.abs(printedSum - sum) > 4 * EPS)
+        bad.push(`${tag}: the HUD prints ${p.base} + ${p.centri} + ${p.vacuum} = ${printedSum}° where src/engine/ignition.js computes ${model.base} + ${model.centri} + ${model.vacuum} = ${sum}°`);
+      if (sum > model.limit + 1e-9 && !(printedSum > p.total))
+        bad.push(`${tag}: the HUD claims a clamp while the terms it prints (${printedSum}°) add up to no more than its total ${p.total}°`);
+      if (sum > model.limit + 1e-9 && p.clamp !== model.limit)
+        bad.push(`${tag}: base + centrifugal + vacuum = ${sum}° passes the published limit ${model.limit}°, so the HUD owes a "clamped at ${model.limit}°" marker; the line reads "${shown.line}"`);
+      if (sum <= model.limit + 1e-9 && p.clamp !== null)
+        bad.push(`${tag}: the HUD claims a clamp at ${p.clamp}° where the model sums to ${sum}°, under the published ${model.limit}°`);
+      if (Math.abs(p.total - shown.live.total) > EPS)
+        bad.push(`${tag}: the HUD prints total ${p.total}° while state.advance() hands the renderer ${shown.live.total}`);
+      if (p.rpm !== shown.rpm || p.load !== shown.throttle)
+        bad.push(`${tag}: the advance line names ${p.rpm} rpm at ${p.load} % while the state module is at ${shown.rpm} rpm and ${shown.throttle} %`);
+      note(`${tag.padEnd(42)} rpm ${model.rpm} load ${model.load} % - manifold ${model.kpa.toFixed(2)} kPa - centrifugal ${model.centri.toFixed(2)}° vacuum ${model.vacuum.toFixed(2)}° total ${model.total.toFixed(2)}° (limit ${model.limit})`);
+      note(`${' '.repeat(42)}"${shown.line}"`);
+      return { ...model, shown: p };
+    };
+
+    if (tslider && start.hasSetThrottle) {
+      if (start.throttleMin !== String(loadLo) || start.throttleMax !== String(loadHi))
+        bad.push(`the load control's own bounds are ${start.throttleMin}..${start.throttleMax} while src/engine/animation.js publishes ${loadLo}..${loadHi}`);
+      if (start.throttleOut !== `${start.stateThrottle} %`)
+        bad.push(`the load readout says "${start.throttleOut}" while the simulation starts at ${start.stateThrottle} %`);
+
+      await clickControl('#throttle'); // a real pointer press at the middle of the track
+      const atCentre = await snap('29a a press at the centre of the load track');
+      if (atCentre.active !== 'throttle') bad.push(`a press on the load control left focus on ${atCentre.active} instead of #throttle`);
+      const centre = (loadLo + loadHi) / 2;
+      if (atCentre.stateThrottle !== centre)
+        bad.push(`a press at the centre of the load track left it at ${atCentre.stateThrottle} %, the centre of ${loadLo}..${loadHi} is ${centre} %`);
+      const step = atCentre.throttleStep;
+      for (let i = 0; i < 4; i++) await pressKey('ArrowRight');
+      const stepped = await snap('29b four ArrowRight on the load control');
+      if (stepped.stateThrottle !== centre + 4 * step)
+        bad.push(`four ArrowRight presses moved the load ${centre} -> ${stepped.stateThrottle} %, the control's own step is ${step} %`);
+      if (stepped.throttleOut !== `${stepped.stateThrottle} %`)
+        bad.push(`the load readout says "${stepped.throttleOut}" while the simulation is at ${stepped.stateThrottle} %`);
+      await pressKey('Home');
+      const atFloor = await snap('29c Home key at the closed-throttle corner');
+      if (atFloor.stateThrottle !== loadLo) bad.push(`the Home key left the load at ${atFloor.stateThrottle} %, the published floor is ${loadLo} %`);
+      await pressKey('End');
+      const atCeil = await snap('29d End key at the wide-open corner');
+      if (atCeil.stateThrottle !== loadHi) bad.push(`the End key left the load at ${atCeil.stateThrottle} %, the published ceiling is ${loadHi} %`);
+      if (atCeil.running !== false) bad.push('the load control started the engine on its own');
+      await evalJs('window.__v8.setThrottle(99999); "ok"');
+      await sleep(200);
+      const clampedLoad = await snap('29e setThrottle(99999) clamped');
+      if (clampedLoad.stateThrottle !== loadHi || clampedLoad.throttle !== loadHi)
+        bad.push(`setThrottle(99999): state ${clampedLoad.stateThrottle} %, the control shows ${clampedLoad.throttle} % - the panel must echo the clamp`);
+      await evalJs('window.__v8.setThrottle(-25); "ok"');
+      await sleep(200);
+      const clampedLow = await snap('29f setThrottle(-25) clamped');
+      if (clampedLow.stateThrottle !== loadLo || clampedLow.throttle !== loadLo)
+        bad.push(`setThrottle(-25): state ${clampedLow.stateThrottle} %, the control shows ${clampedLow.throttle} %`);
+      await evalJs(`window.__v8.setThrottle(${start.stateThrottle}); "ok"`);
+      await sleep(200);
+      const echoed = await snap('29g the widget follows a load the widget never touched');
+      if (echoed.throttle !== start.stateThrottle || echoed.stateThrottle !== start.stateThrottle)
+        bad.push(`a load written through the exported setter left the control at ${echoed.throttle} % and the state at ${echoed.stateThrottle} % - the panel holds no load of its own`);
+      if (echoed.throttleOut !== `${start.stateThrottle} %`) bad.push(`after that command the load readout says "${echoed.throttleOut}"`);
+
+      const deep = await loadLaw('29h closed throttle just above idle', 800, loadLo);
+      const wide = await loadLaw('29i wide open at the same rpm', 800, loadHi);
+      const limit = await loadLaw('29j redline at closed throttle, the clamp corner', 4000, loadLo);
+      if (deep && wide) {
+        if (!(deep.vacuum > wide.vacuum))
+          bad.push(`the load control moved the manifold from ${deep.kpa} kPa to ${wide.kpa} kPa at ${deep.rpm} rpm without changing the vacuum advance the HUD prints`);
+        if (wide.vacuum !== 0) bad.push(`at wide-open throttle the model still carries ${wide.vacuum}° of vacuum advance`);
+        if (Math.abs(deep.total - wide.total - (deep.vacuum - wide.vacuum)) > EPS)
+          bad.push(`closing the load changed the printed total by ${deep.total - wide.total}°, not by the vacuum term ${deep.vacuum - wide.vacuum}°`);
+      }
+      if (limit) {
+        const sum = limit.base + limit.centri + limit.vacuum;
+        if (sum <= limit.limit) bad.push(`the corner chosen for the clamp law does not clamp: ${sum}° stays under the published ${limit.limit}°`);
+        if (Math.abs(limit.shown.total - limit.limit) > EPS)
+          bad.push(`at the clamp corner the HUD prints total ${limit.shown.total}° instead of the published limit ${limit.limit}°`);
+      }
+
+      // ---- the loop the issue asks for: the control moves the live spark -------
+      // window.__v8.state.onFire is the pulse the product itself publishes, and
+      // sparkAngle() is the angle the same product says that pulse belongs at. The
+      // scene is driven through the exported load setter only: no test hook, no
+      // stepping, the animation loop's own clock.
+      const SPARK_RPM = 1200; // a chosen measurement corner, not a number the row asserts
+      await evalJs(
+        `(() => { window.__pulse = { on: false, at: [] }; window.__v8.state.onFire((c, at) => { if (window.__pulse.on && c.num === 1) window.__pulse.at.push(at); }); return 'armed'; })()`
+      );
+      /** Let the animation loop's own clock turn the crank and read the pulses back. */
+      const pulseRun = async (tag) => {
+        await breathe(6); // frames on the new operating point before the window opens
+        await evalJs('window.__pulse.at.length = 0; window.__pulse.on = true; "open"');
+        await sleep(900); // 900 ms at this rpm is well over two 720 deg cycles of cylinder 1
+        await evalJs('window.__pulse.on = false; "closed"');
+        const read = JSON.parse(
+          await evalJs(
+            `JSON.stringify((() => { const v = window.__v8; return { rpm: v.state.rpm, load: v.state.throttle, slowmo: v.state.slowmo, running: v.state.running, at: window.__pulse.at.slice() }; })())`
+          )
+        );
+        const authority = await evalJs(
+          `import('/src/engine/ignition.js').then(async (m) => { const s = await import('/src/engine/spec.js'); const rpm = window.__v8.state.rpm, load = window.__v8.state.throttle, c = s.SPEC.cylinders[0]; const kpa = m.manifoldVacuum(rpm, load); return { want: m.sparkAngle(c, rpm, load), total: m.totalAdvance(rpm, load), powerTDC: c.powerTDC, vacuum: m.vacuumAdvance(kpa), kpa }; })`
+        );
+        const distinct = [...new Set(read.at.map((a) => a.toFixed(6)))];
+        note(`${tag.padEnd(42)} rpm ${read.rpm} load ${read.load} % - ${read.at.length} pulses of cylinder 1 at ${read.at.map((a) => a.toFixed(2)).join(', ')}`);
+        note(`${' '.repeat(42)}sparkAngle() publishes ${authority.want.toFixed(2)}° - powerTDC ${authority.powerTDC} - total ${authority.total}° - vacuum term ${authority.vacuum}° at ${authority.kpa.toFixed(2)} kPa`);
+        if (!read.running) bad.push(`${tag}: the engine was not running, so the scene published no firing pulse to measure`);
+        // A fixed operating point fires this cylinder at the SAME crank angle every
+        // 720 degrees, so the proof the window is long enough is the pulse count: at
+        // this rpm 900 ms spans ${} more than one cycle, and one pulse would mean the
+        // measurement never left a single cycle.
+        if (read.at.length < 2)
+          bad.push(`${tag}: the live scene produced ${read.at.length} pulse of cylinder 1 in 900 ms at ${read.rpm} rpm, too few to judge a crank-degree schedule`);
+        if (distinct.length !== 1)
+          bad.push(`${tag}: one operating point produced ${distinct.length} different crank angles for cylinder 1 (${distinct.join(', ')}), so the scene is not holding a fixed schedule at ${read.rpm} rpm and ${read.load} % load`);
+        return { ...read, authority };
+      };
+      const preSpark = await snap('29k the stand before the spark measurement');
+      if (preSpark.running !== false) bad.push('the spark measurement expected a stopped engine to start from');
+      await clickControl('#btn-run');
+      await evalJs(`window.__v8.setRpm(${SPARK_RPM}); window.__v8.setSlowmo(1); window.__v8.setThrottle(${loadLo}); "ok"`);
+      const closedPulse = await pulseRun('29l closed throttle at the measurement rpm');
+      await evalJs(`window.__v8.setThrottle(${loadHi}); "ok"`);
+      const openPulse = await pulseRun('29m wide open at the same measurement rpm');
+      await clickControl('#btn-run'); // the stand was stopped before this block: stop it again
+      await evalJs(
+        `window.__v8.setRpm(${preSpark.stateRpm}); window.__v8.setSlowmo(${preSpark.stateSlowmo}); window.__v8.setThrottle(${start.stateThrottle}); "restored"`
+      );
+      await breathe(10);
+      const restored = await snap('29n the stand is back where this block found it');
+      if (restored.running !== false) bad.push('the spark measurement left the engine running');
+      if (restored.stateRpm !== preSpark.stateRpm || restored.stateSlowmo !== preSpark.stateSlowmo)
+        bad.push(`the spark measurement left the stand at ${restored.stateRpm} rpm slowmo ${restored.stateSlowmo}, it was found at ${preSpark.stateRpm} rpm slowmo ${preSpark.stateSlowmo}`);
+      if (restored.stateThrottle !== start.stateThrottle)
+        bad.push(`the load control test ended at ${restored.stateThrottle} % instead of the ${start.stateThrottle} % the shell starts at`);
+      for (const run of [closedPulse, openPulse]) {
+        if (!run) continue;
+        const want = run.authority.want;
+        const off = Math.max(...run.at.map((a) => angularGap(a, want)));
+        if (off > 1e-6)
+          bad.push(`at ${run.rpm} rpm and ${run.load} % load the scene pulsed cylinder 1 at ${run.at.map((a) => a.toFixed(3)).join(', ')} while sparkAngle() publishes ${want} for that operating point (worst gap ${off.toFixed(6)} deg)`);
+      }
+      if (closedPulse && openPulse) {
+        const gap = angularGap(closedPulse.authority.want, openPulse.authority.want);
+        const wantGap = closedPulse.authority.total - openPulse.authority.total;
+        if (Math.abs(gap - wantGap) > 1e-6)
+          bad.push(`moving the load from ${loadLo} % to ${loadHi} % shifted the live spark by ${gap}°, not by the ${wantGap}° the model says it should`);
+      }
+    }
 
     const shotPath = join(ROOT, 'shots', '06-controls-end.png');
     writeFileSync(shotPath, await capture());

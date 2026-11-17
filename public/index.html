@@ -157,6 +157,12 @@
       <strong>SATWARE TEST CELL</strong>
       <span>CROSS-PLANE V8 - 90 DEG DOHC - MULE 01</span>
       <span id="status" aria-live="polite">booting...</span>
+      <!-- The ignition breakdown the simulation actually runs on, repainted from
+           state.advance() every frame: the spark the renderer draws is fired at
+           powerTDC - total, so the four terms belong on the same screen as the
+           crank angle that names them. aria-live is off because the line repaints
+           with the crank, and a polite live region would read itself aloud. -->
+      <span id="advance-out" aria-live="off">advance -</span>
     </div>
     <div id="panel">
       <h2>TEST STAND CONTROLS</h2>
@@ -167,6 +173,12 @@
       <label for="rpm">RPM CONTROL <output id="rpm-out" for="rpm">-</output></label>
       <input id="rpm" type="range" min="0" max="4000" step="25" value="1600" />
       <p class="note">0 to 4000 rpm. The limits are the simulation's own.</p>
+      <label for="throttle">THROTTLE <output id="throttle-out" for="throttle">-</output></label>
+      <input id="throttle" type="range" min="0" max="100" step="1" value="50" />
+      <p class="note">
+        0 to 100 % load. Closed throttle is the deep-vacuum corner the vacuum advance
+        lives at; wide open is the corner the model zeroes it at.
+      </p>
       <label for="slowmo">Slow motion</label>
       <select id="slowmo">
         <option value="1" data-name="1">1x</option>

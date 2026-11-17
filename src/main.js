@@ -296,7 +296,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.10-view',
+  version: 'v8-0.11-load',
   SPEC,
   bankOut,
   bankUp,
@@ -317,6 +317,7 @@ window.__v8 = {
   start: () => state.start(),
   stop: () => state.stop(),
   setRpm: (v) => state.setRpm(v),
+  setThrottle: (v) => state.setThrottle(v),
   setSlowmo: (f) => state.setSlowmo(f),
   orbitBy: (dx, dy) => rig.orbit(dx, dy),
   zoomBy: (notches) => rig.zoom(notches),
