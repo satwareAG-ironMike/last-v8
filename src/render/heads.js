@@ -172,16 +172,16 @@ function headCasting(bank, materials) {
   // (SPEC.head wall fields): a re-proportioned valve row moves these with it.
   const guideOd = H.guideBoreR + H.guideWall; // 1.05
   const pilotOd = guideOd + H.seatPilotClr; // 1.60
-  const floorOd = H.bucketBoreR + H.springFloorWall; // 3.05
+  const floorOd = H.bucketBoreR + H.springFloorWall; // 2.70
   const tubeId = V.springRadius + V.springWireRadius + H.springTubeClr; // 1.90 over the 1.57 coil OD
   const tubeOd = tubeId + H.springTubeWall; // 2.20
-  const collarOd = H.bucketBoreR + H.collarWall; // 3.15
+  const collarOd = H.bucketBoreR + H.collarWall; // 2.80
   for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
     for (const valve of valves) {
       // Hardened seat insert: a thin OD ring (its outboard edge must stay
       // inside the 5.1 bore tunnel where it droops below the deck) with a
       // pilot boss that presses into the guide bore.
-      const seatOd = H.headDia[valve] / 2 + H.seatInsertClr[valve];
+      const seatOd = H.headDia[valve] / 2 - H.seatInsertInset[valve]; // 1.87 / 1.70
       add(`seat-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
         [guideOd, 0], [seatOd, 0], [seatOd, 0.18], [pilotOd, 0.35], [pilotOd, 0.7], [guideOd, 0.7],
       ])), valve === 'intake' ? materials.valveIntake : materials.valveExhaust, 'seatRing');

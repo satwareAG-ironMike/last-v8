@@ -20,6 +20,7 @@ import {
 import {
   engineTriangles, proxyMaterials, triDistance,
 } from './support/engine-triangles.mjs';
+import { plugStack, stackRadius, stackSamples } from './support/plug-stack.mjs';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -502,41 +503,6 @@ test('dynamic clearance: valve disc edges never enter the piston crown plane, ov
 const P = SPEC.plug;
 const FACE_A = B.deckA + H.gasketT; // 24.25 head deck face: the mouth of the bore
 
-/** The published plug stack in bank-local `along`, measured off the boss face. */
-function plugStack() {
-  const segs = [];
-  let a = PLUG_BOSS_A;
-  for (const name of ['thread', 'shell', 'nose', 'electrode']) {
-    segs.push({ name, r: P[name].r, a0: a - P[name].len, a1: a });
-    a -= P[name].len;
-  }
-  const bottom = a;
-  a = PLUG_BOSS_A;
-  for (const name of ['hex', 'boot', 'terminal']) {
-    segs.push({ name, r: P[name].r, a0: a, a1: a + P[name].len });
-    a += P[name].len;
-  }
-  return { segs, bottom, top: a };
-}
-
-/** The widest segment of the silhouette touching this height. */
-const stackRadius = (segs, along) =>
-  segs.filter((s) => s.a0 - 0.1 <= along && s.a1 + 0.1 >= along)
-    .reduce((m, s) => Math.max(m, s.r), 0);
-
-/** Sample heights: every segment boundary plus a grid, finer near the chamber. */
-function stackSamples(st) {
-  const hs = new Set();
-  for (const s of st.segs) {
-    hs.add(+(s.a0 + 0.05).toFixed(3));
-    hs.add(+(s.a1 - 0.05).toFixed(3));
-  }
-  for (let a = st.bottom; a <= st.top + 1e-9; a += (a < B.deckA + 1.6 ? 0.2 : 0.4)) {
-    hs.add(+a.toFixed(3));
-  }
-  return [...hs].sort((x, y) => x - y);
-}
-
 let fullShell = null;
 let castShell = null;
 function plugShells() {
@@ -555,8 +521,10 @@ test('a plug channel is machined on every cylinder axis: the plug keeps its clea
   assert.ok(shells.fullShell.tris.length > shells.castShell.tris.length,
     'the whole-engine shell is not bigger than the casting-only shell');
   const st = plugStack();
-  const samples = stackSamples(st);
-  const worst = { air: Infinity, cast: Infinity };
+  const samples = stackSamples(st, B.deckA + 1.6);
+  // Margins, not raw distances: what the law gates is the air left OVER the
+  // silhouette radius, so the tracker compares margins to margins.
+  const worst = { air: { m: Infinity }, cast: { m: Infinity } };
   for (const cyl of SPEC.cylinders) { // one channel per cylinder, count read live
     const sx = B.stations[cyl.station];
     for (const along of samples) {
@@ -564,33 +532,39 @@ test('a plug channel is machined on every cylinder axis: the plug keeps its clea
       const p = [w.x, w.y, w.z];
       const need = stackRadius(st.segs, along);
       const air = triDistance(shells.fullShell, p);
-      if (air.d - need < worst.air - (worst.need ?? 0)) {
-        worst.air = air.d; worst.need = need;
-        worst.at = [cyl.num, along, air.who];
+      if (air.d - need < worst.air.m) {
+        worst.air = { m: air.d - need, d: air.d, need, at: [cyl.num, along, air.who] };
       }
       if (along >= FACE_A) {
         const c = triDistance(shells.castShell, p);
-        if (!worst.castAt || c.d - need < worst.cast - (worst.castNeed ?? 0)) {
-          worst.cast = c.d; worst.castNeed = need;
-          worst.castAt = [cyl.num, along, c.who];
+        if (c.d - need < worst.cast.m) {
+          worst.cast = { m: c.d - need, d: c.d, need, at: [cyl.num, along, c.who] };
         }
       }
     }
   }
-  console.log(`plug channel audit: ${SPEC.cylinders.length} cylinder axes x ${samples.length} heights; boss face along ${PLUG_BOSS_A}, silhouette ${st.bottom.toFixed(2)}..${st.top.toFixed(2)}; nearest surface to the silhouette ${worst.air.toFixed(4)} cm at cyl ${worst.at[0]} along ${worst.at[1]} (${worst.at[2]}, silhouette radius ${worst.need.toFixed(2)}) against ${P.clr} needed; nearest to the casting alone ${worst.cast.toFixed(4)} cm at cyl ${worst.castAt[0]} along ${worst.castAt[1]} (${worst.castAt[2]}, ${worst.castNeed.toFixed(2)}) against ${P.wallCasting}; shells ${shells.castShell.tris.length} casting / ${shells.fullShell.tris.length} engine triangles`);
-  assert.ok(worst.air - worst.need >= P.clr,
-    `the plug silhouette stands ${worst.air.toFixed(4)} cm from ${worst.at[2]} at cyl ${worst.at[0]} along ${worst.at[1]} and needs ${worst.need.toFixed(2)} of it: the channel must keep ${P.clr} cm of air, and issue #11 measured this casting crowding the axis to 0.03 cm`);
-  assert.ok(worst.cast - worst.castNeed >= P.wallCasting,
-    `only ${worst.cast.toFixed(4)} cm between the plug bore and ${worst.castAt[2]} at cyl ${worst.castAt[0]} along ${worst.castAt[1]}, silhouette radius ${worst.castNeed.toFixed(2)}: the head must keep ${P.wallCasting} cm of aluminium around the bore it is machined into`);
+  console.log(`plug channel audit: ${SPEC.cylinders.length} cylinder axes x ${samples.length} heights; boss face along ${PLUG_BOSS_A}, silhouette ${st.bottom.toFixed(2)}..${st.top.toFixed(2)}; tightest air around the silhouette ${worst.air.m.toFixed(4)} cm against ${P.clr} (surface ${worst.air.d.toFixed(4)} from cyl ${worst.air.at[0]} along ${worst.air.at[1]} (${worst.air.at[2]}, silhouette radius ${worst.air.need.toFixed(2)})); tightest aluminium wall ${worst.cast.m.toFixed(4)} cm against ${P.wallCasting} (surface ${worst.cast.d.toFixed(4)} from cyl ${worst.cast.at[0]} along ${worst.cast.at[1]} (${worst.cast.at[2]}, ${worst.cast.need.toFixed(2)})); shells ${shells.castShell.tris.length} casting / ${shells.fullShell.tris.length} engine triangles`);
+  assert.ok(worst.air.m >= P.clr,
+    `the plug silhouette stands ${worst.air.d.toFixed(4)} cm from ${worst.air.at[2]} at cyl ${worst.air.at[0]} along ${worst.air.at[1]} and needs ${worst.air.need.toFixed(2)} of it, leaving ${worst.air.m.toFixed(4)} cm: the channel must keep ${P.clr} cm of air, and issue #11 measured this casting crowding the axis to 0.03 cm`);
+  assert.ok(worst.cast.m >= P.wallCasting,
+    `only ${worst.cast.m.toFixed(4)} cm between the plug bore and ${worst.cast.at[2]} at cyl ${worst.cast.at[0]} along ${worst.cast.at[1]} (surface ${worst.cast.d.toFixed(4)}, silhouette radius ${worst.cast.need.toFixed(2)}): the head must keep ${P.wallCasting} cm of aluminium around the bore it is machined into`);
 });
 
 test('the plug stands clear of its own piston at TDC and its bore opens at the machined deck face', async () => {
   const st = plugStack();
   const tdcCrown = C.radius + SPEC.rod.length + SPEC.piston.compressionHeight; // 22.4 flat crown at TDC
   const mouth = B.deckA + H.gasketT;
-  console.log(`plug reach audit: silhouette bottom ${st.bottom.toFixed(4)} cm, TDC crown plane ${tdcCrown.toFixed(4)} cm, air ${st.bottom - tdcCrown} cm against ${P.crownAir}; bore mouth at the head deck face ${mouth.toFixed(2)}, bore length to the boss face ${(PLUG_BOSS_A - mouth).toFixed(2)} cm`);
-  assert.ok(st.bottom - tdcCrown >= P.crownAir,
-    `the plug's lowest point sits ${st.bottom - tdcCrown} cm above the ${tdcCrown} cm TDC crown plane; it must keep ${P.crownAir} cm from the piston`);
-  assert.ok(st.segs.some((s) => s.name === 'thread' && s.a1 === PLUG_BOSS_A && s.a0 < mouth),
-    `the threaded part must run from the boss face at ${PLUG_BOSS_A} down past the machined mouth at ${mouth} so the bore is real`);
+  const thread = st.segs.find((s) => s.name === 'thread');
+  const hex = st.segs.find((s) => s.name === 'hex');
+  const live = st.segs.filter((s) => s.name === 'nose' || s.name === 'electrode');
+  const crossed = st.segs.filter((s) => s.a0 < mouth && s.a1 > mouth);
+  console.log(`plug reach audit: silhouette bottom ${st.bottom.toFixed(4)} cm, TDC crown plane ${tdcCrown.toFixed(4)} cm, air ${st.bottom - tdcCrown} cm against ${P.crownAir}; bore mouth at the head deck face ${mouth.toFixed(2)}, bore length to the boss face ${(PLUG_BOSS_A - mouth).toFixed(2)} cm; threaded part ${thread.a0.toFixed(2)}..${thread.a1.toFixed(2)}, segments crossing the mouth ${crossed.map((s) => s.name).join('+') || 'none'}, live end ${live.map((s) => s.name).join('+')} standing below it`);
+  assert.ok(hex.a0 === PLUG_BOSS_A,
+    `the hex must seat on the machined plug-boss face at ${PLUG_BOSS_A}, it starts at ${hex.a0}`);
+  assert.ok(thread.a1 === PLUG_BOSS_A && thread.a0 > mouth,
+    `the threaded part runs ${thread.a0.toFixed(2)}..${thread.a1.toFixed(2)} against the head material between the boss face ${PLUG_BOSS_A} and the machined mouth ${mouth}: it must be screwed into the casting and must not stand down inside the combustion chamber`);
+  assert.ok(crossed.length > 0 && st.bottom < mouth,
+    `the plug must pass through the mouth at ${mouth} with its live end below it (${st.bottom.toFixed(2)}): segments crossing ${crossed.map((s) => s.name).join('+') || 'none'}`);
+  assert.ok(crossed.every((s) => live.includes(s) || s.name === 'shell'),
+    `only the insulator nose, the electrode and the metal shell may stand inside the combustion chamber, not ${crossed.filter((s) => !live.includes(s) && s.name !== 'shell').map((s) => s.name).join('+')}`);
 });
