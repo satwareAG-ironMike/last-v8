@@ -191,3 +191,81 @@ test('both tools read the same gate-id grammar (the row-id authority is the ledg
   assert.match(audit, /a row either tool cannot read|either tool/i,
     'the audit does not say why the id grammar is shared with the other tool');
 });
+
+// --- the audit's own failure path (PR #10 review finding 7) --------------------------------
+// scripts/ledger-audit.mjs carried no process.exit, exitCode or throw anywhere, so every
+// defect it printed was a count and the run still exited 0. These controls damage a COPY of
+// this ledger in four named ways and require the tool to refuse each one. Cite-RESOLUTION
+// stays reported-only on purpose: tmp/ and shots/ are gitignored, so a fresh checkout and
+// every CI runner carry rows whose hashes cannot resolve (the four the RECIPE paragraph
+// names as written before the tool existed), and hard-failing there is permanent red no
+// commit can fix. What this tool can prove from the ledger text alone, in any tree, is what
+// it must now refuse.
+const damagedAudit = (mutate) => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-ledger-damage-'));
+  writeFileSync(join(dir, 'GATES.md'), mutate(gates));
+  cpSync('scripts/ledger-audit.mjs', join(dir, 'scripts/ledger-audit.mjs'));
+  const r = spawnSync(process.execPath, ['scripts/ledger-audit.mjs'], { cwd: dir, encoding: 'utf8' });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+
+/** Edit one line inside one row's own block; nothing else in the copy moves. */
+const editRow = (text, id, fn) => {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => ROW_TITLE.test(l) && ROW_TITLE.exec(l)[2] === id);
+  assert.ok(at >= 0, `row ${id} is not declared in GATES.md`);
+  const block = lines.slice(at + 1).findIndex((l) => ROW_TITLE.test(l));
+  const end = block === -1 ? lines.length : at + 1 + block;
+  fn(lines, at, end);
+  return lines.join('\n');
+};
+
+test('the audit refuses a gate-sig that no longer recomputes and is not in the declared exception', () => {
+  const r = damagedAudit((text) => editRow(text, 'P1-G5', (lines, at, end) => {
+    for (let i = at + 1; i < end; i++) {
+      if (lines[i].startsWith('  CHECK: ')) {
+        lines[i] = `${lines[i]} --test-reporter=tap`;
+        return;
+      }
+    }
+    assert.fail(`row P1-G5 carries no CHECK line to damage`);
+  }));
+  assert.match(r.out, /P1-G5 recorded e366d4743b4be898 recomputed [0-9a-f]{16}/,
+    `the audit did not name the sig it cannot recompute:\n${r.out.slice(0, 700)}`);
+  assert.equal(r.status, 1, `a CHECK edit that breaks a recorded gate-sig still exited ${r.status}; ` +
+    `the audit's green exit would prove nothing about the ledger:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /LEDGER AUDIT FAILED/, 'the audit prints counts but no verdict of its own');
+});
+
+test('the audit refuses a row id that is outside the published row grammar', () => {
+  const r = damagedAudit((text) => `${text}\n- [ ] Z9-G99: a row neither committed tool can read\n` +
+    `  CHECK: node --test test/zz.test.mjs\n  EXPECT: fail 0\n  EVIDENCE: pending\n`);
+  assert.equal(r.status, 1, `an out-of-grammar row id still exited ${r.status}: its CHECK/EXPECT would ` +
+    `be attributed to the previous row and both tools would report them as that row's:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /Z9-G99/, `the audit does not name the id it walked past:\n${r.out.slice(0, 700)}`);
+});
+
+test('the audit refuses two rows sharing one gate id', () => {
+  const r = damagedAudit((text) => editRow(text, 'P1-G6', (lines, at) => {
+    lines.splice(at, 0, lines[at].replace(/: .*/, ': a second row claiming the same id'));
+  }));
+  assert.equal(r.status, 1, `two rows sharing the id P1-G6 still exited ${r.status}, so evidence could ` +
+    `not be attributed to a row:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /P1-G6/, `the duplicate id is not named:\n${r.out.slice(0, 700)}`);
+});
+
+test('the audit refuses a closed row that names no recorded run output', () => {
+  const r = damagedAudit((text) => editRow(text, 'P1-G5', (lines, at) => {
+    assert.match(lines[at], /^- \[ \] /, `row P1-G5 is not an open row to close in the copy`);
+    lines[at] = lines[at].replace(/^- \[ \] /, '- [x] ');
+  }));
+  assert.equal(r.status, 1, `P1-G5 reads closed with no 64-hex run citation behind it and the audit ` +
+    `still exited ${r.status}:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /P1-G5/, `the closed row with no recorded run is not named:\n${r.out.slice(0, 700)}`);
+});
+
+test('the clean ledger passes every one of those four checks, so the failure path is not self-inflicted', () => {
+  const r = damagedAudit((text) => text);
+  assert.equal(r.status, 0, `the refusal path fires against this repo's own ledger:\n${r.out.slice(0, 900)}`);
+  assert.match(r.out, /LEDGER AUDIT OK/, 'the audit publishes no verdict for a ledger it accepts');
+});
