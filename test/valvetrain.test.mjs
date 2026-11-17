@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { SPEC, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
 import {
   lobeProfileRadius, lobeIndexAngle, lobeAzimuth, followerAzimuth,
+  lobeContactLift, lobeHalfCamDeg,
   valveLift, valveAxisPoint, valveSeatPoint, valveAxisDir, camAxisPoint,
   eventMid, crankEvent, cycleAngle,
 } from '../src/engine/timing.js';
@@ -151,9 +152,29 @@ test('lobes are machined from lobeProfileRadius: base circle, maxLift nose, cent
         `cyl ${cyl.num} ${valve}: lobe centre x ${(minX + maxX) / 2} not at station ${s}`);
       assert.ok(maxX - minX <= H.camLobeWidth + 0.45, `cyl ${cyl.num} ${valve}: lobe width ${maxX - minX}`);
       // the flank is the machined profile: half-way to the nose it still carries most
-      // of the lift, and exactly past the half-width it is back on the base circle
-      const hw = (valve === 'intake' ? V.intakeClose - V.intakeOpen : V.exhaustClose - V.exhaustOpen) / 4;
-      assert.ok(lobeProfileRadius(valve, hw * 0.5) - H.camBaseRadius > 0.3 * V.maxLift, `${valve} flank must rise onto the nose`);
+      // of the lift, and exactly past the half-width it is back on the base circle.
+      // It is measured as LIFT AT THE FOLLOWER, which is what a cam table reads and
+      // what this valve train renders. Half-way out to the nose a flat follower is
+      // lifted 0.6641 cm of its 1.10 cm (60 %), while the machined outline there has
+      // only risen 0.3148 cm off its 2.00 cm base circle: the contact normal swings
+      // against the polar angle as the lobe turns (lobeProfileRadius), so the radial
+      // number is not a lift. Reading the radial rise against a lift bar is what made
+      // this row fail after #8 item 3; the bar itself is unchanged.
+      const hw = lobeHalfCamDeg(valve);
+      const flankLift = lobeContactLift(valve, hw * 0.5);
+      assert.ok(flankLift > 0.3 * V.maxLift,
+        `${valve} flank must rise onto the nose: ${flankLift.toFixed(4)} cm of lift at half the lobe half-width, bar ${(0.3 * V.maxLift).toFixed(4)}`);
+      let prev = lobeProfileRadius(valve, hw + 10);
+      for (let a = hw + 10; a > 0; a -= 0.25) {
+        const r = lobeProfileRadius(valve, a);
+        assert.ok(r >= prev - 1e-9,
+          `${valve} outline runs back on the way to the nose at ${a} cam deg: ${r.toFixed(6)} < ${prev.toFixed(6)}`);
+        prev = r;
+      }
+      assert.ok(Math.abs(lobeProfileRadius(valve, 0) - (H.camBaseRadius + V.maxLift)) < 1e-6,
+        `${valve} outline does not end on the maxLift nose: ${lobeProfileRadius(valve, 0)} at psi 0`);
+      assert.ok(prev < H.camBaseRadius + V.maxLift,
+        `${valve} outline reaches its nose radius before the polar angle does (${prev} at ${hw + 10} cam deg)`);
       assert.equal(lobeProfileRadius(valve, hw + 10), H.camBaseRadius, `${valve} flank past hw must fall back to base circle`);
     }
   }
@@ -193,29 +214,72 @@ test('all 16 valves sit exactly on valveAxisPoint; their opening window matches 
 
 // ---- the chain: cam -> bucket -> shim -> valve tip -> spring -----------------
 
-test('buckets ride the cam face: bucket top sits exactly camBase+lift under the cam axis', async () => {
+// A1-G1 (#8 item 3): this oracle REPLACES the knife-edge check it used to be
+// (`bucket face distance == camBaseRadius + lift`, i.e. the lobe radius along the
+// follower ray). A flat follower does not ride a radius, it rides the plane the
+// lobe presents to its axis, so the check now measures the drawn lobe mesh
+// against the drawn bucket over a whole 720 crank-degree cycle: nothing of the
+// lobe may cross the face plane, the face must actually stand on the lobe, and
+// the contact patch has to land inside the tappet face. The radius form could
+// not see either defect this row now catches: the single-ray law let the lobe
+// reach 0.5005 cm past every bucket it drove (recorded in GATES A1-G1), and the
+// chamfer on the extruded lobe put the drawn nose 0.1209 cm past the face plane
+// of all 16 buckets even after the law was fixed.
+test('A1-G1 the drawn lobes never cross a bucket face, and every follower stands on a contact patch inside its own tappet face', async () => {
   const { group, update } = await buildValvetrain();
-  const d = new THREE.Vector3();
-  for (const theta of [0, 55, 125, 265, 355, 470, 585, 700]) {
+  const d = new THREE.Vector3(), across = new THREE.Vector3(), q = new THREE.Vector3();
+  const cap = new THREE.Vector3(), wc = new THREE.Vector3();
+  const CAM_AXIS = new THREE.Vector3(1, 0, 0); // lobes live in the (y, z) profile plane
+  // The lobe mesh is the machined outline sampled every 2 cam degrees
+  // (src/render/valvetrain.js lobeShape), so an inscribed vertex can sit that
+  // far short of the true curve. Measured worst gap on the committed tree at
+  // 1 crank-degree sampling: 0.0030 cm, against which STAND_TOL leaves room.
+  const STAND_TOL = 5e-3, PEN_TOL = 1e-3; // cm
+  const faceR = H.bucketRadius, faceLimit = faceR - 0.15; // the published walk limit
+  let pen = 0, penAt = null, stand = 0, standAt = null, walk = 0, walkAt = null, lifted = 0;
+  for (let theta = 0; theta < 720; theta += 1) {
     update(theta);
+    group.updateMatrixWorld(true);
     for (const cyl of SPEC.cylinders) {
       for (const valve of valves) {
+        const lobe = group.getObjectByName(`lobe-cyl${cyl.num}-${valve}`);
         const bucket = group.getObjectByName(`bucket-cyl${cyl.num}-${valve}`);
-        assert.ok(bucket, `bucket-cyl${cyl.num}-${valve} missing`);
+        assert.ok(lobe && bucket, `cyl ${cyl.num} ${valve}: lobe or bucket missing from the tree`);
         const lift = valveLift(cyl, valve, theta);
-        d.fromArray(valveAxisDir(cyl, valve));
+        if (lift > 1e-9) lifted++;
         const capPt = camAxisPoint(cyl, valve);
-        const cap = new THREE.Vector3(capPt.x, capPt.y, capPt.z);
-        const wantCentre = cap.clone().addScaledVector(d, -(H.camBaseRadius + H.bucketHeight / 2 + lift));
-        assert.ok(bucket.position.distanceTo(wantCentre) < 1e-6,
-          `cyl ${cyl.num} ${valve} at theta ${theta}: bucket off the follower axis at lift ${lift}`);
-        const topFace = underCam(cap, d, bucket.position) - H.bucketHeight / 2;
-        assert.ok(Math.abs(topFace - (H.camBaseRadius + lift)) < EPS,
-          `cyl ${cyl.num} ${valve} at theta ${theta}: bucket face ${topFace} not riding cam radius ${H.camBaseRadius + lift}`);
-        assert.ok(topFace >= H.camBaseRadius - 1e-9, 'bucket penetrated past the cam base circle');
+        cap.fromArray([capPt.x, capPt.y, capPt.z]);
+        d.fromArray(valveAxisDir(cyl, valve));
+        across.crossVectors(CAM_AXIS, d).normalize(); // across the face, in the profile plane
+        // the face plane comes off the posed bucket, not off a formula: the
+        // render squares every follower part to its valve axis (createValvetrain
+        // setFromUnitVectors(Z_AXIS, valveAxisDir)), so the cup top face is
+        // bucketHeight / 2 under the posed centroid along that axis.
+        bucket.getWorldPosition(wc);
+        const face = underCam(cap, d, wc) - H.bucketHeight / 2;
+        assert.ok(face >= H.camBaseRadius - STAND_TOL,
+          `cyl ${cyl.num} ${valve} at theta ${theta}: bucket face at ${face.toFixed(4)} cm is inside the cam base circle ${H.camBaseRadius}`);
+        let reach = -Infinity, reachAcross = 0;
+        const pos = lobe.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          q.fromBufferAttribute(pos, i).applyMatrix4(lobe.matrixWorld).sub(cap);
+          const depth = -q.dot(d); // cm below the cam axis, along the follower axis
+          if (depth - face > pen) { pen = depth - face; penAt = [cyl.num, valve, theta, +depth.toFixed(4), +face.toFixed(4)]; }
+          if (depth > reach) { reach = depth; reachAcross = Math.abs(q.dot(across)); }
+        }
+        const gap = face - reach;
+        if (gap > stand) { stand = gap; standAt = [cyl.num, valve, theta, +lift.toFixed(4)]; }
+        if (reachAcross > walk) { walk = reachAcross; walkAt = [cyl.num, valve, theta, +lift.toFixed(4)]; }
       }
     }
   }
+  assert.ok(pen < PEN_TOL,
+    `a lobe mesh crosses its follower face by ${pen.toFixed(4)} cm at ${JSON.stringify(penAt)} (tol ${PEN_TOL})`);
+  assert.ok(stand < STAND_TOL,
+    `a follower stands off its lobe by ${stand.toFixed(4)} cm at ${JSON.stringify(standAt)} (tol ${STAND_TOL})`);
+  assert.ok(walk <= faceLimit,
+    `the contact patch runs ${walk.toFixed(4)} cm across a ${faceR} cm tappet face (limit ${faceLimit} cm)`);
+  assert.ok(lifted >= 8 * 2 * 2, `only ${lifted} follower samples were lifted over the cycle: the lobes never reach their tappets`);
 });
 
 test('shim sits exactly between bucket and valve tip: the chain closes with zero gap at every lift', async () => {

@@ -57,7 +57,13 @@ function lobeShape(valve, idx) {
 
 /** Lobe solid baked in cam-group local coords, centred on its crank station. */
 function lobeSolid(cyl, valve) {
-  const g = extrude(lobeShape(valve, lobeIndexAngle(cyl, valve)), H.camLobeWidth, { bevel: 0.12, bevelSegments: 2 });
+  // bevel: 0 - the drawn lobe IS the machined profile, edge for edge. A bevelled
+  // extrude offsets the outline as well as the extrusion ends: with 0.12 here the
+  // chamfered nose measured 3.2210 cm against the 3.1000 cm the law machines, so
+  // the drawn lobe stood 0.1210 cm past the face plane of all 16 buckets
+  // (test/valvetrain.test.mjs A1-G1, GATES A1-G1). A cam lobe is ground, not
+  // chamfered, so the profile keeps its full width and gets no bevel.
+  const g = extrude(lobeShape(valve, lobeIndexAngle(cyl, valve)), H.camLobeWidth, { bevel: 0 });
   alignX(g);
   // same bbox-recentre discipline as the crank webs: land the measured centre on the station
   g.computeBoundingBox();
