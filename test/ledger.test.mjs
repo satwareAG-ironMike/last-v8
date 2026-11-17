@@ -347,10 +347,18 @@ test('the clean ledger passes every one of those four checks, so the failure pat
 // command substitution does not match the one bad value, so it fell into `*)` and printed
 // as a satisfied setting. These controls run the real oracle, with a stub `gh` in PATH and
 // a scratch git tree it can measure for real: no network, no token, no forge call.
-const gateGitEnv = (blankConfig) => ({
+// The scratch tree's clock is part of the recipe, not of the wall clock. Two recordings of
+// the identical pre-fix RED run hashed differently - 98d41c241d2463f73785050db1ebebf8f87d83d5da8d8c56c7933ffb112a15bc
+// against 6b96c0c0aa588d503e21843a7e20855cf71803b737a5eb0f793f50729e89c7a1 - because the
+// failing assertion prints the oracle's transcript, and that transcript names the scratch
+// tree's own commit hashes. Pinning these two dates is what makes a gate record quoted by a
+// ledger row re-derivable, which is the whole reason scripts/ledger-run.sh exists.
+const GATE_CLOCK = '2026-01-01T00:00:00 +0000';
+const gateGitEnv = (blankConfig, clock = GATE_CLOCK) => ({
   ...runnerEnv(),
   GIT_AUTHOR_NAME: 'ledger', GIT_AUTHOR_EMAIL: 'ledger@invalid',
   GIT_COMMITTER_NAME: 'ledger', GIT_COMMITTER_EMAIL: 'ledger@invalid',
+  GIT_AUTHOR_DATE: clock, GIT_COMMITTER_DATE: clock,
   GIT_CONFIG_GLOBAL: blankConfig, GIT_CONFIG_SYSTEM: blankConfig,
 });
 
@@ -361,11 +369,11 @@ const gitIn = (cwd, args, env) => {
 
 /** Tag `rel` cut into branch `eng`, tag `other` on a commit eng does not carry, and a
  *  local bare remote standing in for origin so `git rev-parse origin/eng` resolves. */
-const gateTree = () => {
+const gateTree = (clock) => {
   const dir = mkdtempSync(join(tmpdir(), 'last-v8-gate-'));
   const blank = join(dir, 'empty.gitconfig');
   writeFileSync(blank, '');
-  const env = gateGitEnv(blank);
+  const env = gateGitEnv(blank, clock);
   const repo = join(dir, 'repo');
   mkdirSync(repo, { recursive: true });
   gitIn(dir, ['init', '--bare', '-q', '--initial-branch=main', join(dir, 'origin.git')], env);
@@ -436,6 +444,44 @@ test('branch-gate.sh measured end to end: a protection that is actually there re
   const r = runGate(gateTree(), ghStub({}));
   assert.equal(r.status, 0, `the oracle does not pass a protection it was handed:\n${r.out}`);
   assert.match(r.out, /PROTECTION OK/, `no verdict line:\n${r.out}`);
+});
+
+// The clock the scratch tree commits with is part of what these controls print, so it is part
+// of the recipe a gate record re-derives from. The transcript names the tree's own object ids
+// (the "eng head", "rel tag commit" and "other tag commit" lines), and a commit object hashes
+// its author and committer timestamps - so an unpinned clock makes every hash quoted from a
+// failing run here unreproducible. Measured before the pin: two recordings of one identical
+// pre-fix run hashed 98d41c241d2463f73785050db1ebebf8f87d83d5da8d8c56c7933ffb112a15bc against
+// 6b96c0c0aa588d503e21843a7e20855cf71803b737a5eb0f793f50729e89c7a1, and `diff` between those two
+// recordings showed the ONLY moved lines were those four object-id lines (tmp/v8-c2-red.out
+// against tmp/v8-c2-red-recheck.out, 16 changed lines, 4 of them per failing test).
+const GATE_HEADS = {
+  eng: '33a276d4a74eb1d10c5199623bb16aa88bd1dce0',
+  other: '62ffc2506c9d655d6be3c4c80bdbd5ee6c20978d',
+};
+
+test('the gate controls re-derive: two scratch trees built the same way print one identical transcript', () => {
+  const a = runGate(gateTree(), ghStub({}));
+  const b = runGate(gateTree(), ghStub({}));
+  const ids = (a.out.match(/\b[0-9a-f]{40}\b/g)) || [];
+  assert.ok(ids.length >= 4, `the healthy transcript names no git object id, so this control could not detect a clock that moves:\n${a.out}`);
+  assert.equal(a.out, b.out, 'two scratch trees built by the same recipe printed different transcripts, so a hash quoted from ' +
+    `a failing run of this tool cannot be re-derived:\n--- run A ---\n${a.out}--- run B ---\n${b.out}`);
+  const named = (a.out.match(/\b[0-9a-f]{40}\b/g) || []).map((h) => h).sort();
+  assert.ok(named.includes(GATE_HEADS.eng) && named.includes(GATE_HEADS.other),
+    `the pinned recipe no longer produces the object ids its records name (${GATE_HEADS.eng} and ${GATE_HEADS.other}), ` +
+    `so every hash this file's rows cite from a failing run has silently moved:\n${a.out}`);
+});
+
+test('the gate controls move with the clock they commit with, which is what makes the control above non-vacuous', () => {
+  const pinned = runGate(gateTree(), ghStub({}));
+  const shifted = runGate(gateTree('2020-01-01T00:00:00 +0000'), ghStub({}));
+  assert.equal(shifted.status, 0, `a tree committed at a different clock stopped working, which would make the comparison below meaningless:\n${shifted.out}`);
+  const strip = (s) => s.replace(/\b[0-9a-f]{40}\b/g, '<object-id>');
+  assert.equal(strip(pinned.out), strip(shifted.out), 'the two transcripts differ somewhere OTHER than the git object ids, so the ' +
+    `identity of the pinned run is not about the clock:\n--- pinned ---\n${pinned.out}--- shifted ---\n${shifted.out}`);
+  assert.notEqual(pinned.out, shifted.out, 'the transcript is identical at two different clocks, so it does not carry the scratch ' +
+    `tree's object ids and the re-derivability control above proves nothing:\n${pinned.out}`);
 });
 
 test('branch-gate.sh: a 404 on required_status_checks cannot print as "required check names test"', () => {
