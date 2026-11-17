@@ -7,9 +7,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const ROW_TITLE = /^- \[( |x)\] (\S+): /;
 const gates = readFileSync('GATES.md', 'utf8');
@@ -268,4 +268,129 @@ test('the clean ledger passes every one of those four checks, so the failure pat
   const r = damagedAudit((text) => text);
   assert.equal(r.status, 0, `the refusal path fires against this repo's own ledger:\n${r.out.slice(0, 900)}`);
   assert.match(r.out, /LEDGER AUDIT OK/, 'the audit publishes no verdict for a ledger it accepts');
+});
+
+// --- scripts/branch-gate.sh measured against a stub forge (PR #10 review findings 9, 12) --
+// The P1-G1 test above only parses the oracle and greps its text, so it cannot see the
+// defect that test names: three of the tool's verdicts are `case "$(...)" in <one bad
+// value>) bad ;; *) <pass>`, and `gh api --jq` prints NOTHING at all when an endpoint
+// answers 404 (measured on this repo, whose legacy per-setting endpoints 404). An empty
+// command substitution does not match the one bad value, so it fell into `*)` and printed
+// as a satisfied setting. These controls run the real oracle, with a stub `gh` in PATH and
+// a scratch git tree it can measure for real: no network, no token, no forge call.
+const gateGitEnv = (blankConfig) => ({
+  ...runnerEnv(),
+  GIT_AUTHOR_NAME: 'ledger', GIT_AUTHOR_EMAIL: 'ledger@invalid',
+  GIT_COMMITTER_NAME: 'ledger', GIT_COMMITTER_EMAIL: 'ledger@invalid',
+  GIT_CONFIG_GLOBAL: blankConfig, GIT_CONFIG_SYSTEM: blankConfig,
+});
+
+const gitIn = (cwd, args, env) => {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+  assert.equal(r.status, 0, `git ${args.join(' ')} failed in the scratch tree:\n${r.stderr}`);
+};
+
+/** Tag `rel` cut into branch `eng`, tag `other` on a commit eng does not carry, and a
+ *  local bare remote standing in for origin so `git rev-parse origin/eng` resolves. */
+const gateTree = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-gate-'));
+  const blank = join(dir, 'empty.gitconfig');
+  writeFileSync(blank, '');
+  const env = gateGitEnv(blank);
+  const repo = join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  gitIn(dir, ['init', '--bare', '-q', '--initial-branch=main', join(dir, 'origin.git')], env);
+  gitIn(repo, ['init', '-q', '--initial-branch=main'], env);
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  gitIn(repo, ['add', 'base.txt'], env);
+  gitIn(repo, ['commit', '-q', '-m', 'base'], env);
+  gitIn(repo, ['tag', 'rel'], env);
+  gitIn(repo, ['branch', 'eng'], env);
+  writeFileSync(join(repo, 'other.txt'), 'other\n');
+  gitIn(repo, ['add', 'other.txt'], env);
+  gitIn(repo, ['commit', '-q', '-m', 'other'], env);
+  gitIn(repo, ['tag', 'other'], env);
+  gitIn(repo, ['remote', 'add', 'origin', join(dir, 'origin.git')], env);
+  gitIn(repo, ['push', '-q', 'origin', 'eng'], env);
+  return { dir, repo, env };
+};
+
+// Response bodies shaped like the ones this repo's forge really answers (see the
+// allow_force_pushes line tmp/v8-p1g1.out records: the key is ABSENT there, which is why the
+// tool prints "key absent"), plus the ruleset objects the LIST endpoint does not carry.
+const BRANCH_RULESET = '{"id":1,"name":"protect-engine-branch","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["refs/heads/eng"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"}],"bypass_actors":[],"current_user_can_bypass":"never"}';
+const TAG_RULESET = '{"id":3,"name":"immutable-release-tags","target":"tag","enforcement":"active","conditions":{"ref_name":{"include":["refs/tags/v*"]}},"rules":[{"type":"tag_deletion"},{"type":"tag_creation_non_fast_forward"}],"bypass_actors":[],"current_user_can_bypass":"never"}';
+const RSC_BODY = '{"contexts":["test"],"strict":true,"checks":[]}';
+const RPR_BODY = '{"required_approving_review_count":1,"require_last_push_approval":false}';
+const PROTECTION_BODY = `{"required_status_checks":${RSC_BODY},"required_pull_request_reviews":${RPR_BODY}}`;
+const ruleSetList = (ids) => `[${ids.map((id) => `{"id":${id},"name":"ruleset-${id}","enforcement":"active"}`).join(',')}]`;
+
+// The stub is a stand-in for `gh api`, not for the answers: it models the endpoint bodies and
+// then applies the caller's --jq filter with the real jq, exactly like gh does, so the same
+// stub measures the tool whether the tool asks for the raw body or for one field of it. A
+// 404 is modelled the way gh answers one - exit 1, reason on stderr, stdout EMPTY - and it
+// fails every call to that endpoint, not one of them.
+const ghStub = ({ context404 = false, missingRuleset = false }) => [
+  '#!/usr/bin/env bash',
+  'ep="$2"; jqf="$4"',
+  'not_found() { echo "gh: Not Found: $1" >&2; exit 1; }',
+  'body=""',
+  'case "$ep" in',
+  '  */branches/eng) body=\'{"name":"eng","protected":true}\' ;;',
+  context404
+    ? '  *required_status_checks) not_found "Branch not found" ;;'
+    : `  *required_status_checks) body='${RSC_BODY}' ;;`,
+  `  *required_pull_request_reviews) body='${RPR_BODY}' ;;`,
+  `  */protection) body='${PROTECTION_BODY}' ;;`,
+  `  */rulesets/1) body='${BRANCH_RULESET}' ;;`,
+  missingRuleset ? '  */rulesets/2) not_found "Ruleset not found" ;;' : '',
+  `  */rulesets/3) body='${TAG_RULESET}' ;;`,
+  `  */rulesets) body='${ruleSetList(missingRuleset ? [1, 2, 3] : [1, 3])}' ;;`,
+  '  *) not_found "unexpected endpoint" ;;',
+  'esac',
+  'if [ -n "$jqf" ]; then printf \'%s\' "$body" | jq -r "$jqf"; else printf \'%s\\n\' "$body"; fi',
+].join('\n');
+
+const runGate = (tree, stubBody) => {
+  const bin = join(tree.dir, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'gh'), `${stubBody}\n`, { mode: 0o755 });
+  const r = spawnSync('bash', [resolve('scripts/branch-gate.sh'), 'o/r', 'eng', 'rel', 'other'], {
+    cwd: tree.repo,
+    encoding: 'utf8',
+    env: { ...tree.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+
+test('branch-gate.sh measured end to end: a protection that is actually there reads as PROTECTION OK', () => {
+  const r = runGate(gateTree(), ghStub({}));
+  assert.equal(r.status, 0, `the oracle does not pass a protection it was handed:\n${r.out}`);
+  assert.match(r.out, /PROTECTION OK/, `no verdict line:\n${r.out}`);
+});
+
+test('branch-gate.sh: a 404 on required_status_checks cannot print as "required check names test"', () => {
+  const r = runGate(gateTree(), ghStub({ context404: true }));
+  assert.ok(!/required check names test/.test(r.out),
+    'the contexts read answered nothing (exit 1, "Not Found: Branch not found") and the tool ' +
+    `still printed the pass line - an empty answer is not a satisfied setting:\n${r.out}`);
+  assert.notEqual(r.status, 0, `a setting nobody read was scored as satisfied, exit ${r.status}:\n${r.out}`);
+  assert.match(r.out, /FAIL: required_status_checks: gh api repos\/o\/r\/branches\/eng\/protection\/required_status_checks answered exit 1/,
+    `the tool does not name the endpoint whose read failed, only the fact it could not establish:\n${r.out}`);
+  assert.match(r.out, /PROTECTION GATE FAILED/, `no verdict line:\n${r.out}`);
+});
+
+test('branch-gate.sh: one unread ruleset is named as unread and cannot erase the rulesets already read', () => {
+  const r = runGate(gateTree(), ghStub({ missingRuleset: true }));
+  assert.ok(!r.out.includes('no branch ruleset includes refs/heads/eng'),
+    'ruleset 1 was read and does cover refs/heads/eng, yet one failed read of ruleset 2 wiped ' +
+    `the accumulator and the gate reported the wrong reason:\n${r.out}`);
+  assert.match(r.out, /ruleset 2: gh api repos\/o\/r\/rulesets\/2 answered exit 1/,
+    `the ruleset whose read failed is not named with the endpoint that failed:\n${r.out}`);
+  assert.match(r.out, /ruleset id\(s\) 2 could not be read/,
+    `the gate does not say which rulesets it could not conclude about:\n${r.out}`);
+  assert.match(r.out, /a ruleset covering refs\/heads\/eng carries the deletion rule/,
+    'the ruleset that WAS read must still be measured, and its rule-count query must not be ' +
+    `answered by an empty accumulator:\n${r.out}`);
+  assert.notEqual(r.status, 0, `an unread ruleset left the gate green:\n${r.out}`);
 });
