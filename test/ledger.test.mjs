@@ -336,14 +336,34 @@ test('the audit refuses two rows sharing one gate id', () => {
   assert.match(r.out, /P1-G6/, `the duplicate id is not named:\n${r.out.slice(0, 700)}`);
 });
 
+// The damage here cannot assume the live row is uncited. It used to be true: P1-G5 was the
+// ledger's example of an open row with nothing behind it, and the control only had to flip
+// the box. Row P1-G5 has since been filled with the recorded runs that close its plug half,
+// so flipping the box alone produced a row that DOES name runs, the audit correctly stayed
+// silent, and this control turned red against a healthy ledger (tmp/v8-c11-suite4.out,
+// tests 139 pass 138 fail 1). The damage is therefore the claim itself: close the box and
+// delete every run citation in the row, which is exactly the defect the rule names - a
+// checkmark resting on prose - and it no longer depends on which rows happen to be filled.
+const CITED = /(?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs)\b|(?:output|driver|output-sha256)=[0-9a-f]{64}/g;
+
 test('the audit refuses a closed row that names no recorded run output', () => {
-  const r = damagedAudit((text) => editRow(text, 'P1-G5', (lines, at) => {
+  const r = damagedAudit((text) => editRow(text, 'P1-G5', (lines, at, end) => {
     assert.match(lines[at], /^- \[ \] /, `row P1-G5 is not an open row to close in the copy`);
+    // `.match` and not `.test` with a /g pattern: a global regex keeps lastIndex, and a
+    // stateful test would report "still cited" on a line that names nothing.
+    for (let i = at + 1; i < end; i++) lines[i] = lines[i].replace(CITED, '');
+    const left = lines.slice(at + 1, end).filter((l) => l.match(CITED));
+    assert.equal(left.length, 0, `the damaged copy still names a run output in P1-G5 ` +
+      `(${left[0] && left[0].slice(0, 120)}), so closing the box there is not the defect ` +
+      `this control claims to test`);
     lines[at] = lines[at].replace(/^- \[ \] /, '- [x] ');
   }));
-  assert.equal(r.status, 1, `P1-G5 reads closed with no 64-hex run citation behind it and the audit ` +
+  assert.equal(r.status, 1, `P1-G5 reads closed with every run citation stripped and the audit ` +
     `still exited ${r.status}:\n${r.out.slice(0, 700)}`);
   assert.match(r.out, /P1-G5/, `the closed row with no recorded run is not named:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /P1-G5: the box reads \[x\] while the row names no recorded run output/,
+    `the audit exited 1 but not for the rule this control damages (it must refuse a checkmark ` +
+    `resting on prose, not trip on some other defect):\n${r.out.slice(0, 700)}`);
 });
 
 test('the clean ledger passes every one of those four checks, so the failure path is not self-inflicted', () => {
