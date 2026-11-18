@@ -505,9 +505,16 @@ const FACE_A = B.deckA + H.gasketT; // 24.25 head deck face: the mouth of the bo
 
 let fullShell = null;
 let castShell = null;
+// The units are named, not defaulted, for two reasons. (1) A part measured against
+// itself always reads zero: this law probes a point ON each cylinder's plug axis,
+// and the plug now drawn there would become the nearest surface to its own probe.
+// (2) The two shells are the ones row P1-G13 publishes, so the shell this gate
+// measures stays the shell that record describes. The triangle counts are printed
+// by the law itself rather than repeated here.
+const MEASURED_UNITS = ['block', 'cranktrain', 'valvetrain', 'heads', 'manifolds'];
 function plugShells() {
   if (!fullShell) {
-    fullShell = engineTriangles(proxyMaterials());
+    fullShell = engineTriangles(proxyMaterials(), { units: MEASURED_UNITS });
     castShell = engineTriangles(proxyMaterials(), { units: ['block', 'heads'] });
   }
   return { fullShell, castShell };

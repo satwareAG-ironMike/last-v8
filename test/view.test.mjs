@@ -40,6 +40,15 @@ const ASPECT = V.aspect;
 const W = 1280;
 const H = Math.round(W / ASPECT);
 const EPS = 1e-9;
+// The tolerance a law here may measure a DRAWN mesh at. three.js stores every
+// position in a Float32Array: the storage step is 1.526e-6 cm at the top of the
+// plug stack (36.1 cm), and the widest height error the drawn plug really shows
+// against its published numbers is 1.247e-6 cm (tmp/c11-probe2.mjs). A tighter
+// tolerance would gate binary noise instead of the part, so every drawn-vs-
+// published comparison in section 13 uses 1e-5 cm - about seven storage steps,
+// and still 15000x under the shortest published plug length (electrode 0.15 cm).
+// Arithmetic between published numbers keeps EPS.
+const GEO_EPS = 1e-5;
 
 /** The world main.js builds: the casting, its assemblies and the stand. */
 function buildWorld() {
@@ -867,25 +876,40 @@ test('plugs: the drawn plug stands inside the published silhouette and draws eve
   const unit = plugUnit();
   assert.ok(unit, 'no plug unit, so there is no drawn silhouette to compare with the published one');
   const st = plugStack();
-  const EPS_R = 1e-6;
   const reach = new Map(); // segment name -> widest radius the renderer really drew there
   let widest = 0;
+  let worstHeight = 0, worstRadius = 0;
   for (const c of SPEC.cylinders) {
     const body = plugBody(c.num);
     assert.ok(body.length > 0, `plug-cyl${c.num} has no body meshes`);
     const v = new THREE.Vector3();
     for (const o of body) {
+      // A drawn mesh is judged against the segment it publishes in userData,
+      // never against whichever segment happens to cover its Float32 height: the
+      // shell's published band ends at 25.600 and the thread's starts there, and
+      // a vertex of the thread at that shared face reads 25.599999831614 in a
+      // Float32Array (measured, tmp/c11-probe2.mjs). Judged by its own published
+      // segment that vertex is 1.7e-7 cm off; judged by stackRadius it falls into
+      // the neighbour's narrower 0.58 cm band and the law calls a correct thread
+      // fatter than the bore. The mesh's own segment is the number the renderer
+      // was given, so it is the number the drawing has to answer to.
+      const name = /^plug-cyl\d+-(\w+)$/.exec(o.name)?.[1];
+      assert.ok(name, `mesh "${o.name}" is not named after a plug segment`);
+      const seg = st.segs.find((s) => s.name === name);
+      assert.ok(seg, `mesh "${o.name}" is named after segment "${name}", which SPEC.plug does not publish`);
+      assert.equal(o.userData.segment, seg.name, `mesh "${o.name}" publishes segment "${o.userData.segment}" while its name says "${seg.name}"; a law that measures a drawn part has to be told which published row it is reading`);
       o.updateWorldMatrix(true, false);
       const pos = o.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
         const { along, radial } = plugLocal(c, v);
-        const need = stackRadius(st.segs, along);
-        assert.ok(need > 0, `plug-cyl${c.num} mesh "${o.name}" has a vertex at along ${along.toFixed(3)} cm, outside the published stack ${st.bottom.toFixed(2)}..${st.top.toFixed(2)} - the plug is longer than the numbers the channel law measures`);
-        assert.ok(radial <= need + EPS_R, `plug-cyl${c.num} mesh "${o.name}" stands ${radial.toFixed(4)} cm off the cylinder axis at along ${along.toFixed(3)} cm, where the published silhouette is ${need.toFixed(4)} cm - the drawn plug is fatter than the bore the channel law measures`);
-        for (const s of st.segs) {
-          if (s.a0 - EPS_R <= along && along <= s.a1 + EPS_R) reach.set(s.name, Math.max(reach.get(s.name) ?? 0, radial));
-        }
+        assert.ok(seg.a0 - GEO_EPS <= along && along <= seg.a1 + GEO_EPS, `plug-cyl${c.num} mesh "${o.name}" has a vertex at along ${along.toFixed(9)} cm outside the published band ${seg.a0}..${seg.a1} cm of segment "${seg.name}" (worst vertex ${worstHeight.toExponential(3)} cm off a band edge) - the plug is longer, shorter or placed elsewhere than the numbers the channel law measures`);
+        const at = Math.min(Math.max(along, seg.a0), seg.a1);
+        const need = segRadius(seg, at);
+        assert.ok(radial <= need + GEO_EPS, `plug-cyl${c.num} mesh "${o.name}" stands ${radial.toFixed(9)} cm off the cylinder axis at along ${along.toFixed(9)} cm, where its own segment "${seg.name}" is published ${need.toFixed(4)} cm wide (worst vertex ${worstRadius.toExponential(3)} cm too fat) - the drawn plug is fatter than the bore the channel law measures`);
+        worstHeight = Math.max(worstHeight, Math.max(seg.a0 - along, along - seg.a1));
+        worstRadius = Math.max(worstRadius, radial - need);
+        reach.set(seg.name, Math.max(reach.get(seg.name) ?? 0, radial));
         if (radial > widest) widest = radial;
       }
     }
@@ -894,10 +918,11 @@ test('plugs: the drawn plug stands inside the published silhouette and draws eve
   for (const s of st.segs) {
     const got = reach.get(s.name);
     assert.ok(got !== undefined, `segment "${s.name}" (${s.a0.toFixed(2)}..${s.a1.toFixed(2)} cm) is published but nothing was drawn in its height band`);
-    assert.ok(got >= s.r - EPS_R, `segment "${s.name}" was drawn ${got.toFixed(4)} cm wide against its published ${s.r.toFixed(4)} cm`);
+    assert.ok(got >= s.r - GEO_EPS, `segment "${s.name}" was drawn ${got.toFixed(9)} cm wide against its published ${s.r.toFixed(4)} cm`);
   }
   const hex = st.segs.find((s) => s.name === 'hex');
-  assert.equal(widest, hex.r, `the widest point of the drawn plug is ${widest.toFixed(4)} cm; the published hex corner radius ${hex.r} has to be the widest part of a spark plug`);
+  assert.ok(Math.abs(widest - hex.r) <= GEO_EPS, `the widest point of the drawn plug is ${widest.toFixed(9)} cm; the published hex corner radius ${hex.r} has to be the widest part of a spark plug`);
+  t.diagnostic(`drawn-vs-published worst vertex errors over ${st.segs.length * SPEC.cylinders.length} segment meshes: ${worstHeight.toExponential(3)} cm of height (Float32 buffer step at these radii), ${worstRadius.toExponential(3)} cm of radius, both inside the ${GEO_EPS} cm geometry tolerance`);
   t.diagnostic(`silhouette: ${st.segs.length} segments drawn on ${SPEC.cylinders.length} plugs, widest ${widest.toFixed(4)} cm (hex corner), stack ${st.bottom.toFixed(2)}..${st.top.toFixed(2)} cm off the ${PLUG_BOSS_A} cm boss face`);
 });
 
@@ -913,7 +938,7 @@ const flashMap = (theta, advance) => {
   return out;
 };
 /** One tip's opacity at `cyc` crank degrees off its own cylinder's power TDC. */
-const tipAt = (cyl, cyc, advance) => flashMap(wrap720(cyl.powerTDC + cyc), advance).get(c.num);
+const tipAt = (cyl, cyc, advance) => flashMap(wrap720(cyl.powerTDC + cyc), advance).get(cyl.num);
 const LIT = (v) => (v ?? 0) > 1e-12;
 /** World point of one cylinder's spark gap: the published bottom of its stack. */
 const gapPoint = (cyl) => {
@@ -970,10 +995,15 @@ test('plugs: the tip flash is 1 - firingProgress over the published burn window,
       assert.ok(Math.abs(arc - want) <= 1e-6, `cyl ${num} at rpm ${rpm} at ${load} % throttle keeps its tip lit for ${arc.toFixed(4)} crank degrees; the published window is total advance ${adv.toFixed(4)} + burn ${IG.burnDeg} = ${want.toFixed(4)}`);
       assert.ok(Math.abs(open + adv) <= 1e-6, `cyl ${num} opens its flash at ${open.toFixed(4)} degrees off power TDC; the window has to open at the spark instant, ${adv.toFixed(4)} degrees before TDC`);
       assert.ok(Math.abs(close - IG.burnDeg) <= 1e-6, `cyl ${num} closes its flash at ${close.toFixed(4)} degrees off power TDC; it has to close ${IG.burnDeg} crank degrees after power TDC`);
+      // The grid stands on the PUBLISHED window, not on the bisected edges: a
+      // bisection converges onto the flip from the dark side, so its `open` is a
+      // hair before the spark and a sample sitting exactly there is legitimately
+      // dark. open/close above are what gate where the tip really flips; this grid
+      // gates what the tip reads at the poses the ignition law publishes.
       const seen = [];
       for (let i = 0; i <= 40; i++) {
         const f = i / 40;
-        const cyc = open + f * arc;
+        const cyc = -adv + f * arc;
         const got = tipAt(cyl, cyc, adv);
         const need = expectFlash(cyl, wrap720(cyl.powerTDC + cyc), adv);
         assert.ok(Math.abs(got - need) <= 1e-12, `cyl ${num} at ${Math.round(f * 100)} % of its window (${cyc.toFixed(4)} deg off power TDC): the material reads ${got} and firingProgress says ${need}; the contract is opacity = 1 - progress`);
@@ -1091,7 +1121,12 @@ test('plugs: the published tip glow keeps its clearance at every pose it can be 
     if (d < near) near = d;
     if (d > far) far = d;
   }
-  assert.ok(Math.abs(near - P.glowR) <= 1e-9 && Math.abs(far - P.glowR) <= 1e-9, `the drawn glow stands ${near.toFixed(6)}..${far.toFixed(6)} cm from cyl 1's spark gap at the stack bottom ${st.bottom.toFixed(2)} cm off the boss face, where SPEC.plug.glowR publishes ${P.glowR} cm`);
+  // Float32 buffers again: the drawn sphere really stands 0.399999991256..
+  // 0.400000018442 cm off the gap (measured, tmp/c11-probe1.mjs) because the
+  // geometry's positions are Float32 - the same 8.7e-9 and 1.8e-8 quantization
+  // every other drawn mesh in this file carries. GEO_EPS covers it; the law still
+  // refuses a glow that is not the published radius.
+  assert.ok(Math.abs(near - P.glowR) <= GEO_EPS && Math.abs(far - P.glowR) <= GEO_EPS, `the drawn glow stands ${near.toFixed(12)}..${far.toFixed(12)} cm from cyl 1's spark gap at the stack bottom ${st.bottom.toFixed(2)} cm off the boss face, where SPEC.plug.glowR publishes ${P.glowR} cm`);
   // A glow only exists inside a burn window, so the poses that bind are the union of
   // every window the advance law can deliver: cycle 720-advance..720 plus 0..burnDeg
   // across advance base..maxTotalDeg, sampled every 0.25 crank degrees.
@@ -1133,7 +1168,7 @@ test('plugs: the published tip glow keeps its clearance at every pose it can be 
   assert.ok(castShell.tris.length > 20000, `the casting-only shell holds ${castShell.tris.length} triangles - the law would measure nothing`);
   const inv = new THREE.Matrix4();
   const lp = new THREE.Vector3();
-  const anim = { d: Infinity }, cast = { d: Infinity };
+  let anim = { d: Infinity }, cast = { d: Infinity };
   for (const cyl of SPEC.cylinders) {
     const obstacles = [
       ...named(ct.group, new RegExp(`^piston-cyl${cyl.num}-body$`)),
@@ -1200,19 +1235,42 @@ test('plugs: every tip owns its own material, and the flash reads correctly in C
   view.assemble();
   ease(600);
   drive(theta, adv);
-  for (const f of tips) assert.equal(String(f.material.name), 'spark', `assembled, the tip material is "${f.material.name}" instead of the published spark material`);
+  // Names are per plug, not shared: viewControls' sectionClone keys its private
+  // cutaway clone on the material NAME, so eight tips called "spark" would get one
+  // clone and therefore one opacity. The law gates that each tip belongs to the
+  // published spark family AND that no two tips carry the same name.
+  const assembledNames = new Set();
+  const builtWith = tips.map((f) => f.material); // the exact object each tip was built with
+  for (const f of tips) {
+    const nm = String(f.material.name);
+    assert.ok(/^spark/.test(nm) && nm !== 'spark', `assembled, the tip material is named "${nm}"; it has to belong to the published spark family (M.spark in src/render/materials.js) and carry its own name, because a cutaway clone is keyed on that name`);
+    assembledNames.add(nm);
+  }
+  assert.equal(assembledNames.size, tips.length, `the ${tips.length} assembled tips carry ${assembledNames.size} distinct names: tips sharing a name share one sectioned clone, and with it one opacity`);
   assert.ok(Math.abs(flashMesh(1).material.opacity - want1) <= 1e-12, `assembled cyl 1 reads ${flashMesh(1).material.opacity} at ${off.toFixed(3)} degrees before its power TDC, where firingProgress says ${want1}`);
   // ---- CUTAWAY ----
   assert.equal(view.setCutaway(true), true, 'the cutaway did not switch on');
   const plane = view.state().cutawayPlane;
   assert.ok(plane, 'a cutaway has to publish its plane before a plug can be sectioned by it');
+  // The published plane is a snapshot (src/ui/viewControls.js state() hands back
+  // {normal: [...], constant}), while a material carries the live THREE.Plane the
+  // renderer clips with, so the gate is on the numbers: the tip has to be cut by a
+  // plane whose normal and constant are the ones this view published, and an
+  // identity test between a snapshot and a live object would never hold for any
+  // part in the tree.
+  const onPublishedPlane = (m) => {
+    const cp = m.clippingPlanes?.[0];
+    if (!cp) return false;
+    const n = cp.normal.toArray();
+    return n.every((k, i) => Math.abs(k - plane.normal[i]) <= EPS) && Math.abs(cp.constant - plane.constant) <= EPS;
+  };
   let byThisPlane = 0;
   for (const f of tips) {
     const m = f.material;
     assert.ok(String(m.name).endsWith(':sectioned'), `in CUTAWAY the tip "${f.name}" is drawn with "${m.name}" instead of a sectioned clone of its own spark material: the glow would hang in the scene as an unsectioned blob`);
     assert.equal(m.side, THREE.DoubleSide, `the sectioned tip material "${m.name}" is single-sided; a cutaway has to render the inside of what it cuts`);
     assert.ok(m.clippingPlanes?.length >= 1, `sectioned tip material "${m.name}" carries no clipping plane, so the cutaway does not cut it`);
-    if (m.clippingPlanes?.[0] === plane) byThisPlane++;
+    if (onPublishedPlane(m)) byThisPlane++;
   }
   assert.equal(byThisPlane, tips.length, `${byThisPlane} of ${tips.length} sectioned tips are clipped by the plane the view published`);
   drive(theta, adv); // the frame src/main.js would paint after the material swap
@@ -1221,7 +1279,11 @@ test('plugs: every tip owns its own material, and the flash reads correctly in C
   const sections = new Set(tips.map((f) => f.material));
   assert.equal(sections.size, tips.length, `CUTAWAY handed ${tips.length} tips ${sections.size} sectioned material: a sectionClone keyed on one shared name gives every tip the same opacity`);
   assert.equal(view.setCutaway(false), false, 'the cutaway did not switch off');
-  for (const f of tips) assert.equal(String(f.material.name), 'spark', `after the cutaway the tip material is "${f.material.name}" instead of the original spark material it was built with`);
+  for (const [i, f] of tips.entries()) {
+    const nm = String(f.material.name);
+    assert.ok(f.material === builtWith[i], `after the cutaway the tip "${f.name}" carries "${nm}" of a material this plug was not built with: the view has to restore the per-tip material it swapped, not another plug's`);
+    assert.ok(/^spark/.test(nm), `after the cutaway the tip "${f.name}" is restored onto "${nm}", outside the published spark family`);
+  }
   drive(theta, adv);
   assert.ok(Math.abs(flashMesh(1).material.opacity - want1) <= 1e-12, 'after the cutaway the flash has to follow firingProgress again on the restored material');
   // ---- EXPLODED ----
@@ -1256,11 +1318,22 @@ test('plugs: every tip owns its own material, and the flash reads correctly in C
       }
     }
     const mid = new THREE.Vector3((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2);
-    const moved = gapPoint(c).addScaledVector(new THREE.Vector3(...dir), o.dist);
-    assert.ok(mid.distanceTo(moved) <= 1e-6, `${name} carries its glow centre to ${mid.toArray().map((n) => n.toFixed(3)).join(', ')} while exploded; its published spark gap travels to ${moved.toArray().map((n) => n.toFixed(3)).join(', ')} along family ${rule.family} for ${o.dist.toFixed(2)} cm`);
+    // A teardown does two things at once: src/ui/viewControls.js apply() writes
+    // dir * dist * fraction on each member wrapper AND engine.position.z =
+    // engineHomeZ + lift * fraction on the root, because the whole separated
+    // chain is hoisted clear of the stand mounts (row P1-G4's mount law). The
+    // published spark gap is a point in the INSTALLED tree, so the exploded glow
+    // has to answer to its own member offset plus the hoist the root carries, and
+    // a law that credits only the member offset measures the plug 34.25 cm short
+    // of where the view actually puts it.
+    const vs = view.state();
+    const moved = gapPoint(c)
+      .addScaledVector(new THREE.Vector3(...dir), o.dist * vs.fraction)
+      .addScaledVector(new THREE.Vector3(0, 0, 1), vs.lift * vs.fraction);
+    assert.ok(mid.distanceTo(moved) <= GEO_EPS, `${name} carries its glow centre to ${mid.toArray().map((n) => n.toFixed(3)).join(', ')} while exploded; its published spark gap plus its own ${o.dist.toFixed(2)} cm along family ${rule.family} and the ${vs.lift.toFixed(2)} cm hoist the view publishes travel it to ${moved.toArray().map((n) => n.toFixed(3)).join(', ')}`);
     for (const k of ['x', 'y', 'z']) {
       const r = (hi[k] - lo[k]) / 2;
-      assert.ok(Math.abs(r - P.glowR) <= 1e-9, `${name}'s glow is ${r.toFixed(4)} cm across along ${k} while exploded, against the published radius ${P.glowR}: a teardown moves a plug, it does not resize its glow`);
+      assert.ok(Math.abs(r - P.glowR) <= GEO_EPS, `${name}'s glow is ${r.toFixed(9)} cm across along ${k} while exploded, against the published radius ${P.glowR}: a teardown moves a plug, it does not resize its glow`);
     }
   }
   drive(theta, adv); // the loop still poses the plugs in the exploded state

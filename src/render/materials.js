@@ -272,6 +272,11 @@ export function createEnvironment(renderer) {
   return envMap;
 }
 
+/** One published additive glow family (GLOW_SPECS) as a real material. */
+function glowMaterial(name) {
+  return new THREE.MeshBasicMaterial({ name, ...GLOW_SPECS[name] });
+}
+
 export function createMaterials() {
   const castH = noiseCanvas(512, { seed: 71, octaves: 6, baseCells: 14, contrast: 0.55 });
   const castN = normalCanvasFromHeight(castH, 1.1);
@@ -376,13 +381,28 @@ export function createMaterials() {
   M.dialTemp = new THREE.MeshStandardMaterial({ name: 'dialTemp', map: tex(dialCanvas({ label: 'WATER', unit: 'deg C', max: 120, ticks: 7, redline: 0.82 }), { repeat: 1, srgb: true }), metalness: 0.1, roughness: 0.55 });
   M.dialTorque = new THREE.MeshStandardMaterial({ name: 'dialTorque', map: tex(dialCanvas({ label: 'TORQUE', unit: 'Nm', max: 400, ticks: 9, redline: 0.95 }), { repeat: 1, srgb: true }), metalness: 0.1, roughness: 0.55 });
 
-  // spark / combustion glow, additive
-  M.spark = new THREE.MeshBasicMaterial({ name: 'spark', color: 0xfff3c8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-  M.flame = new THREE.MeshBasicMaterial({ name: 'flame', color: 0xff9a3c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-  M.exhaustGlow = new THREE.MeshBasicMaterial({ name: 'exhaustGlow', color: 0xff6a2a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  // spark / combustion glow, additive. The three light-drawing families are
+  // published once as parameters (GLOW_SPECS below) so the test material stand-in
+  // (test/support/engine-triangles.mjs proxyMaterials) builds the same material
+  // TYPE the product does instead of standing in for it with a PBR metal.
+  M.spark = glowMaterial('spark');
+  M.flame = glowMaterial('flame');
+  M.exhaustGlow = glowMaterial('exhaustGlow');
 
   return M;
 }
+
+/**
+ * The additive light families, published as parameters rather than as three
+ * hand-written constructors: a glow is not a machined surface, so it is not a
+ * metal/roughness material and its transparency, blending and depth behaviour are
+ * the part of its definition a law can measure.
+ */
+export const GLOW_SPECS = {
+  spark: { color: 0xfff3c8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false },
+  flame: { color: 0xff9a3c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false },
+  exhaustGlow: { color: 0xff6a2a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide },
+};
 
 /** Apply / clear a clipping plane on every engine material. */
 export function setClipping(materials, planes) {

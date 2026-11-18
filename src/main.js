@@ -1,6 +1,7 @@
 // App shell: WebGLRenderer, test-cell environment, lights, block casting,
 // cranktrain, DOHC valvetrain, the two cylinder heads, the intake / exhaust
-// manifolds and the industrial test stand that carries the engine. UI and
+// manifolds, the eight spark plugs whose tips flash on their own firingProgress
+// window, and the industrial test stand that carries the engine. UI and
 // camera rigs land in the following commit; everything visual here is
 // procedural (see src/render/materials.js).
 import * as THREE from 'three';
@@ -10,6 +11,7 @@ import { createCranktrain } from './render/cranktrain.js';
 import { createValvetrain } from './render/valvetrain.js';
 import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
+import { createPlugs } from './render/plugs.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
@@ -87,6 +89,11 @@ const heads = createHeads(materials);
 engine.add(heads.group);
 const manifolds = createManifolds(materials);
 engine.add(manifolds.group);
+// The eight plugs are their own assembly, not part of the head: they are service
+// parts, they are inspected and exploded as members of their own, and the tip glow
+// is the only thing in the scene that is a light rather than a machined surface.
+const plugs = createPlugs(materials);
+engine.add(plugs.group);
 
 // The camera and its rig. The pose is NOT written here: SPEC.view carries the
 // swept boot framing (engine, manifolds and the whole test stand uncropped in a
@@ -223,6 +230,9 @@ function loop() {
   state.step(dt);
   cranktrain.update(state.theta);
   valvetrain.update(state.theta);
+  // The tip flash is pose-driven, not frame-driven: it reads the same crank
+  // degrees at 1x as at 1/50, which is what the frame-rate law gates.
+  plugs.update(state.theta, state.advance().total);
   const w = readKeys();
   if (w.fwd || w.strafe || w.rise) rig.walk(w, dt); // held keys walk every frame
   view.update(dt); // eases the exploded view and keeps the section on the hoisted engine
