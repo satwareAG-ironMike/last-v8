@@ -1,9 +1,17 @@
 // The spark-plug silhouette of SPEC.plug, expressed in bank-local `along` off the
 // published seat plane PLUG_BOSS_A. What that plane is has to be stated plainly:
-// it is where the plug's own seat face stands, and src/render/heads.js casts no
-// boss there yet, so the drawn hex floats 0.50 cm above the highest head material.
-// Issue #11 files that missing casting as its own defect; nothing here credits the
-// plug with a feature the head does not have. This is the ONE implementation: the
+// PLUG_BOSS_A is head.stayTopA + plug.bossOff, i.e. the seat face is defined as an
+// OFFSET FROM A PLANE (the top of the deck ribs the bucket towers stand on), not as
+// a feature of the casting. src/render/heads.js casts no boss at `out` 0 there, so
+// measured against the casting-only triangle shell the tallest material inside the
+// hex's own 1.05 cm radius of its own axis stands at along 27.0782 cm - the machined
+// spring-floor row - and the hex's seat face at 30.50 therefore hangs 3.4218 cm above
+// it, with the nearest cast surface (a bucket-bore collar wall) 0.5961 cm from the
+// nearest hex corner and 1.6381 cm from the axis itself at the seat plane. There is
+// no seat face, no shoulder to locate the hex against and no material above the floor
+// row for the thread to bear on. Issue #11 files that missing casting as its own
+// defect; nothing here credits the plug with a feature the head does not have. This
+// is the ONE implementation: the
 // channel law in test/heads.test.mjs gaps it against the rendered casting, the
 // plug laws in test/view.test.mjs measure the drawn meshes against it, and
 // src/render/plugs.js builds those meshes from it. A silhouette measured twice in
