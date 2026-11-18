@@ -638,7 +638,31 @@ try {
     await clickControl('#btn-explode');
     const apartState = await settle('apart');
     const apart = await snap('19 EXPLODED VIEW clicked');
-    if (!(apartState.fraction > 0.999 && apartState.moved === 107)) bad.push(`exploded view settled at ${JSON.stringify(apartState)}`);
+    // The moved count is MEASURED, not typed. Row P1-G11's own law says a count an
+    // oracle asserts must not be typed into that oracle, and this gate used to pin
+    // `moved === 107` - the count the view unit happened to report when row G5g was
+    // written. Eight spark plugs joined the scene at 51271b9 and the pin went red on
+    // its own (tmp/v8-c11-controls.out), which is exactly the failure that law
+    // predicts. Three live authorities replace the number: the members the view
+    // mapped, the rules it derived offsets from, and the wrappers the tree really
+    // carries. All three are read off the page, and they have to agree.
+    const apartChain = JSON.parse(
+      await evalJs(`JSON.stringify((() => {
+        const v = window.__v8;
+        let wrapped = 0;
+        v.engine.traverse((o) => { if (o.parent && String(o.parent.name).startsWith('explode:')) wrapped += 1; });
+        const st = v.view.state();
+        return { members: v.view.members.size, ruled: v.view.offsets.size, wrapped, moved: st.moved, lift: st.lift };
+      })())`)
+    );
+    note(`${' '.repeat(33)}exploded chain: members=${apartChain.members} ruled=${apartChain.ruled} wrapped=${apartChain.wrapped} moved=${apartChain.moved} lift=${apartChain.lift}`);
+    if (!(apartState.fraction > 0.999 && apartState.moved > 0)) bad.push(`exploded view settled at ${JSON.stringify(apartState)}`);
+    if (apartChain.ruled >= apartChain.members)
+      bad.push(`the view derives an explode offset for ${apartChain.ruled} of its ${apartChain.members} members: a chain in which everything moves has no anchor part left standing`);
+    if (apartState.moved !== apartChain.ruled)
+      bad.push(`EXPLODED VIEW moved ${apartState.moved} members while the view derives offsets for ${apartChain.ruled} of ${apartChain.members} - a ruled part is standing still`);
+    if (apartChain.wrapped !== apartState.moved)
+      bad.push(`${apartChain.wrapped} engine objects sit under an explode: wrapper while the view reports ${apartState.moved} moved members - the tree and its own state disagree`);
     if (apart.view.cutaway !== false || apart.cutPressed !== 'false')
       bad.push(`EXPLODED VIEW left the cutaway open (cutaway=${apart.view.cutaway} aria-pressed=${apart.cutPressed})`);
     if (apart.explodePressed !== 'true' || apart.assemblePressed !== 'false')
