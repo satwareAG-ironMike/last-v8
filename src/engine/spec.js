@@ -163,15 +163,33 @@ export const SPEC = {
   // ---- spark plug: one published silhouette on every cylinder axis (issue #11) ----
   // The channel law in test/heads.test.mjs measures the machined void against these
   // radii, so the plug the repo renders and the bore it screws into are the same
-  // published numbers. M14-class proportions: 14 mm threaded reach, 21 mm hex across
-  // flats (1.05 corner radius). The stack is measured from the plug's seat face at
-  // PLUG_BOSS_A: the segments below it stand in the head and the chamber, the
-  // segments above it stand in air beside the two cam covers.
+  // published numbers. M14-class proportions: 14 mm threaded reach, a hex of corner
+  // radius 1.05, so 2 x 1.05 x cos 30 = 1.819 cm across flats: an 18 mm AF plug.
+  // The stack is measured from the plug's seat face at PLUG_BOSS_A: the segments
+  // below it stand in the head and the chamber, the segments above it stand in
+  // air beside the two cam covers.
   plug: {
     bossOff: 0.5,      // plug-boss face stands this far above head.stayTopA
     clr: 0.05,         // air the channel must keep around the whole silhouette
     wallCasting: 0.25, // aluminium the head keeps between the bore and its own rings
     crownAir: 0.5,     // the plug's lowest point stays this far above the TDC crown plane
+    // The additive tip glow is a sphere of this radius standing on the spark gap
+    // (the stack's lowest point) and faded by firingProgress. Its size comes from
+    // the air the glow has WHILE IT IS LIT: the flash only exists inside its burn
+    // window, so the poses that bind are the union of every legal window - cycle
+    // 720-advance..720 plus 0..burnDeg over advance 14..40, i.e. cycle 680..720 and
+    // 0..20 at 0.25 deg steps (tmp/plug-glow-window.mjs). There the plug's own metal
+    // keeps 0.5000 cm of air against its piston crown at cycle 0, 1.1967 cm from its
+    // valve heads at cycle 680 and 1.9812 cm from the seat inserts, so the sphere may
+    // reach 0.5000 - clr = 0.4500. The published value is the largest rung that keeps
+    // twice clr: 0.40 leaves 0.1000 cm, 0.45 would sit on the limit with no headroom
+    // and 0.50 reads 0.0000 and FAILS clr. A whole-cycle version of this law is
+    // impossible - the gap point's whole-cycle minimum is 0.0968 cm at valve max lift
+    // (intake cycle 480), and every legal window stands 226..261 crank degrees from
+    // that pose. Tightest animated plug-solid-to-valve-head air: 0.0819 cm (cyl 1,
+    // its intake head at cycle 408, stable from 4 to 80 bins and 3 deg to 0.1 deg
+    // steps, tmp/plug-solid-refine.mjs).
+    glowR: 0.4,        // floor: electrode.rTip 0.15, the glow must cover the live end
     thread: { r: 0.7, len: 4.9 },   // screwed into the head from the boss face down
     shell: { r: 0.58, len: 1.0 },   // smooth metal shell below the threads
     // Insulator nose standing in the combustion chamber between the two valve
@@ -186,7 +204,7 @@ export const SPEC = {
     // blunt 0.25 cylinder at the tip stood 0.288 cm from cyl 3's intake valve head
     // where the law wants 0.30 (measured, row P1-G13).
     electrode: { r: 0.25, rTip: 0.15, len: 0.5 },
-    hex: { r: 1.05, len: 1.6 },     // 21 mm across flats, seated on the boss face
+    hex: { r: 1.05, len: 1.6 },     // corner radius 1.05 -> 1.819 across flats, seated on the boss face
     boot: { r: 0.7, len: 2.5 },     // insulator boot above the hex
     terminal: { r: 0.45, len: 1.5 },
   },
