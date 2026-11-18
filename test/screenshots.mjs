@@ -26,6 +26,10 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC } from '../src/engine/spec.js';
 import { crankEvent, eventMid } from '../src/engine/timing.js';
+// The authority for the one exemption the PBR law below grants: the product's own
+// published table of additive light families. Read from the module rather than
+// typed here, so the gate and the renderer cannot drift apart.
+import { GLOW_SPECS } from '../src/render/materials.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -323,6 +327,10 @@ const MEASURE = `(async () => {
   const mapKinds = {};
   let meshCount = 0, noMaterial = 0, nonStandard = 0, mapsTotal = 0;
   const notCanvas = [];
+  // Every mesh that is NOT drawn with a metal/roughness PBR material is recorded by
+  // name here, so the exemption the law below grants is a named list measured off
+  // the live tree - not a blind count that could hide an unfinished part.
+  const glowRows = [];
   v.scene.traverse((o) => {
     if (!o.isMesh) return;
     meshCount += 1;
@@ -330,7 +338,22 @@ const MEASURE = `(async () => {
     for (const mt of list) {
       if (!mt) { noMaterial += 1; continue; }
       typeCounts[mt.type] = (typeCounts[mt.type] || 0) + 1;
-      if (!mt.isMeshStandardMaterial) nonStandard += 1;
+      let glowRow = null;
+      if (!mt.isMeshStandardMaterial) {
+        nonStandard += 1;
+        glowRow = {
+          mesh: o.name || '(unnamed mesh)',
+          material: mt.name || '(unnamed)',
+          type: mt.type,
+          additive: mt.blending === THREE.AdditiveBlending,
+          transparent: mt.transparent === true,
+          depthWriteOff: mt.depthWrite === false,
+          opacity: Number((mt.opacity ?? 1).toFixed(6)),
+          color: mt.color && mt.color.getHex ? mt.color.getHex() : null,
+          maps: 0,
+        };
+        glowRows.push(glowRow);
+      }
       const key = mt.name || '(unnamed)';
       let f = fams.get(key);
       if (!f) {
@@ -343,6 +366,7 @@ const MEASURE = `(async () => {
         if (!mt[k]) continue;
         f.maps += 1;
         mapsTotal += 1;
+        if (glowRow) glowRow.maps += 1;
         const kk = textureKind(mt[k]);
         mapKinds[kk] = (mapKinds[kk] || 0) + 1;
         if (kk === 'canvas') f.canvasMaps += 1;
@@ -356,7 +380,7 @@ const MEASURE = `(async () => {
   }));
   const mats = {
     meshCount, noMaterial, nonStandard, mapsTotal, families: famRows.length,
-    types: typeCounts, mapKinds, notCanvas, rows: famRows,
+    types: typeCounts, mapKinds, notCanvas, rows: famRows, glow: glowRows,
   };
 
   return {
@@ -489,10 +513,13 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // visible pistons, rods, a crankshaft, camshafts and valves. All of that is a claim
   // about what the renderer hands the meshes, so it is measured there: the material each
   // mesh actually carries, its metalness/roughness, the kind of every texture map on it,
-  // and how many meshes each named part family really has. Thresholds below are declared
-  // from tmp/g7-run12.out, which measured 790 meshes drawn by 31 families, 0 meshes with
-  // no material, 0 meshes drawn by anything but a metal/roughness PBR material, and 847
+  // and how many meshes each named part family really has. Thresholds below are floors
+  // declared from tmp/g7-run12.out, which measured 790 meshes drawn by 31 families, 0 meshes
+  // with no material, 0 meshes drawn by anything but a metal/roughness PBR material, and 847
   // texture maps of which 847 were drawn by src/render/materials.js (0 from anywhere else).
+  // Those counts moved on this branch: the eight spark plugs (row P1-G5, 51271b9) draw 64
+  // more meshes from 9 more families, and 8 of them are the additive tip glows, which are
+  // light and not surfaces. The live audit line prints what the scene measures now.
   // Three groups because a sand-cast block and a rubber mount are not polished steel and
   // a law that pretends otherwise would be false by construction: machined and driven
   // metal (measured 0.95..1.0 metalness, 0.12..0.45 roughness), as-cast metal and anodised
@@ -523,14 +550,54 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // rodSteel 32, crankShaft 29, camShaft 32, camLobe 32, valveIntake 24, valveExhaust 24,
   // bucket 32, springSteel 32, ringSteel 24, headerSteel 32).
   const NAMED_METAL_MESHES = { pistonAlloy: 8, rodSteel: 8, crankShaft: 1, camShaft: 4, camLobe: 4, valveIntake: 8, valveExhaust: 8, bucket: 8, springSteel: 8, ringSteel: 8, headerSteel: 8 };
+  // The only thing in this engine that is not a surface is light, so the PBR law
+  // grants exactly one exemption and it is a NAMED list measured off the live tree
+  // (mm.glow above), never a blind count: each non-PBR mesh must be a published
+  // spark-plug tip, its material must come from the product's own GLOW_SPECS table
+  // (or that family's per-cylinder clone the cutaway renames), and it must really
+  // behave like a glow. A MeshBasicMaterial standing in for an unfinished metal part
+  // fails here, and it fails by name.
+  const GLOW_TIP = /^plug-cyl(\d+)-flash$/;
+  // Which material names count as a published glow is derived from GLOW_SPECS itself:
+  // the families it publishes, each in its per-cylinder clone form
+  // <family>-cyl<N> (plus the cutaway's `<name>:sectioned` rename). So the law
+  // cannot drift from the renderer, and a plug tip sharing one material object with
+  // another plug is not exempt: src/ui/viewControls.js keys its cutaway clones by
+  // material NAME, so a shared name means one plug's flash drives every plug's
+  // opacity.
+  const GLOW_CLONE = new RegExp('^(' + Object.keys(GLOW_SPECS).join('|') + ')-cyl(\\d+)$');
+  const glowFamily = (material) => {
+    const spec = GLOW_CLONE.exec(String(material).replace(/:sectioned$/, ''));
+    return spec ? { family: spec[1], cyl: Number(spec[2]) } : null;
+  };
   const materialLaw = (mm, theta) => {
     if (mm.noMaterial !== 0)
       bad.push(`crank ${theta}: ${mm.noMaterial} meshes carry no material at all - three draws those with its default MeshBasicMaterial, which is not PBR`);
-    if (mm.nonStandard !== 0)
-      bad.push(`crank ${theta}: ${mm.nonStandard} meshes are drawn with something that is not a metal/roughness PBR material (${JSON.stringify(mm.types)})`);
-    for (const k of Object.keys(mm.types))
-      if (k !== 'MeshStandardMaterial' && k !== 'MeshPhysicalMaterial')
-        bad.push(`crank ${theta}: the material type ${k} is not a PBR metal/roughness model, and it is on ${mm.types[k]} meshes`);
+    const tips = mm.glow;
+    const wantTips = SPEC.cylinders.length; // one published tip per published cylinder
+    if (tips.length !== wantTips)
+      bad.push(`crank ${theta}: ${mm.nonStandard} of ${mm.meshCount} meshes are drawn with something that is not a metal/roughness PBR material, and the exemption covers exactly ${wantTips} spark-plug tips: ${JSON.stringify(tips.map((g) => `${g.mesh}=${g.material}/${g.type}`))}`);
+    for (const g of tips) {
+      const tip = GLOW_TIP.exec(g.mesh);
+      const spec = tip && glowFamily(g.material);
+      const litBy = Object.keys(GLOW_SPECS).map((f) => `${f}-cyl<N>`).join(' or ');
+      if (!tip || !spec) {
+        bad.push(`crank ${theta}: ${mm.types['MeshStandardMaterial'] ?? 0} meshes are drawn with PBR metals and ${g.mesh} (${g.material}/${g.type}) is drawn with something else - the only exempt parts are the ${wantTips} additive plug tips named plug-cyl<N>-flash and lit by ${litBy}, and this one is not exempt`);
+        continue;
+      }
+      const cyl = Number(tip[1]);
+      if (!SPEC.cylinders.some((c) => c.num === cyl))
+        bad.push(`crank ${theta}: the glow mesh ${g.mesh} names cylinder ${cyl}, which this engine does not publish`);
+      if (spec.cyl !== cyl)
+        bad.push(`crank ${theta}: ${g.mesh} is lit by ${g.material}, a glow cloned for cylinder ${spec.cyl}: one plug's flash would drive another plug's opacity`);
+      const s = GLOW_SPECS[spec.family];
+      if (!(g.additive && g.transparent && g.depthWriteOff))
+        bad.push(`crank ${theta}: ${g.mesh} carries the glow family ${g.material} but does not behave like a glow (additive=${g.additive}, transparent=${g.transparent}, depthWrite off=${g.depthWriteOff}) - a glow that writes depth hides the parts behind it, which is what CUTAWAY and EXPLODED are for`);
+      if (g.maps !== 0)
+        bad.push(`crank ${theta}: the glow ${g.mesh} carries ${g.maps} texture map(s) - ${spec.family} is published as flat additive light (${JSON.stringify(s)}), not as a surface`);
+      if (g.color !== s.color)
+        bad.push(`crank ${theta}: ${g.mesh} glows as 0x${g.color.toString(16).padStart(6, '0')} while ${spec.family} is published as 0x${s.color.toString(16).padStart(6, '0')}`);
+    }
     if (mm.notCanvas.length !== 0)
       bad.push(`crank ${theta}: ${mm.notCanvas.length} texture maps were not drawn by this codebase (${mm.notCanvas.join(', ')}) - the objective forbids downloaded models and image assets`);
     if (!(mm.mapsTotal > 0))
@@ -651,6 +718,11 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     `${mm.mapsTotal} texture maps (${JSON.stringify(mm.mapKinds)}), types ${JSON.stringify(mm.types)}`
   );
   console.log('material families: ' + mm.rows.map((r) => `${r.name} ${r.metalness}/${r.roughness} x${r.meshes}${r.maps ? ` maps ${r.canvasMaps}/${r.maps}` : ''}`).join(', '));
+  // The named exemption, printed by name: which meshes are the non-PBR ones and what
+  // they are drawn with. The law above reads the family authority out of
+  // src/render/materials.js (GLOW_SPECS), so this line is the audit trail of the
+  // exemption rather than a second place where a count is written down.
+  console.log('non-PBR meshes (named exemption): ' + mm.glow.map((g) => `${g.mesh} ${g.material}/${g.type} additive=${g.additive} transparent=${g.transparent} depthWrite off=${g.depthWriteOff} maps=${g.maps}`).join(', '));
 
   // cam speed measured as a rate, not only as an absolute reading
   for (let i = 1; i < runs.length; i++) {
