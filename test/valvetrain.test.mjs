@@ -7,6 +7,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SPEC, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
+import { bearingStack } from '../src/engine/bearings.js';
+import { createHeads } from '../src/render/heads.js';
+import { closestToShell, newShell, REACH, shellAdd } from './support/surface-clearance.mjs';
 import {
   lobeProfileRadius, lobeIndexAngle, lobeAzimuth, followerAzimuth,
   lobeContactLift, lobeHalfCamDeg,
@@ -34,6 +37,38 @@ function count(group, prefix) {
   let n = 0;
   group.traverse((o) => { if (o.name.startsWith(prefix)) n += 1; });
   return n;
+}
+
+/**
+ * What stands inside one published cam bearing window [bx-H, bx+H] of one drawn
+ * camshaft: the outer radius off the cam axis line and which drawn parts reach
+ * there. Measured per triangle - a lathed solid puts its vertices only on its end
+ * rings, so a vertex filter would see nothing of the body between them - and over
+ * every mesh of the cam, because a bearing window may hold the journal and
+ * nothing else that is wider than the journal.
+ */
+function windowBand(cam, cap, bx, half) {
+  const x0 = bx - half, x1 = bx + half;
+  let hi = 0, tris = 0;
+  const who = new Set();
+  for (const m of cam.children) {
+    if (!m.isMesh) continue;
+    m.updateWorldMatrix(true, false);
+    const pos = m.geometry.attributes.position, idx = m.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    const at = (k) => new THREE.Vector3().fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(m.matrixWorld);
+    for (let j = 0; j < n; j += 3) {
+      const a = at(j), b = at(j + 1), c = at(j + 2);
+      const tx0 = Math.min(a.x, b.x, c.x), tx1 = Math.max(a.x, b.x, c.x);
+      if (tx1 < x0 || tx0 > x1) continue; // this triangle does not reach the window
+      tris += 1;
+      who.add(m.name);
+      const r = Math.max(Math.hypot(a.y - cap.y, a.z - cap.z),
+        Math.hypot(b.y - cap.y, b.z - cap.z), Math.hypot(c.y - cap.y, c.z - cap.z));
+      if (r > hi) hi = r;
+    }
+  }
+  return { hi, tris, who: [...who] };
 }
 
 const angDiff = (a, b) => Math.abs(signedAngle(a - b));
@@ -72,11 +107,16 @@ test('valvetrain build: 4 camshafts, 16 lobes, 16 buckets with shims, 16 valves 
   assert.equal(count(group, 'valve-cyl'), 16 * 4, 'valve group + head + stem + retainer per valve');
   assert.equal(count(group, 'spring-cyl'), 16);
   assert.equal(count(group, 'camshaft-'), 4);
-  assert.equal(count(group, 'bearing-'), 28, '7 bearing journals per camshaft');
+  // A1-G7 (issue #8 addendum item 4): the bearing surface on the cam is the
+  // continuous camshaft journal itself. A separate collar turned up to the 2.05
+  // line bore filled the tunnel exactly and pressed into the 1.79 shell bore -
+  // measured against the drawn shells it stood 0.000 cm from the bearing, i.e.
+  // shaft on shell, no oil film, not a buildable engine.
+  assert.equal(count(group, 'bearing-'), 0, 'the camshaft journal is the bearing surface, no collar on the cam');
   assert.equal(count(group, 'cam-sprocket-'), 4);
   let meshes = 0;
   group.traverse((o) => { if (o.isMesh) meshes += 1; });
-  assert.equal(meshes, 164, `164 solids expected (52 camtrain + 48 bucket/shim + 48 valve + 16 spring), got ${meshes}`);
+  assert.equal(meshes, 136, `136 solids expected (24 camtrain + 48 bucket/shim + 48 valve + 16 spring), got ${meshes}`);
 });
 
 // ---- cam phasing -------------------------------------------------------------
@@ -359,7 +399,7 @@ test('springs compress by exactly the valve lift, are preloaded, and never reach
 
 // ---- nothing floats apart ----------------------------------------------------
 
-test('nothing floats: continuous camshafts through 7 bearings, drive sprockets in the crank nose plane', async () => {
+test('nothing floats: one continuous cam journal through all 7 bearing windows, drive sprockets in the crank nose plane', async () => {
   const { group } = await buildValvetrain();
   // Box3.expandByObject() refreshes the object's own matrix but NOT its
   // ancestors', so pose the whole tree like the renderer does before measuring.
@@ -384,21 +424,77 @@ test('nothing floats: continuous camshafts through 7 bearings, drive sprockets i
     const jbb = new THREE.Box3().setFromObject(j);
     assert.ok(jbb.min.x < SPEC.block.stations[3] - SPEC.cam.bearingHalf && jbb.max.x > bands[3] + CS.width,
       `${name}: journal ${jbb.min.x}..${jbb.max.x} does not run from the aft bearing through the sprocket`);
+    // A1-G7: every one of the 7 published bearing windows has to be carried by the
+    // drawn camshaft journal itself, at the published cam journal radius - the
+    // bearing shell in the head rides on that, on the published oil film. Nothing
+    // else may stand in the window: a wider part there is a part that cannot be
+    // built, because the head machines its line bore around it.
+    const br = bearingStack();
     for (const bx of SPEC.cam.bearings) {
-      const brg = cam.getObjectByName(`bearing-${bank}-${valve}-${bx}`);
-      assert.ok(brg, `${name}: bearing at x=${bx} missing`);
-      const bb = new THREE.Box3().setFromObject(brg);
-      assert.ok(Math.abs((bb.min.x + bb.max.x) / 2 - bx) < 0.06, `${name}: bearing at ${bb.min.x}..${bb.max.x} != ${bx}`);
+      const win = windowBand(cam, capPt, bx, SPEC.cam.bearingHalf);
+      assert.ok(win.tris > 0, `${name}: nothing drawn of the camshaft reaches the bearing window ${bx} +/- ${SPEC.cam.bearingHalf}`);
+      assert.deepEqual(win.who, [`camshaft-${bank}-${valve}`],
+        `${name} x${bx}: the bearing window holds ${win.who.join(', ')} at ${win.hi.toFixed(4)} cm off the cam axis - the window of a ${br.boreR} cm line bore carries the ${br.journalR} cm cam journal and nothing else`);
+      assert.ok(Math.abs(win.hi - br.journalR) <= 1e-4,
+        `${name} x${bx}: what the bearing shell rides on stands at ${win.hi.toFixed(4)} cm off the cam axis, not the published ${br.journalR} cm cam journal radius (the head bores at ${br.boreR} cm for the ${br.shellWall} cm shell over it)`);
+      assert.ok(win.hi <= br.shellIdR - br.oilFilm / 2,
+        `${name} x${bx}: the journal at ${win.hi.toFixed(4)} cm reaches into the ${br.shellIdR} cm shell bore, leaving less than half the published ${br.oilFilm} cm oil film`);
     }
     const sb = new THREE.Box3().setFromObject(cam.getObjectByName(`cam-sprocket-${bank}-${valve}`));
     assert.ok(sb.min.x > bands[i] - 0.06 && sb.max.x < bands[i] + CS.width + 0.06,
       `${name}: sprocket x ${sb.min.x}..${sb.max.x} not in band ${bands[i]}`);
+    const fore = SPEC.cam.bearings[SPEC.cam.bearings.length - 1] + SPEC.cam.bearingHalf;
+    assert.ok(sb.min.x >= fore - EPS,
+      `${name}: the sprocket band starts at ${sb.min.x.toFixed(3)} and reaches into the fore bearing window that ends at ${fore}`);
     const maxR = Math.max(Math.abs(sb.max.y - capPt.y), Math.abs(sb.min.y - capPt.y),
       Math.abs(sb.max.z - capPt.z), Math.abs(sb.min.z - capPt.z));
     assert.ok(maxR <= CS.pitchR + CS.toothH + 0.2, `${name}: sprocket radial envelope ${maxR}`);
     assert.ok(maxR >= CS.pitchR + CS.toothH * 0.4, `${name}: sprocket teeth too small`);
-    assert.equal(count(cam, 'bearing-'), 7, `${name}: 7 bearing journals expected`);
+    assert.equal(count(cam, 'bearing-'), 0, `${name}: the cam carries no bearing collar - the journal is the camshaft`);
   }
+});
+
+// A1-G7 (issue #8 addendum item 4): the bearing stack crosses two renderers, so
+// one law has to measure across them. test/heads.test.mjs gates the head side -
+// the line bore, the shell wall, the shell bore the journal rides in. This gates
+// the cam side against the drawn head: the closest real approach between the
+// drawn camshaft journal and the drawn bearing shells of its own cam line has to
+// be the published oil film, measured with test/support/surface-clearance.mjs.
+// What stands in the bearing window besides the journal - the collars this fix
+// deletes - is gated by the window law in the test above.
+test('A1-G7 the drawn cam journal rides the drawn bearing shells on exactly the published oil film', async () => {
+  const { group } = await buildValvetrain();
+  group.updateMatrixWorld(true);
+  const mats = new Proxy({}, {
+    get: (t, k) => (t[k] ??= new THREE.MeshStandardMaterial({ name: String(k) })),
+  });
+  const heads = createHeads(mats).group;
+  heads.updateMatrixWorld(true);
+  const br = bearingStack();
+  const rows = [];
+  for (const name of camGroupNames) {
+    const bank = name.split('-')[1], valve = name.split('-')[2];
+    const journal = group.getObjectByName(name).getObjectByName(`camshaft-${bank}-${valve}`);
+    assert.ok(journal, `${name}: camshaft journal missing`);
+    const shells = newShell();
+    let halves = 0;
+    for (const o of heads.getObjectByName(`head-${bank}`).children) {
+      if (o.userData.kind !== 'shell' || o.userData.valve !== valve) continue;
+      shellAdd(shells, o);
+      halves += 1;
+    }
+    assert.equal(halves, 14, `${name}: 14 shell halves (7 columns, cradle + cap) expected on this cam line`);
+    const near = closestToShell(journal, shells);
+    assert.ok(Number.isFinite(near.d),
+      `${name}: nothing of the drawn journal came within ${REACH} cm of a drawn bearing shell - the cam does not meet its bearings where the head says they sit`);
+    rows.push(`${bank} ${valve} -> ${near.into} ${near.d.toFixed(4)}`);
+    // Both sides are bored rings cut as polygons, and the polygon step is the
+    // 0.006 cm facet tolerance test/heads.test.mjs already measures the shell
+    // bore with. The published film is the number, the facets are the tolerance.
+    assert.ok(Math.abs(near.d - br.runningClearance) <= 0.006,
+      `${name}: the journal stands ${near.d.toFixed(4)} cm from ${near.into} while the published oil film under the shell is ${br.oilFilm} cm (${br.journalR} cm journal + ${br.oilFilm} cm film = ${br.shellIdR} cm shell bore). A bearing either has its film or it does not.`);
+  }
+  console.log(`A1-G7 cam journal to bearing shell clearance (cm): ${rows.join('; ')}; published film ${br.oilFilm} cm`);
 });
 
 // ---- A1-G2 / A1-G1: the cam chain drive (issue #4) -------------------------
