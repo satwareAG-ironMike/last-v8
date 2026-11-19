@@ -116,9 +116,18 @@ for (const r of rows) {
     }
   }
 
-  // every output hash cited anywhere in the row, resolved against the whole scratch index
+  // every output hash cited anywhere in the row, resolved against the whole scratch index.
+  // ACCEPTED CITATION SPELLINGS (issue #13): `output-sha256=`, `output=`, `driver=` and the
+  // bare `sha256=`. The bare form is what this ledger's pinned-identity paragraphs write -
+  // row G7's shot identities are cited that way - and until now this extractor skipped it,
+  // so a pinned picture could age out of agreement with the file it names in total silence
+  // (measured: 107 of this file's 64-hex citations sit on lines this loop reads, 7 of them
+  // spelled bare and none of them ever resolved or reported). The longer alternatives come
+  // first so `output-sha256=` is read once, not twice. The same alternation is in
+  // scripts/ledger-name-evidence.py's name insertion and in the CITED reader of
+  // test/ledger.test.mjs, which measures that agreement (issue #13's fix direction 1).
   const names = [...blob.matchAll(/\b((?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs))\b/g)].map((x) => x[1]);
-  const hexes = [...blob.matchAll(/(?:output|driver|output-sha256)=([0-9a-f]{64})/g)].map((x) => x[1]);
+  const hexes = [...blob.matchAll(/(?:output-sha256|output|driver|sha256)=([0-9a-f]{64})/g)].map((x) => x[1]);
   for (const h of hexes) {
     const named = names.find((n) => byName.get(n) === h);
     if (named) { citeOk++; continue; }

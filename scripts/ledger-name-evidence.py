@@ -205,7 +205,13 @@ def apply_names(text):
             g = re.search(r"\b(" + ROW_ID + r"):", line)
             row = g.group(1) if g else None
         for hpre, path in MAP.get(row or "", {}).items():
-            hit = re.search(r"output-sha256=" + hpre + r"[0-9a-f]{56}", line)
+            # One citation grammar with scripts/ledger-audit.mjs and test/ledger.test.mjs
+            # (issue #13): output-sha256=, output=, driver= and the bare sha256= this file's
+            # pinned-identity paragraphs write. Measured on this tree the widening attaches
+            # no new name (14 insertions before and after) because every hash this tool's
+            # MAP knows is cited in the labelled form; the grammar is shared so a citation
+            # cannot be checkable in one tool and invisible in the other.
+            hit = re.search(r"(?:output-sha256|output|driver|sha256)=" + hpre + r"[0-9a-f]{56}", line)
             if not hit:
                 continue
             rest = line[hit.end():]

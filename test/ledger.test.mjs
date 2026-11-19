@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const ROW_TITLE = /^- \[( |x)\] (\S+): /;
 const SPAN_PARAGRAPH = /(G\d+(?:-G\d+)?) carry sigs written by an earlier runner/;
@@ -344,7 +344,10 @@ test('the audit refuses two rows sharing one gate id', () => {
 // tests 139 pass 138 fail 1). The damage is therefore the claim itself: close the box and
 // delete every run citation in the row, which is exactly the defect the rule names - a
 // checkmark resting on prose - and it no longer depends on which rows happen to be filled.
-const CITED = /(?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs)\b|(?:output|driver|output-sha256)=[0-9a-f]{64}/g;
+// Same citation grammar as scripts/ledger-audit.mjs and scripts/ledger-name-evidence.py:
+// the labelled spellings and the bare `sha256=` (issue #13). This reader strips citations to
+// damage a row, so it must see exactly what the audit sees or the damage is not the defect.
+const CITED = /(?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs)\b|(?:output-sha256|output|driver|sha256)=[0-9a-f]{64}/g;
 
 test('the audit refuses a closed row that names no recorded run output', () => {
   const r = damagedAudit((text) => editRow(text, 'P1-G5', (lines, at, end) => {
@@ -370,6 +373,129 @@ test('the clean ledger passes every one of those four checks, so the failure pat
   const r = damagedAudit((text) => text);
   assert.equal(r.status, 0, `the refusal path fires against this repo's own ledger:\n${r.out.slice(0, 900)}`);
   assert.match(r.out, /LEDGER AUDIT OK/, 'the audit publishes no verdict for a ledger it accepts');
+});
+
+// --- the citation spelling a row may use (issue #13) --------------------------------------
+// scripts/ledger-audit.mjs:121 extracted a cited hash only when it was labelled
+// `output=`, `driver=` or `output-sha256=`. This ledger also cites hashes bare, as
+// `shots/07-home.png sha256=<64 hex>`, and the tool never extracted those at all: measured
+// against this file, 107 of its 64-hex citations sit on lines the audit's claim grammar
+// reads, 100 of them readable and 7 invisible (tmp/v8-c13-grammar.out). Two consequences,
+// both measured here instead of asserted: a pinned picture written the bare way can age out
+// of agreement with disk in total silence (row G7's two superseded screenshot generations
+// are exactly that), and a row that DOES name its recorded run the bare way trips the
+// closed-box rule as if it named nothing.
+//
+// The control runs a synthetic tree: a synthetic ledger plus the scratch files it cites.
+// A synthetic ledger is the only honest way to measure this, because the real rows' bare
+// citations name files that are gitignored and therefore absent from a fresh checkout and
+// from every CI runner - their absence would be indistinguishable from the blindness.
+const shaOf = (s) => createHash('sha256').update(s).digest('hex');
+const SYNTH_FILES = { 'tmp/one.out': 'run one\n', 'shots/two.png': 'picture two\n' };
+const SYNTH_HEX = Object.fromEntries(Object.entries(SYNTH_FILES).map(([p, body]) => [p, shaOf(body)]));
+
+/** A scratch tree holding one synthetic open row per row text, plus the files it cites.
+ *  No CHECK/EXPECT on those rows: they cite evidence, they declare no oracle, so the only
+ *  variable left is the spelling of the citation itself. */
+const synthAudit = (rows) => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-cite-'));
+  const check = 'node --test test/synthetic-anchor.test.mjs';
+  const expect = 'fail 0';
+  writeFileSync(join(dir, 'GATES.md'),
+    `- [ ] G7: the synthetic anchor row the audit runs its recipe check on\n  CHECK: ${check}\n  EXPECT: ${expect}\n` +
+    `  EVIDENCE: gate-sig=${shaOf(`${check}\n${expect}`).slice(0, 16)}\n${rows}`);
+  for (const [name, body] of Object.entries(SYNTH_FILES)) {
+    const p = join(dir, name);
+    mkdirSync(join(dir, dirname(name)), { recursive: true });
+    writeFileSync(p, body);
+  }
+  cpSync('scripts/ledger-audit.mjs', join(dir, 'scripts/ledger-audit.mjs'));
+  const r = spawnSync(process.execPath, ['scripts/ledger-audit.mjs'], { cwd: dir, encoding: 'utf8' });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+const synthResolved = (out) => Number((out.match(/cited output hashes resolved to a file the row names: (\d+)/) || [])[1]);
+const rowCites = (id, path, label, hex) => `- [ ] ${id}: a synthetic row citing ${path} as ${label}=\n  EVIDENCE: ${path} ${label}=${hex}\n`;
+
+test('every citation spelling this ledger writes is readable: the audit resolves all three', () => {
+  const rows = [
+    rowCites('P1-G90', 'tmp/one.out', 'output-sha256', SYNTH_HEX['tmp/one.out']),
+    rowCites('P1-G91', 'tmp/one.out', 'sha256', SYNTH_HEX['tmp/one.out']),
+    rowCites('P1-G92', 'shots/two.png', 'sha256', SYNTH_HEX['shots/two.png']),
+  ].join('');
+  const r = synthAudit(rows);
+  const want = 3;
+  assert.equal(synthResolved(r.out), want,
+    `the audit resolved ${synthResolved(r.out)} of ${want} citations that name a file the row names and whose ` +
+    `content hashes to exactly the cited value (${Object.entries(SYNTH_HEX).map(([p, h]) => `${p} ${h.slice(0, 12)}...`).join(', ')}); ` +
+    `a citation the extractor cannot read is a citation nobody checks:\n${r.out.slice(0, 900)}`);
+  const bad = (r.out.match(/CITE PROBLEM: P1-G9\d/g) || []);
+  assert.equal(bad.length, 0, `the audit reports these synthetic citations as problems while naming the very file ` +
+    `they cite and while that file hashes to the cited value: ${bad.join(', ')}\n${r.out.slice(0, 900)}`);
+  assert.equal(r.status, 0, `a ledger whose every citation resolves still exited ${r.status}:\n${r.out.slice(0, 900)}`);
+});
+
+// The defect issue #13 was filed from: a pinned picture whose file on disk no longer matches
+// the pinned hash. Arm 1 spells the stale citation the readable way (the tool already caught
+// that, which is what makes arm 2 a measurement and not an assumption); arm 2 spells the
+// identical stale citation the bare way the ledger's shot-identity paragraphs use.
+test('a stale citation is named as a problem in either spelling, so a pinned picture cannot age out silently', () => {
+  const stale = shaOf('a picture this ledger pinned at an older geometry\n');
+  const readable = synthAudit(rowCites('P1-G93', 'shots/two.png', 'output-sha256', stale));
+  assert.match(readable.out, /CITE PROBLEM: P1-G93: hash [0-9a-f]{16}\.\.\. matches no scratch file on disk/,
+    `the readable arm of this control no longer reports a stale citation, so the bare arm below proves ` +
+    `nothing about the tool and only about my pattern:\n${readable.out.slice(0, 700)}`);
+
+  const bare = synthAudit(rowCites('P1-G94', 'shots/two.png', 'sha256', stale));
+  assert.match(bare.out, /CITE PROBLEM: P1-G94: hash [0-9a-f]{16}\.\.\. matches no scratch file on disk/,
+    `a citation of ${stale.slice(0, 16)}... against shots/two.png, which hashes ${SYNTH_HEX['shots/two.png'].slice(0, 16)}... ` +
+    `instead, spelled \`sha256=\` instead of \`output-sha256=\`, is invisible to the audit: the two arms are the same ` +
+    `defect and only one of them is reported. That is row G7's superseded screenshot identity today - its six ` +
+    `pinned hashes are written this way and none of them match the files on disk any more:\n${bare.out.slice(0, 700)}`);
+});
+
+// The refusal side of the same gap: a closed row that really does name its recorded run,
+// written the bare way, is refused as naming nothing.
+test('a closed row citing its recorded run in the bare spelling is not refused as uncited', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-cite-closed-'));
+  const rows = `- [x] P1-G95: a synthetic closed row whose only run citation is spelled bare\n  CHECK: node --test test/synthetic.test.mjs\n  EXPECT: fail 0\n  EVIDENCE: tmp/one.out sha256=${SYNTH_HEX['tmp/one.out']}, gate-sig=${shaOf('node --test test/synthetic.test.mjs\nfail 0').slice(0, 16)}\n`;
+  const check = 'node --test test/synthetic-anchor.test.mjs';
+  writeFileSync(join(dir, 'GATES.md'),
+    `- [ ] G7: the synthetic anchor row the audit runs its recipe check on\n  CHECK: ${check}\n  EXPECT: fail 0\n` +
+    `  EVIDENCE: gate-sig=${shaOf(`${check}\nfail 0`).slice(0, 16)}\n${rows}`);
+  mkdirSync(join(dir, 'tmp'), { recursive: true });
+  writeFileSync(join(dir, 'tmp/one.out'), SYNTH_FILES['tmp/one.out']);
+  cpSync('scripts/ledger-audit.mjs', join(dir, 'scripts/ledger-audit.mjs'));
+  const r = spawnSync(process.execPath, ['scripts/ledger-audit.mjs'], { cwd: dir, encoding: 'utf8' });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.ok(!/P1-G95: the box reads \[x\] while the row names no recorded run output/.test(out),
+    `the audit calls a closed row uncited although the row names tmp/one.out and that file hashes to the ` +
+    `cited ${SYNTH_HEX['tmp/one.out'].slice(0, 16)}... - the spelling is what the tool refuses, not the ` +
+    `missing evidence:\n${out.slice(0, 900)}`);
+  assert.equal(r.status, 0, `a properly evidenced closed row exited ${r.status}:\n${out.slice(0, 900)}`);
+});
+
+// One citation grammar across the tools that READ citations out of this ledger, measured the
+// way the row-id grammar above is measured: the same alternation in each, so a row cannot
+// become checkable in one tool and invisible in another. scripts/ledger-fill-g6.py is
+// deliberately not in this list: it is a WRITER, it names the file before every hash it
+// emits, it validates each one against disk, and its committed form is cited by the closed
+// row G6 - a stricter grammar there is not a gap, and moving that file would move a hash a
+// closed row already recorded. Row P1-G10 states the same scoping in the ledger.
+const CITE_ALTERNATION = /\(\?:output-sha256\|output\|driver\|sha256\)=/;
+test('every tool that reads citations out of the ledger, and this file, share one citation grammar', () => {
+  for (const f of ['scripts/ledger-audit.mjs', 'scripts/ledger-name-evidence.py']) {
+    assert.ok(readFileSync(f, 'utf8').match(CITE_ALTERNATION), `${f} reads citations without the shared spelling grammar`);
+  }
+  const writer = readFileSync('scripts/ledger-fill-g6.py', 'utf8');
+  assert.ok(!writer.match(CITE_ALTERNATION),
+    'the writer script was widened to the reader grammar: its committed form is cited by the closed row G6, so the ' +
+    'shared-grammar law must not drag a closed row\'s recorded hash out of agreement with the file it names');
+  assert.match(writer, /\) \+output-sha256=\(\[0-9a-f\]\+\)/,
+    'scripts/ledger-fill-g6.py no longer requires a named file in front of the hash it writes, which is the ' +
+    'stricter writer-side rule this scoping depends on');
+  assert.ok(CITED.source.includes('output-sha256'), "this file's own citation reader lost the readable spelling");
+  const bare = 'tmp/x.out sha256=' + 'a'.repeat(64);
+  assert.ok(bare.match(CITED), `this file's citation reader does not match the bare spelling it claims to share:\n${CITED.source}`);
 });
 
 // --- the exception span read by NUMBER, not as text (the exception-span review finding) --
