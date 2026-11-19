@@ -92,9 +92,14 @@ function buildCam(bank, valve, bandX, materials) {
     return m;
   };
 
+  // A1-G7 (issue #8 addendum item 4): the ground journal this cam runs on is the
+  // camshaft itself - SPEC.head.camJournalRadius (1.75) continuous from the aft
+  // bearing through every sprocket band. It used to carry a turned collar at
+  // SPEC.cam.bearingR (2.05) at each of the 7 stations; 2.05 is the LINE BORE the
+  // head machines for a 0.26 cm bearing shell, so a collar at 2.05 filled the
+  // tunnel, pressed into the 1.79 cm shell bore and left no 0.04 cm oil film -
+  // measured against the drawn shells it stood 0.0000 cm from the bearing.
   put(`camshaft-${bank}-${valve}`, latheX(solidX(H.camJournalRadius, CAM.journalAft, CAM.journalFore), 40), materials.camShaft, 'camshaft');
-  for (const bx of CAM.bearings)
-    put(`bearing-${bank}-${valve}-${bx}`, latheX(solidX(CAM.bearingR, bx - CAM.bearingHalf, bx + CAM.bearingHalf), 32), materials.camShaft, 'cam bearing journal');
 
   for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
     const idx = lobeIndexAngle(cyl, valve);
