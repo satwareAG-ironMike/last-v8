@@ -44,7 +44,11 @@ export const SPEC = {
     // 18-tooth drive sprocket at the nose; cam sprockets have exactly 2x the
     // teeth AND 2x the pitch radius -> the 2:1 half-speed law is machined, not
     // faked, and both sprockets share one chain pitch (2 pi pitchR / teeth).
-    sprocket: { radius: 3.15, teeth: 18, pitchR: 3.45, toothH: 0.55, x0: 28.6, x1: 29.8 },
+    // Four lanes, one per DOHC cam chain, all inside x 28.6..29.8. The bore is
+    // the turned-down nose spigot the four bored sprocket hubs press onto;
+    // src/engine/drive.js derives the hub, tip and gap-floor radii from
+    // pitchR/teeth plus the chain profile, and the hub must clear every gap.
+    sprocket: { radius: 3.15, bore: 2.4, teeth: 18, pitchR: 3.45, toothH: 0.55, x0: 28.6, x1: 29.8 },
     // Absolute throw azimuth per station, front -> rear.
     // Four throws 90 deg apart in azimuth -> cross-plane ("Chinese arm") crank.
     pinAz: [315, 225, 45, 135],
@@ -408,9 +412,43 @@ export const SPEC = {
     bearings: [-27.5, -22, -11, 0, 11, 22, 27.5], // 7 journals per camshaft
     bearingR: 2.05,
     bearingHalf: 1.1,
-    // 36 teeth = 2x the 18-tooth crank sprocket; four flat chain bands on the
-    // front face, each 0.3 cm wide, exactly filling the 28.6..29.8 sprocket stack.
-    sprocket: { teeth: 36, pitchR: 6.9, toothH: 0.55, width: 0.3, bands: [28.6, 28.9, 29.2, 29.5] },
+    // 36 teeth = 2x the 18-tooth crank sprocket; one chain per camshaft, each
+    // running in its own published band on the front face: four bands 0.3 cm wide
+    // exactly filling the 28.6..29.8 sprocket stack (src/engine/drive.js).
+    // The bore is exactly SPEC.head.camJournalRadius: the continuous 1.75 cm
+    // camshaft journal runs through all four sprockets, so each one is a bored
+    // ring on the journal rather than a part that has to be keyed beside it.
+    sprocket: { teeth: 36, bore: 1.75, pitchR: 6.9, toothH: 0.55, width: 0.3, bands: [28.6, 28.9, 29.2, 29.5] },
+  },
+
+  // ---- the cam chain: one published roller-chain profile the whole drive uses ----
+  // A chain sprocket gap is machined from the roller profile, so the published
+  // numbers here ARE the tooth spaces: every gap is a cutter arc of
+  // rollerR + gapClr centred on the pitch circle at the tooth valley, and the
+  // chain's rollers sit in those gaps with gapClr of air. The link pitch is NOT
+  // typed here: src/engine/drive.js derives it from the published pitch circles
+  // and tooth counts above, which test/valvetrain.test.mjs already pins shared
+  // between the two sprockets (2 * 18 teeth, 2 * 3.45 = 6.9).
+  chain: {
+    rollerR: 0.3,        // chain roller riding in the machined tooth space
+    gapClr: 0.1,         // air the machined gap keeps around every roller
+    hubClr: 0.15,        // air between the machined gap floor and the web it hangs on
+    band: 0.3,           // one band's width in x = the cam band spacing
+    plate: 0.06,         // one chain side-plate layer; two run per band
+    channel: 0.15,       // inner width of the band: the sprocket tooth rides here
+    toothW: 0.13,        // sprocket tooth thickness in x = channel - 2 * plateClr
+    plateClr: 0.01,      // air between a tooth flank and its side plate
+    bandClr: 0.015,      // least air between a chain and what stands beside it in x
+    guidePad: 0.9,       // fixed guide shoe riding the inside of one chain span
+    shoePad: 0.9,        // tensioner shoe riding the outside of the other span
+    tensionerR: 2.2,     // idler the tensioned span bows around
+    tensionerTravel: 1.2, // the idler arm's take-up: it must exceed the measured closure
+    // Scale note, stated because it is a compromise and not a measurement: a real
+    // 12 mm-pitch engineering chain is ~10 mm wide across its plates, which will not
+    // fit four side by side into the 1.2 cm sprocket stack this engine publishes.
+    // The drawn profile is therefore narrower than the real part (0.27 cm across the
+    // two plate layers); the pitch, the tooth counts, the wrap and the clearances
+    // that test/valvetrain.test.mjs gates are the real numbers.
   },
 
   // ---- ignition timing: the base is one named value, the two advance curves
