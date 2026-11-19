@@ -821,3 +821,120 @@ test('A1-G7: every column carries two bearing shells line-bored into its tunnel,
   console.log(`A1-G7 bearing shells, 3 of ${rows.length}:\n  ${rows.slice(0, 3).join('\n  ')}`);
 });
 
+test('A1-G7: every bearing shell carries a radial oil way a ray can prove through it', async () => {
+  const { group } = await buildHeads();
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is not published: the oil-hole radius, the oil film and the azimuth each half carries its hole at have no single source, so no oil way in the tunnel can be gated at all.');
+  let proved = 0;
+  const detail = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        for (const s of m.shells) {
+          const own = m.allTris.filter((t) => t.label === s.name);
+          const midR = (s.rMin + s.rMax) / 2;
+          let holes = 0, bestWidth = 0;
+          for (let psi = 0; psi < 360; psi += 2) {
+            const dir = azDir(bank, psi);
+            const o = bankPoint(bank, line.along, line.out, bx);
+            const voidAz = raycast(own, new THREE.Vector3(o.x, o.y, o.z), dir, s.rMin - 0.02, s.rMax + 0.02).length === 0;
+            if (!voidAz) continue;
+            let width = 0;
+            for (;;) {
+              const wallA = raycast(own, new THREE.Vector3(o.x, o.y, o.z), azDir(bank, psi + width + 1), s.rMin - 0.02, s.rMax + 0.02);
+              if (wallA.length > 0) break;
+              width++;
+              if (width > 90) break; // a void over a quarter of the shell is a missing half, not a hole
+            }
+            for (;;) {
+              const wallB = raycast(own, new THREE.Vector3(o.x, o.y, o.z), azDir(bank, psi - width - 1), s.rMin - 0.02, s.rMax + 0.02);
+              if (wallB.length > 0) break;
+              width++;
+              if (width > 90) break;
+            }
+            const wall = raycast(own, new THREE.Vector3(o.x, o.y, o.z), azDir(bank, psi + width + 4), s.rMin - 0.02, s.rMax + 0.02);
+            const wallBack = raycast(own, new THREE.Vector3(o.x, o.y, o.z), azDir(bank, psi - width - 4), s.rMin - 0.02, s.rMax + 0.02);
+            if (wall.length < 2 || wallBack.length < 2) continue; // a void with no wall beside it is a missing shell, not a drilled hole
+            holes++;
+            const holeR = Math.sin((width / 2) * DEG) * midR;
+            if (holeR > bestWidth) bestWidth = holeR;
+          }
+          detail.push(`${bank} ${valve} x${bx} ${s.name}: ${holes} proved oil way(s), widest ${bestWidth.toFixed(4)} cm against the published ${br.oilHoleR} cm`);
+          proved += holes;
+        }
+      }
+    }
+  }
+  const needed = CAM.bearings.length * 4 * 2; // 7 journals x 4 DOHC camshafts x 2 halves per split bore
+  console.log(`A1-G7 shell oil ways, 3 of ${detail.length}:\n  ${detail.slice(0, 3).join('\n  ')}`);
+  console.log(`A1-G7 proved shell oil ways: ${proved} of ${needed}`);
+  assert.equal(proved, needed,
+    `${proved} of ${needed} bearing shells carry a radial oil way a ray can prove through the wall (a void azimuth with solid wall on both sides). A shell without an oil hole has no oil in its running clearance: it runs metal-to-metal, which is the failure the review named for the whole bearing stack.`);
+});
+
+test('A1-G7: every cap and cradle stands on a drilled tab pair with a cap bolt through both', async () => {
+  const { group } = await buildHeads();
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is not published: the tab stand-off, the tab height and the bolt-hole radius that say where a cap bolt may stand have no source, so the cap has nothing to stand on.');
+  const bolts = group.getObjectByName('cam-cap-bolts');
+  let drilled = 0;
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    const up = new THREE.Vector3().fromArray(bankUp(bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        const tabs = m.parts.filter((p) => p.kind === 'tab');
+        assert.equal(tabs.length, 2,
+          `${bank} ${valve} x${bx}: ${tabs.length} tab(s) stand in this column. A split bore is held by a bolt through a tab on the cap into a tab on the cradle: without the pair the cap is glued, not bolted.`);
+        // The published bolt line: mid of the tab span from the line bore out to the
+        // tab's outer radius, exactly the line the tab law in A1-G7 derives from SPEC.
+        const tabR = m.boreR + br.castWall + br.tabStand;
+        const boltR = (m.boreR + tabR) / 2;
+        for (const side of [-1, 1]) {
+          for (const t of tabs) {
+            const own = m.allTris.filter((q) => q.label === t.name);
+            const foot = bankPoint(bank, line.along + br.tabStand + br.tabH / 2, line.out + side * boltR, bx);
+            const through = raycast(own, new THREE.Vector3(foot.x, foot.y, foot.z), up, -br.tabH, br.tabH);
+            if (through.length === 0) drilled++;
+          }
+        }
+      }
+    }
+  }
+  const neededTabsHoles = CAM.bearings.length * 4 * 2 * 2; // 28 columns x 2 tabs x 2 bolt sides
+  console.log(`A1-G7 drilled tab holes proved: ${drilled} of ${neededTabsHoles}`);
+  assert.equal(drilled, neededTabsHoles,
+    `${drilled} of ${neededTabsHoles} cap tabs are drilled through for their bolt: a ray along the split-plane normal through the tab at the published bolt line crosses nothing. A tab that is not drilled is a boss the bolt has to be cast into.`);
+  const neededBolts = CAM.bearings.length * 4 * 2;
+  assert.ok(bolts && bolts.isInstancedMesh,
+    `no cam-cap-bolts instanced mesh exists: ${neededBolts} cap bolts are the only thing holding ${CAM.bearings.length * 4} split caps onto their cradles. Today the caps are cast integral with the head and nothing holds them down.`);
+  assert.equal(bolts.count, neededBolts, `cam-cap-bolts holds ${bolts.count} instances, the split bore needs ${neededBolts} (two per column: one each side of the cam line)`);
+});
+
+test('A1-G7: the whole bearing stack is published in SPEC.cam.bearing and every radius in it derives', async () => {
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is missing: the oil film, the shell wall, the casting wall, the tab stand-off, the bolt geometry and the oil-hole radius of the cam tunnel are not published at all, so the head cannot be built from one source and the review\'s "no load-bearing full 360 degree boss" has nothing to be measured against.');
+  const shellIdR = H.camJournalRadius + br.oilFilm;
+  const boreR = shellIdR + br.shellWall;
+  assert.ok(Math.abs(boreR - CAM.bearingR) <= 1e-9,
+    `the published stack puts the line bore at ${boreR.toFixed(6)} cm while SPEC.cam.bearingR says ${CAM.bearingR} cm: the two halves of the tunnel are bored against the bearing radius, so one of them is wrong.`);
+  assert.ok(H.bossClr === undefined,
+    `SPEC.head.bossClr still publishes ${H.bossClr} cm of clearance typed between the cam and a cast bore. That clearance is now carried by ${br.shellWall} cm of shell over a ${br.oilFilm} cm oil film; keeping both keys means two sources for one running clearance.`);
+  const castOdR = boreR + br.castWall;
+  const tabR = castOdR + br.tabStand;
+  assert.ok(tabR > NOSE_R,
+    `the cap tab outer radius ${tabR.toFixed(4)} cm has to stand outside the ${NOSE_R.toFixed(4)} cm nose the cam carries, or the bolt hole cannot be drilled without cutting into the cam's swept circle.`);
+  const boltOut = (boreR + tabR) / 2;
+  const hexCircumR = br.boltAcrossR / Math.cos(Math.PI / 6);
+  assert.ok(hexCircumR <= (tabR - boreR) / 2,
+    `the cap bolt's hex needs ${hexCircumR.toFixed(4)} cm across the corners while the tab span from the ${boreR.toFixed(4)} cm bore to the ${tabR.toFixed(4)} cm tab edge only has ${((tabR - boreR) / 2).toFixed(4)} cm half-width around the bolt line at ${boltOut.toFixed(4)} cm: the bolt head would overhang the tab.`);
+  assert.ok(br.oilHoleR < br.shellWall,
+    `the oil hole is ${br.oilHoleR} cm in radius and the shell it is drilled through is ${br.shellWall} cm thick: a hole wider than the wall it stands in is not a drilling.`);
+});
