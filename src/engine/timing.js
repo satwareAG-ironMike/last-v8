@@ -79,11 +79,24 @@ export function strokeOf(cyl, theta) {
   return 'COMPRESSION';
 }
 
-/** True when the cylinder fires at the finest resolution step around its spark. */
-export function firingProgress(cyl, theta) {
+const finite = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+
+/**
+ * Position inside this cylinder's burn window: 0 at the instant the spark fires,
+ * 1 at the end of the visible burn window, -1 outside it. The window opens at
+ * `powerTDC - advance` (cycle position 720 - advance), runs through power TDC
+ * (the 720 wrap) and closes `SPEC.ignition.burnDeg` crank degrees after TDC, so
+ * it is a burn window and not 686 degrees of the cycle. `advance` is the live
+ * total advance from src/engine/ignition.js; its caller is the spark flash.
+ */
+export function firingProgress(cyl, theta, advance = SPEC.ignition.baseDeg) {
+  const adv = Math.max(0, finite(advance, SPEC.ignition.baseDeg));
+  const burn = SPEC.ignition.burnDeg;
   const c = cycleAngle(cyl, theta);
-  if (c < SPEC.ignitionAdvance || c > 700) return -1;
-  return c;
+  let since = null;
+  if (c >= 720 - adv) since = c - (720 - adv);
+  else if (c <= burn) since = c + adv;
+  return since === null ? -1 : since / (adv + burn);
 }
 
 /** Crank angle (0..720) at which a cylinder reaches a given cycle position. */
@@ -102,13 +115,122 @@ export function camAzimuth(bank, theta) {
 /** Half width of a lobe nose, in CAM degrees. 1 cam deg = 2 crank deg. */
 export const lobeHalfCamDeg = (valve) => eventDuration(valve) / 4;
 
-/** Radius of the machined lobe at local angle alpha (deg, 0 = nose). */
+/**
+ * Grinder exponent of this lobe's lift law, derived from the machined nose arc.
+ * The law is lift(psi) = maxLift * (1 - x^2)^p with x = |psi| / lobeHalfCamDeg
+ * (psi in CAM degrees, 0 = the nose). It opens and closes with zero slope onto
+ * the base circle - a real closing ramp - and its support function is convex
+ * (h + h'' > 0) exactly while the nose arc radius stays positive:
+ * h(0) + h''(0) = camBaseRadius + maxLift - 2 p maxLift / halfCamRad^2 IS the
+ * ground nose radius, so p follows from the one machined value named in SPEC.
+ */
+export function lobeNoseExponent(valve) {
+  const halfRad = (lobeHalfCamDeg(valve) * Math.PI) / 180;
+  return ((H.camBaseRadius + V.maxLift - V.lobeNoseRadius) * halfRad * halfRad) / (2 * V.maxLift);
+}
+
+/** p that would shrink the nose arc to zero: above this a flat face undercuts. */
+export function lobeUndercutExponent(valve) {
+  const halfRad = (lobeHalfCamDeg(valve) * Math.PI) / 180;
+  return ((H.camBaseRadius + V.maxLift) * halfRad * halfRad) / (2 * V.maxLift);
+}
+
+const lawTerms = (valve, psiDeg) => {
+  const hw = lobeHalfCamDeg(valve);
+  const halfRad = (hw * Math.PI) / 180;
+  const p = lobeNoseExponent(valve);
+  const a = Math.abs(signedAngle(psiDeg));
+  if (a >= hw) return { lift: 0, dLift: 0, d2Lift: 0, x: 1 };
+  const x = a / hw;
+  const u = 1 - x * x;
+  const lift = V.maxLift * u ** p;
+  const dLift = -(V.maxLift / halfRad) * 2 * p * x * u ** (p - 1); // cm per cam radian
+  const d2Lift = (V.maxLift / (halfRad * halfRad)) * 2 * p * u ** (p - 2) * ((2 * p - 1) * x * x - 1);
+  return { lift, dLift, d2Lift, x };
+};
+
+/**
+ * Distance from the cam axis to the lobe tangent plane whose normal sits psi
+ * cam degrees from the nose: the plane a FLAT follower rides on (#8 item 3).
+ * The old law used the radius along the follower ray - a knife-edge follower -
+ * and that plane cut 0.5005 cm into every bucket it drove.
+ */
+export function lobeFaceDistance(valve, psiDeg) {
+  return H.camBaseRadius + lawTerms(valve, psiDeg).lift;
+}
+
+/** Contact law: the lift the follower actually rides on. */
+export const lobeContactLift = (valve, psiDeg) => lobeFaceDistance(valve, psiDeg) - H.camBaseRadius;
+
+/** dh/dpsi in cm per cam radian = how far the contact point walks off the
+ *  follower ray, measured across the flat face. */
+export function lobeContactWalk(valve, psiDeg) {
+  const t = lawTerms(valve, psiDeg);
+  return psiDeg < 0 ? -t.dLift : t.dLift;
+}
+
+/**
+ * h + h'' in cm: radius of curvature of the machined outline at that contact
+ * point. Zero or negative is an undercut - a flat face would intersect the
+ * lobe instead of riding it. Equals the ground nose radius at psi = 0.
+ */
+export function lobeContactCurvature(valve, psiDeg) {
+  const t = lawTerms(valve, psiDeg);
+  return H.camBaseRadius + t.lift + t.d2Lift;
+}
+
+const scanLobe = (valve, fn, pick, samples = 6000) => {
+  const hw = lobeHalfCamDeg(valve);
+  let out = null;
+  for (let i = 0; i <= samples; i++) {
+    const psi = (i / samples) * hw;
+    const v = fn(valve, psi);
+    if (out === null || pick(v, out.v)) out = { v, psi };
+  }
+  return out;
+};
+
+const widest = (v, best) => Math.abs(v) > Math.abs(best);
+const tightest = (v, best) => v < best;
+
+/** Largest contact walk over the event, cm: must stay inside the tappet face. */
+export const lobeMaxWalk = (valve) => Math.abs(scanLobe(valve, lobeContactWalk, widest).v);
+
+/** Tightest outline curvature over the event, cm: > 0 means no undercut. */
+export const lobeMinCurvature = (valve) => scanLobe(valve, lobeContactCurvature, tightest).v;
+
+/** Polar angle (cam deg from the nose) of the outline point whose tangent plane
+ *  has its normal at psi: beta = psi + atan2(h', h). Monotone while the law is
+ *  convex, which is what makes the outline a single closed curve. */
+function lobeContactAzimuth(valve, psiRad) {
+  const h = lobeFaceDistance(valve, (psiRad * 180) / Math.PI);
+  const dh = lobeContactWalk(valve, (psiRad * 180) / Math.PI);
+  return psiRad + Math.atan2(dh, h);
+}
+
+/**
+ * Radius of the machined lobe outline at polar angle alpha (cam deg from the
+ * nose): the envelope of the flat-follower tangent planes, hypot(h, h'). This
+ * is what the cam was cut to, and what the render extrudes.
+ */
 export function lobeProfileRadius(valve, alpha) {
   const hw = lobeHalfCamDeg(valve);
-  const a = signedAngle(alpha);
-  if (Math.abs(a) > hw) return H.camBaseRadius;
-  return H.camBaseRadius + (V.maxLift * (1 + Math.cos((Math.PI * a) / hw))) / 2;
+  const a = Math.abs(signedAngle(alpha));
+  if (a >= hw) return H.camBaseRadius;
+  const target = (a * Math.PI) / 180;
+  let lo = 0, hi = (hw * Math.PI) / 180;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (lobeContactAzimuth(valve, mid) < target) lo = mid; else hi = mid;
+  }
+  const psi = (lo + hi) / 2;
+  const h = lobeFaceDistance(valve, (psi * 180) / Math.PI);
+  const dh = lobeContactWalk(valve, (psi * 180) / Math.PI);
+  return Math.hypot(h, dh);
 }
+
+/** Largest outline radius: the machined nose sits on the index azimuth. */
+export const lobeMaxRadius = (valve) => lobeFaceDistance(valve, 0);
 
 /** Fixed angular position of a lobe on its camshaft. */
 export function lobeIndexAngle(cyl, valve) {
@@ -125,10 +247,15 @@ export function followerAzimuth(cyl, valve) {
   return wrap360(valveAxisAz(cyl.bank, valve) + 180);
 }
 
-/** Lift the follower rides on = lobe radius facing it minus the base circle. */
+/**
+ * Lift the follower rides on = the lobe's tangent-plane distance along the
+ * follower axis minus the base circle. The lobe outline is the envelope of
+ * those planes, so the bucket face and the machined surface agree exactly and
+ * nothing intersects anything (lobeProfileRadius is that envelope radius).
+ */
 export function valveLift(cyl, valve, theta) {
   const alpha = signedAngle(lobeAzimuth(cyl, valve, theta) - followerAzimuth(cyl, valve));
-  return Math.max(0, lobeProfileRadius(valve, alpha) - H.camBaseRadius);
+  return Math.max(0, lobeFaceDistance(valve, alpha) - H.camBaseRadius);
 }
 
 // ---- fixed points --------------------------------------------------------

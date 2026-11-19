@@ -119,7 +119,10 @@ function memberBox(m) {
 // ---------------------------------------------------------------------------
 let shellCache = null;
 function engineShell() {
-  if (!shellCache) shellCache = engineTriangles(materials);
+  // Named units: the stand measures the engine the stand rows record, and the
+  // spark plugs are measured by their own laws in test/view.test.mjs instead of
+  // being added to a shell whose counts closed rows quote.
+  if (!shellCache) shellCache = engineTriangles(materials, { units: ['block', 'cranktrain', 'valvetrain', 'heads', 'manifolds'] });
   return shellCache;
 }
 

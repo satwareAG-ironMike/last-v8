@@ -5,8 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SPEC, ID } from '../src/engine/spec.js';
+import { SPEC, ID, wrap720 } from '../src/engine/spec.js';
 import { crankPinPoint, pistonPinPoint, pistonAlong, firingOrder } from '../src/engine/timing.js';
+import { totalAdvance } from '../src/engine/ignition.js';
 
 const C = SPEC.crank;
 const EPS = 1e-3;
@@ -49,18 +50,130 @@ test('engine state: rpm default, clamping, start/stop, slow motion', async () =>
   assert.equal(st.theta, t);
 });
 
-test('engine state: firing pulses are 8 exactly-90-degree events per cycle', async () => {
+// #8 P1-G2: the spark lands at powerTDC - totalAdvance, never at TDC. Every
+// cylinder fires exactly once per 720, the eight pulses stay 90 deg apart, and
+// the sequence is the cross-plane order (rotated: an advance moves cyl 1's spark
+// past cyl 2's, which is exactly what an advance does).
+// A crank that does not turn cannot spark, so the pulse law is measured on the
+// turning range: rpm 0 is asserted separately as "no spark at all".
+const SPARK_CASES = [
+  [100, 100], [300, 0], [800, 0], [1000, 50], [1600, 55], [2400, 20], [3200, 100], [4000, 30], [4000, 100],
+];
+
+const isRotationOf = (seq, order) => {
+  const k = order.indexOf(seq[0]);
+  assert.ok(k >= 0, `pulse sequence ${seq.join('-')} does not start on a firing-order cylinder`);
+  for (let i = 0; i < seq.length; i++) {
+    assert.equal(seq[i], order[(k + i) % seq.length], `pulse sequence ${seq.join('-')} is not the firing order`);
+  }
+};
+
+test('engine state: firing pulses are 8 exactly-90-degree events per cycle, each one at powerTDC - totalAdvance', async () => {
   const { createEngineState } = await import('../src/engine/animation.js');
-  const st = createEngineState({ rpm: 1000 });
+  const order = firingOrder();
+  const power = new Map(SPEC.cylinders.map((c) => [c.num, c.powerTDC]));
+
+  for (const [rpm, throttle] of SPARK_CASES) {
+    const st = createEngineState({ rpm, throttle });
+    const fires = [];
+    st.onFire((cyl, at) => fires.push({ num: cyl.num, at }));
+    st.start();
+    const adv = totalAdvance(rpm, throttle);
+    // rpm*6 deg/s at 1/600 s per step = rpm/100 deg per step; every case is
+    // chosen so this divides 7200 deg, i.e. exactly ten full 720 cycles.
+    const perStep = rpm / 100;
+    const steps = 7200 / perStep;
+    for (let i = 0; i < steps; i++) st.step(1 / 600);
+    assert.equal(fires.length, 10 * 8, `rpm ${rpm} throttle ${throttle}: expected 80 pulses in ${steps} steps, got ${fires.length}`);
+    for (let cycle = 0; cycle < 10; cycle++) {
+      const block = fires.slice(cycle * 8, cycle * 8 + 8);
+      isRotationOf(block.map((f) => f.num), order.cyls);
+      const angles = block.map((f) => f.at);
+      for (const f of block) {
+        const want = wrap720(power.get(f.num) - adv);
+        assert.ok(Math.abs(f.at - want) < 1e-6,
+          `rpm ${rpm} throttle ${throttle}: cyl ${f.num} fired at ${f.at}, powerTDC ${power.get(f.num)} - advance ${adv} = ${want}`);
+        assert.notEqual(f.at, power.get(f.num), `cyl ${f.num} still fires at TDC, not ${adv} deg before it`);
+      }
+      const sorted = [...block].sort((a, b) => a.at - b.at).map((f) => f.at);
+      for (let i = 0; i < 8; i++) {
+        const gap = wrap720(sorted[(i + 1) % 8] - sorted[i]);
+        assert.ok(Math.abs(gap - 90) < 1e-6, `rpm ${rpm} throttle ${throttle}: pulse gaps ${sorted.join(', ')}`);
+      }
+    }
+  }
+});
+
+test('engine state: a crank at 0 rpm never sparks', async () => {
+  const { createEngineState } = await import('../src/engine/animation.js');
+  const st = createEngineState({ rpm: 0, throttle: 55 });
   const fires = [];
   st.onFire((cyl, at) => fires.push({ num: cyl.num, at }));
   st.start();
-  for (let i = 0; i < 720; i++) st.step(1 / 600); // 10 deg per step -> 7200 deg = 10 cycles
-  assert.equal(fires.length, 10 * 8, `expected 80 pulses, got ${fires.length}`);
-  const first = fires.slice(0, 8);
-  assert.deepEqual(first.map((f) => f.num), firingOrder().cyls);
-  const angles = first.map((f) => f.at);
-  assert.deepEqual(angles, [0, 90, 180, 270, 360, 450, 540, 630]);
+  for (let i = 0; i < 720; i++) st.step(1 / 600);
+  assert.equal(fires.length, 0, `a 0 rpm engine sparked ${fires.length} times`);
+  assert.equal(st.theta, 0);
+});
+
+test('engine state: the throttle control is a published surface with a live advance breakdown', async () => {
+  const { createEngineState, THROTTLE_MIN, THROTTLE_MAX, RPM_MIN, RPM_MAX } = await import('../src/engine/animation.js');
+  assert.equal(THROTTLE_MIN, 0);
+  assert.equal(THROTTLE_MAX, 100);
+  const st = createEngineState({ rpm: 1600 });
+  assert.equal(st.throttle, 50, 'the product default load');
+  assert.equal(st.setThrottle(140), THROTTLE_MAX);
+  assert.equal(st.setThrottle(-5), THROTTLE_MIN);
+  assert.equal(st.setThrottle(25), 25);
+  const IG = SPEC.ignition;
+  const at = (rpm, throttle) => {
+    st.setRpm(rpm);
+    st.setThrottle(throttle);
+    return st.advance();
+  };
+  const a = at(1600, 55);
+  assert.ok(Math.abs(a.total - totalAdvance(1600, 55)) < 1e-12, `HUD total ${a.total} != model ${totalAdvance(1600, 55)}`);
+  assert.ok(a.vacuumKpa > 0 && a.vacuumKpa <= IG.vacuumModel.atmKpa, `manifold vacuum ${a.vacuumKpa}`);
+  assert.ok(Math.abs(a.total - Math.min(a.base + a.centrifugal + a.vacuum, IG.maxTotalDeg)) < 1e-12,
+    `HUD breakdown ${a.base} + ${a.centrifugal} + ${a.vacuum} != total ${a.total}`);
+  assert.ok(Math.abs(a.base - IG.baseDeg) < 1e-12, 'the breakdown does not name the base advance');
+  // part throttle at low rpm is the vacuum corner; wide open at redline is not
+  const part = at(900, 15);
+  const wot = at(4000, 100);
+  assert.ok(part.vacuum > wot.vacuum, `vacuum advance part throttle ${part.vacuum} vs WOT ${wot.vacuum}`);
+  assert.equal(wot.vacuum, 0, 'wide-open throttle still carries vacuum advance');
+  assert.ok(wot.centrifugal > 0, 'redline carries no centrifugal advance');
+  assert.ok(part.vacuumKpa > IG.vacuum.fullKpa, `part-throttle vacuum ${part.vacuumKpa} is not the high-vacuum corner`);
+  assert.ok(RPM_MIN === 0 && RPM_MAX === 4000);
+});
+
+test('engine state: a load change mid-run never doubles a spark and never skips one per cycle', async () => {
+  const { createEngineState } = await import('../src/engine/animation.js');
+  const st = createEngineState({ rpm: 1500, throttle: 60 });
+  const fires = [];
+  st.onFire((cyl, at) => fires.push({ num: cyl.num, at }));
+  st.start();
+  for (let i = 0; i < 1440; i++) {
+    if (i === 200) st.setThrottle(0);
+    if (i === 260) st.setRpm(2800);
+    if (i === 340) st.setThrottle(100);
+    if (i === 420) st.setRpm(600);
+    if (i === 500) st.setThrottle(35);
+    st.step(1 / 600); // rpm/100 deg per step: 15, then 28, then 6
+  }
+  assert.ok(fires.length >= 15 * 8, `expected at least 15 cycles x 8 sparks, got ${fires.length}`);
+  const power = new Map(SPEC.cylinders.map((c) => [c.num, c.powerTDC]));
+  const lastAt = new Map(); // cylinder -> index of its previous spark in the emission list
+  for (let i = 0; i < fires.length; i++) {
+    const f = fires[i];
+    assert.notEqual(f.at, power.get(f.num), `cyl ${f.num} fired at TDC, not before it (throttle ${st.throttle}%)`);
+    const prev = lastAt.get(f.num);
+    if (prev === undefined) continue;
+    const between = new Map();
+    for (const g of fires.slice(prev + 1, i)) between.set(g.num, (between.get(g.num) ?? 0) + 1);
+    assert.equal(between.size, 7, `cyl ${f.num}: only ${between.size} different cylinders sparked between its own two sparks`);
+    for (const [num, n] of between) assert.equal(n, 1, `cyl ${num} sparked ${n} times between two sparks of cyl ${f.num}`);
+    lastAt.set(f.num, i);
+  }
 });
 
 // ---- cranktrain build ------------------------------------------------------

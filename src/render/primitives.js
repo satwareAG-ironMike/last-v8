@@ -187,6 +187,54 @@ export function instancedBolts(specs, geo, material, group = null) {
 }
 
 /** Sprocket / gear with simplified involute teeth, axis along local Y before rotation. */
+/**
+ * Chain sprocket machined the way a chain sprocket is actually generated: a rim
+ * out to tipR with one cutter disc of radius cutterR removed at every tooth
+ * valley, each cutter centred ON the pitch circle. The gap floor therefore
+ * lands at pitchR - cutterR and the cutter wall is exactly one roller plus its
+ * running clearance, which is what a chain engages.
+ *
+ * gapPhaseDeg is the world azimuth (atan2(y, z), +z forward, +y up) of gap 0 at
+ * theta = 0; the profile is written in the shape frame that alignX maps back to
+ * world (y, z), so the machined gaps sit exactly where src/engine/drive.js puts
+ * the chain's seats. No bevel: the measured bbox is then exactly the thickness.
+ */
+export function chainSprocketGeometry(teeth, pitchR, tipR, cutterR, thickness, boreR, gapPhaseDeg = 0) {
+  const step = 360 / teeth;
+  const rad = (d) => d * (Math.PI / 180);
+  // Half-angle at the axis where a cutter disc crosses the tip circle: the
+  // triangle axis-centre / cutter-centre / crossing point, by the cosine rule.
+  const cosPsi = (pitchR * pitchR + tipR * tipR - cutterR * cutterR) / (2 * pitchR * tipR);
+  const psi = Math.acos(Math.min(1, Math.max(-1, cosPsi)));
+  // The gap's own sweep on the cutter circle, sampled evenly along that circle
+  // so the machined flank is resolved the way it is cut, not just at its floor.
+  const sMax = Math.asin(Math.min(1, (pitchR * Math.sin(psi)) / cutterR));
+  const SAMPLES = 12;
+  const shape = new THREE.Shape();
+  let first = true;
+  const put = (y, z) => {
+    if (first) {
+      shape.moveTo(-z, y); // alignX: world y = shape v, world z = -shape u
+      first = false;
+    } else shape.lineTo(-z, y);
+  };
+  const onRim = (azDeg) => put(tipR * Math.sin(rad(azDeg)), tipR * Math.cos(rad(azDeg)));
+  for (let k = 0; k < teeth; k++) {
+    const gapAz = gapPhaseDeg + k * step;
+    const u = { y: Math.sin(rad(gapAz)), z: Math.cos(rad(gapAz)) }; // axis -> gap centre
+    const v = { y: Math.sin(rad(gapAz + 90)), z: Math.cos(rad(gapAz + 90)) }; // azimuth-increasing
+    const cy = pitchR * u.y, cz = pitchR * u.z;
+    for (let i = 0; i <= SAMPLES; i++) {
+      const s = -sMax + (2 * sMax * i) / SAMPLES;
+      put(cy + cutterR * (-Math.cos(s) * u.y + Math.sin(s) * v.y), cz + cutterR * (-Math.cos(s) * u.z + Math.sin(s) * v.z));
+    }
+    onRim(gapAz + step / 2); // tooth tip, machined at the rim circle
+  }
+  shape.closePath();
+  if (boreR > 0) shape.holes.push(circleHole(0, 0, boreR));
+  return alignX(extrude(shape, thickness, { bevel: 0, curveSegments: 12 }));
+}
+
 export function sprocketGeometry(teeth, pitchR, toothH, thickness, boreR, widthFactor = 0.55) {
   const s = new THREE.Shape();
   const n = Math.max(6, teeth);

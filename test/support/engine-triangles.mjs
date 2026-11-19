@@ -10,13 +10,26 @@ import { createCranktrain } from '../../src/render/cranktrain.js';
 import { createValvetrain } from '../../src/render/valvetrain.js';
 import { createHeads } from '../../src/render/heads.js';
 import { createManifolds } from '../../src/render/manifolds.js';
+import { createPlugs } from '../../src/render/plugs.js';
+import { GLOW_SPECS } from '../../src/render/materials.js';
 
 export const TRI_CELL = 4.0;
 const SEARCH = 2; // +/- 2 cells: any triangle within 8 cm of the probe is examined
 
-/** MeshStandardMaterial proxy: materials.js needs a document, tests do not. */
+/**
+ * MeshStandardMaterial proxy: materials.js needs a document, tests do not. The
+ * additive glow families named in src/render/materials.js GLOW_SPECS are the
+ * exception - they are built from those published parameters, so a test measures
+ * the same material TYPE the product draws rather than a PBR metal standing in
+ * for a light.
+ */
+const glowFamilies = new Set(Object.keys(GLOW_SPECS));
 export const proxyMaterials = () =>
-  new Proxy({}, { get: (t, k) => (t[k] ??= new THREE.MeshStandardMaterial({ name: String(k) })) });
+  new Proxy({}, {
+    get: (t, k) => (t[k] ??= glowFamilies.has(String(k))
+      ? new THREE.MeshBasicMaterial({ name: String(k), ...GLOW_SPECS[String(k)] })
+      : new THREE.MeshStandardMaterial({ name: String(k) })),
+  });
 
 export function engineUnits(materials) {
   return {
@@ -25,6 +38,9 @@ export function engineUnits(materials) {
     valvetrain: createValvetrain(materials).group,
     heads: createHeads(materials).group,
     manifolds: createManifolds(materials).group,
+    // The plug unit keeps its update(): a law that gates a tip flash has to pose
+    // the flash the way src/main.js does, through the same renderer.
+    plugs: createPlugs(materials),
   };
 }
 
@@ -34,7 +50,7 @@ const key = (x, y, z) => `${Math.round(x / TRI_CELL)},${Math.round(y / TRI_CELL)
  * World-space triangle shell of everything the engine renders.
  * Returns { tris, hash, stats }.
  */
-export function engineTriangles(materials = proxyMaterials()) {
+export function engineTriangles(materials = proxyMaterials(), opts = {}) {
   const tris = [];
   const hash = new Map();
   let meshes = 0, instances = 0, verts = 0;
@@ -62,7 +78,16 @@ export function engineTriangles(materials = proxyMaterials()) {
       }
     }
   };
-  for (const root of Object.values(engineUnits(materials))) {
+  // opts.units names which units to keep in the shell (default: all of them). A law
+  // that measures a plug bore against the castings it is machined into needs the
+  // casting-only shell; a law that measures the same bore against the moving valve
+  // heads beside it needs the whole engine. Both readings are the same triangles.
+  const units = engineUnits(materials);
+  const keep = opts.units ?? Object.keys(units);
+  for (const k of keep) {
+    // A unit is either an Object3D or a renderer unit that hands back one
+    // (createPlugs carries update() next to its group).
+    const root = units[k].isObject3D ? units[k] : units[k].group;
     root.updateMatrixWorld(true);
     root.traverse((o) => {
       if (!o.isMesh) return;

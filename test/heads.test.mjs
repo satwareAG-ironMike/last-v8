@@ -4,7 +4,8 @@
 // - machined spring seats exactly where the valvetrain springs actually sit
 // - cam-cover ceiling derived from spec constants, clearing every rotating lobe
 // - bucket bores that retain every bucket at every lift
-// - 28 cam bearing bosses on the cam axis line, 0.05 cm over every bearing
+// - 28 split, line-bored cam bearing columns (cradle half cast integral, cap half
+//   bolted onto a drilled tab pair, a replaceable shell inside each half)
 // - 32 head bolts at deckBoltRadius, clear of the bores
 // - nothing pokes through the cover, nothing inside the sprocket band, every
 //   casting solid connected, static/dynamic piston clearances proven.
@@ -12,11 +13,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
-  SPEC, DEG, bankUp, bankOut, camAxisBank, camAxisStation, HEAD_TOP_A,
+  SPEC, DEG, bankUp, bankOut, bankPoint, camAxisBank, camAxisStation, HEAD_TOP_A, PLUG_BOSS_A,
 } from '../src/engine/spec.js';
 import {
   valveAxisDir, valveSeatPoint, camAxisPoint, pistonAlong, valveLift,
 } from '../src/engine/timing.js';
+import {
+  engineTriangles, proxyMaterials, triDistance,
+} from './support/engine-triangles.mjs';
+import { plugStack, stackRadius, stackSamples } from './support/plug-stack.mjs';
+import { trisOf, regionTris, raycast, coverage } from './support/ray-triangles.mjs';
+import { bearingStack } from '../src/engine/bearings.js';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -83,13 +90,28 @@ function axial(p, seat, d) {
   return { s, r };
 }
 
+// Census of one head casting, derived from the same table the parts are built from -
+// the build-contract law reads the numbers out of this table instead of typing them,
+// and the A1-G7 column law gates every one of these kinds separately.
+// One head casting's census, in kinds. The A1-G7 move: the closed 360-degree boss
+// (14), its web (14), the old cast-integral cap row (14) and the bearing clamps (28)
+// are replaced by 14 cradle halves, 14 bolt-on cap halves, 14 cam bearing housings
+// (each a merged casting: deck-side web plus tie ribs plus one riser each side of the
+// cam axis line, the riser top faces being the cam cover seating plane), 56 drilled
+// tabs (the cap/cradle pair per column, mirrored to both sides of the cam axis line)
+// and 28 replaceable shells. Measured 166 solids per bank before the move, 180 after it.
 const KIND_COUNTS = {
-  rail: 2, chimney: 4, floor: 8, guide: 8, seatRing: 8, springtube: 8, bucketbore: 8,
-  bridge: 4, stay: 8, boss: 14, bossweb: 14, cap: 14, clamp: 28,
+  rail: 2, chimney: 4, stay: 8,
+  seatRing: 8, guide: 8, floor: 8, springtube: 8, bucketbore: 8,
+  // the cam girder bridges are gone with the closed boss: a crown-side girder anywhere
+  // along the tunnel blocks either the cap lift path or the wrench at a cap bolt, so
+  // the cap is held by its drilled tab pair and the cap bolt alone.
+  bridge: 0,
+  cradle: 14, cap: 14, housing: 14, tab: 56, shell: 28,
 };
-const PER_BANK = Object.values(KIND_COUNTS).reduce((a, b) => a + b, 0); // 120
+const PER_BANK = Object.values(KIND_COUNTS).reduce((a, b) => a + b, 0);
 
-test('heads build contract: 2 castings x 120 solids, 16 guides + seat inserts, 4 covers, 2 gaskets, 32 bolts', async () => {
+test(`heads build contract: 2 castings x ${PER_BANK} solids, 16 guides + seat inserts, 4 covers, 2 gaskets, 32 head bolts`, async () => {
   const { group } = await buildHeads();
   assert.equal(group.name, 'heads');
   let bolts = 0;
@@ -97,12 +119,23 @@ test('heads build contract: 2 castings x 120 solids, 16 guides + seat inserts, 4
     const head = group.getObjectByName(`head-${bank}`);
     assert.ok(head, `head-${bank} missing`);
     const kinds = {};
+    let partsTotal = 0;
     head.traverse((o) => {
       if (!o.isMesh) return;
+      partsTotal += 1;
       kinds[o.userData.kind] = (kinds[o.userData.kind] ?? 0) + 1;
     });
+    // the census table and the casting are one contract: any kind the casting carries
+    // has to be named here, and every named kind has to stand in the casting
     for (const [kind, want] of Object.entries(KIND_COUNTS)) {
       assert.equal(kinds[kind] ?? 0, want, `head-${bank} ${kind}: got ${kinds[kind] ?? 0} want ${want}`);
+    }
+    for (const [kind, got] of Object.entries(kinds)) {
+      assert.equal(KIND_COUNTS[kind], got, `head-${bank} carries ${got} part(s) of kind ${kind}, which the census table does not name this way`);
+    }
+    console.log(`head-${bank} census: ${Object.keys(kinds).length} kinds, ${partsTotal} solids (census table sums to ${PER_BANK})`);
+    for (const kind of Object.keys(kinds)) {
+      assert.ok(KIND_COUNTS[kind] !== undefined, `head-${bank} carries kind ${kind}, which no census row names`);
     }
     for (const valve of valves) {
       const cover = group.getObjectByName(`cam-cover-${bank}-${valve}`);
@@ -276,63 +309,143 @@ test('cam covers: top face exactly at HEAD_TOP_A, ceiling clears every rotating 
   }
 });
 
-test('28 cam bearing bosses ride exactly on the cam axis line, 0.05 cm over every bearing, carried by webs', async () => {
+test('28 bearing columns: a cradle half in the casting, a cap half on its tab pair, both bored to the published line bore', async () => {
   const { group } = await buildHeads();
-  const vt = await buildValvetrain();
+  const ST = bearingStack();
   for (const bank of ['L', 'R']) {
     const v = bankVectors(bank);
     const head = group.getObjectByName(`head-${bank}`);
-    const bosses = [], webs = [];
-    head.traverse((o) => {
-      if (o.userData.kind === 'boss') bosses.push(o);
-      if (o.userData.kind === 'bossweb') webs.push(o);
-    });
-    assert.equal(bosses.length, 14, `head-${bank} bosses`);
-    assert.equal(webs.length, 14, `head-${bank} boss webs`);
+    const lines = [];
+    for (const kind of ['boss', 'bossweb', 'clamp', 'bridge']) {
+      let n = 0;
+      head.traverse((o) => { if (o.isMesh && o.userData.kind === kind) n += 1; });
+      assert.equal(n, 0, `head-${bank} still carries ${n} part(s) of kind ${kind}: the closed 360-degree boss, its web and its bearing clamps are the casting A1-G7 replaces with a split, line-bored tunnel - the row's supersede line names the move`);
+    }
+    // the counts are read out of the census table the build-contract law uses:
+    // one source for the part census, the column law gates the bearing kinds in it
+    for (const kind of ['cradle', 'cap', 'housing', 'tab', 'shell']) {
+      const want = KIND_COUNTS[kind];
+      let n = 0;
+      head.traverse((o) => { if (o.isMesh && o.userData.kind === kind) n += 1; });
+      assert.equal(n, want, `head-${bank} ${kind}: got ${n} want ${want}`);
+    }
     for (const valve of valves) {
       const camA = camAlongA(bank);
       const oCam = camOutA(bank, valve);
-      const ref = SPEC.cylinders.find((c) => c.bank === bank);
-      const cap = camAxisPoint(ref, valve);
       for (const bx of CAM.bearings) {
-        const bearing = vt.group.getObjectByName(`bearing-${bank}-${valve}-${bx}`);
-        assert.ok(bearing, `bearing ${bank} ${valve} x ${bx} missing`);
-        const match = bosses.filter((b) => b.userData.bx === bx && b.userData.valve === valve);
-        assert.equal(match.length, 1, `boss for ${bank} ${valve} x ${bx}`);
-        const boss = match[0];
-        let bMin = Infinity, bMax = -Infinity;
-        for (const p of verts(bearing)) {
-          const r = Math.hypot(p.y - cap.y, p.z - cap.z);
-          bMin = Math.min(bMin, r); bMax = Math.max(bMax, r);
+        const cradle = head.children.find((o) => o.name === `cradle-${bank}-${valve}-${bx}`);
+        const cap = head.children.find((o) => o.name === `cap-${bank}-${valve}-${bx}`);
+        assert.ok(cradle && cap, `cradle/cap for ${bank} ${valve} x ${bx} missing`);
+        for (const [part, name, boltOn] of [[cradle, 'cradle', false], [cap, 'cap', true]]) {
+          assert.equal(part.material.name, 'castAluminumHead', `${name} ${bank} ${valve} x${bx} is not head casting`);
+          assert.equal(part.userData.boltOn === true, boltOn, `${name} ${bank} ${valve} x${bx} boltOn=${part.userData.boltOn === true}`);
+          const rel = columnFrameOf(v, bank, camA, oCam, verts(part), bx - CAM.bearingHalf, bx + CAM.bearingHalf);
+          const r = rel.map((q) => q.r);
+          const xLo = Math.min(...rel.map((q) => q.x));
+          const xHi = Math.max(...rel.map((q) => q.x));
+          // Both halves are bored to the published line bore - the A1-G7 laws gate the
+          // split and the shell against it, this half of the row names the parts.
+          assert.ok(Math.abs(Math.min(...r) - ST.boreR) <= 0.006,
+            `${name} ${bank} ${valve} x${bx}: bore stands at ${Math.min(...r).toFixed(4)} cm, the published line bore is ${ST.boreR}`);
+          assert.ok(Math.abs(Math.max(...r) - ST.castOdR) <= 0.006,
+            `${name} ${bank} ${valve} x${bx}: casting outside stands at ${Math.max(...r).toFixed(4)} cm, the stack puts it at ${ST.castOdR}`);
+          assert.ok(xLo <= bx - CAM.bearingHalf + 1e-6 && xHi >= bx + CAM.bearingHalf - 1e-6,
+            `${name} ${bank} ${valve} x${bx}: x ${xLo}..${xHi} does not cover the ${2 * CAM.bearingHalf} cm bearing width at ${bx}`);
+          assert.ok(xHi <= BAND + 1e-6 && xLo >= -BAND - 1e-6,
+            `${name} ${bank} ${valve} x${bx}: x ${xLo}..${xHi} intrudes on the sprocket band (band ${-BAND}..${BAND})`);
+          // Split-plane classification straight off the plane the two halves are machined
+          // against: the signed distance of every vertex from the plane holding the crank
+          // axis and the bank's out vector, through the cam axis line. Vertices standing
+          // on that plane are the contact face - the two halves meet there.
+          const dist = rel.map((q) => q.along);
+          const crown = dist.filter((d) => d > ARC_TOL).length;
+          const deck = dist.filter((d) => d < -ARC_TOL).length;
+          const onPlane = rel.length - crown - deck;
+          const ownSide = boltOn ? 'crown' : 'deck';
+          const wrongSide = boltOn ? deck : crown;
+          assert.ok((boltOn ? crown : deck) > 0 && onPlane > 0,
+            `${name} ${bank} ${valve} x${bx}: ${crown} crown-side, ${deck} deck-side and ${onPlane} on-plane vertices - a ${name} half needs material on its own ${ownSide} side of the split plane AND a face standing on that plane, because that face is where the two halves meet`);
+          assert.equal(wrongSide, 0,
+            `${name} ${bank} ${valve} x${bx}: ${wrongSide} vertex/vertices reach past the split plane onto the ${boltOn ? 'deck' : 'crown'} side. The tunnel is split on one machined plane through the cam axis line; a half may not stand across it and still lift off along its normal.`);
+          lines.push(`${bank} ${valve} x${bx}: ${name} bore ${Math.min(...r).toFixed(4)} od ${Math.max(...r).toFixed(4)} x ${xLo.toFixed(2)}..${xHi.toFixed(2)} ${ownSide} ${crown}/${deck} deck-side contact ${onPlane}`);
         }
-        assert.ok(Math.abs(bMax - CAM.bearingR) < EPS, `bearing OD ${bMax} != ${CAM.bearingR}`);
-        let rMin = Infinity, xMin = Infinity, xMax = -Infinity;
-        for (const p of verts(boss)) {
-          rMin = Math.min(rMin, Math.hypot(alongOf(v, bank, p) - camA, outOf(v, bank, p) - oCam));
-          xMin = Math.min(xMin, p.x); xMax = Math.max(xMax, p.x);
+        // the column's shells: one inside the cap half, one inside the cradle half
+        for (const half of ['cap', 'cradle']) {
+          const s = head.children.find((o) => o.name === `shell-${bank}-${valve}-${bx}-${half}`);
+          assert.ok(s, `bearing shell ${half} ${bank} ${valve} x${bx} missing`);
+          assert.equal(s.material.name, 'bearingShell', `shell ${half} ${bank} ${valve} x${bx} material ${s.material.name}`);
+          assert.equal(s.userData.boltOn === true, half === 'cap', `shell ${half} boltOn=${s.userData.boltOn === true}`);
+          const rel = columnFrameOf(v, bank, camA, oCam, verts(s), bx - CAM.bearingHalf, bx + CAM.bearingHalf);
+          const r = rel.map((q) => q.r);
+          assert.ok(Math.abs(Math.max(...r) - ST.boreR) <= 0.006,
+            `shell ${half} ${bank} ${valve} x${bx}: outside stands at ${Math.max(...r).toFixed(4)} against the ${ST.boreR} line bore it is pressed into`);
+          assert.ok(Math.abs(Math.min(...r) - ST.shellIdR) <= 0.006,
+            `shell ${half} ${bank} ${valve} x${bx}: inside stands at ${Math.min(...r).toFixed(4)} against the ${ST.shellIdR} cm journal-plus-film it rides on`);
         }
-        assert.ok(Math.abs(rMin - (CAM.bearingR + H.bossClr)) < EPS,
-          `boss bore r ${rMin} != bearing ${CAM.bearingR} + clearance ${H.bossClr}`);
-        assert.ok(Math.abs(rMin - bMax - H.bossClr) < EPS, `running clearance ${rMin - bMax} != ${H.bossClr}`);
-        assert.ok(xMin <= bx - CAM.bearingHalf + EPS && xMax >= bx + CAM.bearingHalf - EPS,
-          `boss x ${xMin}..${xMax} does not cover bearing x ${bx}`);
-        // The fore bearing ends exactly at the first sprocket plane, so the boss
-        // face is the machined shoulder the sprocket locates against: the column
-        // may reach that plane, never pass it.
-        assert.ok(xMax <= BAND + EPS && xMin >= -BAND - EPS,
-          `boss x ${xMin}..${xMax} intrudes on the sprocket band (band ${-BAND}..${BAND})`);
-        const bbBoss = new THREE.Box3().setFromObject(boss);
-        assert.ok(webs.some((w) => bbBoss.intersectsBox(new THREE.Box3().setFromObject(w))),
-          `boss ${bank} ${valve} x ${bx} is not carried by a web`);
-      }
-      // lobes (at cylinder stations) never reach a boss bore (at bearing x)
-      for (const s of B.stations) {
-        for (const bx of CAM.bearings) {
-          assert.ok(Math.abs(s - bx) >= H.camLobeWidth / 2 + CAM.bearingHalf + 0.1,
-            `lobe station ${s} too close to bearing ${bx}`);
+        // tab pair: one on the cap half, one on the cradle half, each drilled, each
+        // machined to the published tab height and standing tabInset off the split plane
+        for (const [side, crown] of [[1, true], [-1, false]]) {
+          const t = head.children.find((o) => o.name === `tab-${bank}-${valve}-${bx}-${crown ? 'cap' : 'cradle'}-${side > 0 ? 'o' : 'i'}`);
+          assert.ok(t, `tab ${bank} ${valve} x${bx} side ${side} crown=${crown} missing`);
+          assert.equal(t.userData.boltOn === true, crown, `tab ${t.name} boltOn=${t.userData.boltOn === true}`);
+          const rel = columnFrameOf(v, bank, camA, oCam, verts(t), bx - CAM.bearingHalf - 0.3, bx + CAM.bearingHalf + 0.3);
+          const a0 = Math.min(...rel.map((q) => q.along));
+          const a1 = Math.max(...rel.map((q) => q.along));
+          const o0 = Math.min(...rel.map((q) => Math.abs(q.out)));
+          const o1 = Math.max(...rel.map((q) => Math.abs(q.out)));
+          assert.ok(Math.abs((a1 - a0) - ST.tabH) <= 0.006, `tab ${t.name} is ${(a1 - a0).toFixed(4)} cm high against the published ${ST.tabH}`);
+          const near = crown ? a0 : a1;
+          assert.ok(Math.abs(Math.abs(near) - ST.tabInset) <= 0.006,
+            `tab ${t.name} stands ${near.toFixed(4)} cm from the cam axis line; a tab has to stand ${ST.tabInset} clear of the split plane so the line-bore cutter machines the bore alone`);
+          assert.ok(Math.abs(o0 - ST.boreR) <= 0.006 && Math.abs(o1 - ST.tabR) <= 0.006,
+            `tab ${t.name} spans out ${o0.toFixed(4)}..${o1.toFixed(4)} against the published ${ST.boreR}..${ST.tabR} from the line bore out to the tab edge`);
+          const xLo = Math.min(...rel.map((q) => q.x));
+          const xHi = Math.max(...rel.map((q) => q.x));
+          assert.ok(Math.abs((xHi - xLo) - 2 * ST.tabHalf) <= 0.006, `tab ${t.name} is ${(xHi - xLo).toFixed(4)} cm wide along the cam axis, the published tab width is ${2 * ST.tabHalf}`);
         }
+        // The column's housing: the cast material the column stands on and the plane the
+        // cam cover bolts onto. Measured over every vertex of the part, not just the ones
+        // inside the column window.
+        const housing = head.children.find((o) => o.name === `housing-${bank}-${valve}-${bx}`);
+        assert.ok(housing, `cam bearing housing ${bank} ${valve} x${bx} missing: a split, line-bored column needs a housing to stand on and a machined plane for the cover to bolt onto`);
+        assert.equal(housing.material.name, 'castAluminumHead', `housing ${bank} ${valve} x${bx} is not head casting: only the casting may carry a bearing column`);
+        const hv = verts(housing).map((p) => {
+          const along = alongOf(v, bank, p) - camA;
+          const out = outOf(v, bank, p) - oCam;
+          return { x: p.x, along, out, r: Math.hypot(along, out) };
+        });
+        const hNear = Math.min(...hv.map((q) => q.r));
+        const hTop = Math.max(...hv.map((q) => q.along));
+        const hLow = Math.min(...hv.map((q) => q.along));
+        assert.ok(hNear >= ST.boreR,
+          `housing ${bank} ${valve} x${bx} holds material ${hNear.toFixed(4)} cm from the cam axis line, inside the ${ST.boreR} cm line bore it machines: a column holding material in its own bore is a bushing cast into the head, not a bearing`);
+        assert.ok(hNear <= ST.castOdR,
+          `housing ${bank} ${valve} x${bx} nearest material stands ${hNear.toFixed(4)} cm off the cam axis line while the published casting outside of the tunnel is ${ST.castOdR} cm: the housing never reaches the column, so the column stands on nothing`);
+        // Wrench access at a cap bolt is a distance along the head face, not a polar
+        // radius off the cam line: a socket turns around the bolt axis, and a riser's
+        // box corners sit CAP_TOP above the split plane, so their polar radius
+        // (hypot(2.80, 3.675) = 4.62) is inflated by that height and cannot see a wall
+        // standing in front of the bolt. Measured on the axis the socket moves on.
+        const hCrown = hv.filter((q) => q.along > ARC_TOL);
+        assert.ok(hCrown.length, `housing ${bank} ${valve} x${bx} carries no crown-side material: the column and the cover have nothing to stand on`);
+        const hWrench = Math.min(...hCrown.map((q) => Math.abs(q.out)));
+        const hWrenchR = Math.min(...hCrown.map((q) => q.r));
+        assert.ok(hWrenchR >= ST.tabR - ARC_TOL,
+          `housing ${bank} ${valve} x${bx} crown-side material stands ${hWrenchR.toFixed(4)} cm off the cam axis line while the bolt tab ring reaches ${ST.tabR} cm: a housing inside the tab ring blocks the cap lifting along its own split plane`);
+        assert.ok(hWrench >= ST.housingInRel - ARC_TOL,
+          `housing ${bank} ${valve} x${bx} crown-side wall stands ${hWrench.toFixed(4)} cm off the cam axis line on the bolt's own side axis; the published stack puts that wall at ${ST.housingInRel.toFixed(4)} cm - the cap bolt line ${ST.boltOutRel.toFixed(4)} cm plus its hex across the corners ${ST.boltCircumR.toFixed(4)} cm plus ${ST.wrenchClr} cm of socket - and a wall inside that line leaves no room to turn the ${CAM.bearings.length * 2 * 2} cap bolts of this cam line`);
+        assert.ok(hWrench <= ST.housingOutRel + ARC_TOL,
+          `housing ${bank} ${valve} x${bx} crown-side wall starts at ${hWrench.toFixed(4)} cm, past the published housing face at ${ST.housingOutRel.toFixed(4)} cm: the wall is thinner than the published ${ST.housingWall} cm it is derived from`);
+        assert.ok(Math.abs(hTop - ST.castOdR) <= ARC_TOL,
+          `housing ${bank} ${valve} ${bx} top face stands ${hTop.toFixed(4)} cm above the cam axis line; the cover has to bolt onto a machined plane at the cap split level, which the stack puts at ${ST.castOdR} cm above the line`);
+        const stay = head.children.find((o) => o.name === `stay-${bank}-out-${B.stations[0]}`);
+        const stayLow = Math.min(...verts(stay).map((p) => alongOf(v, bank, p))) - camA;
+        assert.ok(Math.abs(hLow - stayLow) <= 0.01,
+          `housing ${bank} ${valve} x${bx} reaches along ${hLow.toFixed(4)} while the deck ribs it stands beside reach along ${stayLow.toFixed(4)}: a bearing housing has to be carried to the same machined plane the rest of the casting stands on, otherwise it is a tower cantilevered off a bearing shell`);
+        lines.push(`${bank} ${valve} x${bx}: housing ${hNear.toFixed(4)}..${Math.max(...hv.map((q) => q.r)).toFixed(4)} off the line, top face +${hTop.toFixed(4)}, riser wall ${hWrench.toFixed(4)} past the cam line (${hWrenchR.toFixed(4)} off it, against the ${ST.tabR} tab ring)`);
       }
     }
+    console.log(`A1-G7 column contract, 4 of ${lines.length}:\n  ${lines.slice(0, 4).join('\n  ')}`);
   }
 });
 
@@ -396,7 +509,7 @@ test('bucket bores retain every bucket at every lift and clear the spring coils'
   }
 });
 
-test('nothing floats and nothing intrudes: 120 connected solids per bank, envelope clear of the piston', async () => {
+test(`nothing floats and nothing intrudes: ${PER_BANK} connected solids per bank, envelope clear of the piston`, async () => {
   const { group } = await buildHeads();
   const tdcCrown = C.radius + SPEC.rod.length + SPEC.piston.compressionHeight; // 22.4
   for (const bank of ['L', 'R']) {
@@ -463,15 +576,566 @@ test('dynamic clearance: valve disc edges never enter the piston crown plane, ov
           worst = edge - crown;
           worstAt = [cyl.num, valve, theta, crown.toFixed(3), lift.toFixed(3)];
         }
-        // A flat-crown piston with 45 deg of overlap (this spec) never has the
-        // valves shut at TDC: exhaust is still blowing down, intake already
-        // cracked open. What has to hold is that both are on their ramps -
-        // a small fraction of maxLift - and never deep into the stroke.
+        // A flat-crown piston with 44 crank deg of overlap never has the valves
+        // shut at TDC: exhaust is still blowing down, intake already cracked
+        // open. What has to hold is that both are on their ramps - a small
+        // fraction of maxLift - and never deep into the stroke.
         if (crown > tdcCrown - 1.0 && lift > ramp) { ramp = lift; rampAt = [cyl.num, valve, theta]; }
       }
     }
   }
-  assert.ok(worst > 0.15, `worst valve/piston clearance ${worst} at ${JSON.stringify(worstAt)}`);
+  // 0.20 cm, not the 0.15 cm this test asked for before #8 item 3 was fixed:
+  // with the single-ray lift law the disc edge reached -0.0156 cm inside the
+  // crown plane at cyl 1 intake 370, and the flat-follower contact law plus the
+  // re-tuned events now hold 0.2093 cm (worst: cyl 1 intake at theta 366, crown
+  // 22.372, lift 0.1488; the exhaust side 0.2128 at theta 353). Floor published
+  // in src/engine/spec.js, numbers generated by scripts/valve-train-audit.mjs.
+  // Printed so a GATES row can read the measured half out of the run record
+  // instead of hand-copying it (AGENTS.md Honesty: generated, not hand-copied).
+  console.log(`clearance audit: worst valve/piston ${worst.toFixed(6)} cm at ${JSON.stringify(worstAt)} (floor 0.2), ` +
+    `near-TDC lift ${ramp.toFixed(4)} cm at ${JSON.stringify(rampAt)} (ceiling ${(V.maxLift * 0.75).toFixed(4)})`);
+  assert.ok(worst > 0.2, `worst valve/piston clearance ${worst} at ${JSON.stringify(worstAt)}`);
   assert.ok(ramp < V.maxLift * 0.75,
     `near-TDC lift ${ramp} at ${JSON.stringify(rampAt)} is off the ramp (ceiling ${V.maxLift * 0.75})`);
+});
+
+// ---------------------------------------------------------------------------
+// Issue #11 / row P1-G13: the head must leave a machined spark-plug channel on
+// every cylinder axis. Written RED first against the casting issue #11 measured -
+// two hardened seat inserts of one cylinder 0.0324 cm apart on the axis, two
+// machined spring floors 0.0376 cm apart, 0.0340 cm of air on the axis at the
+// chamber roof - and a candidate M14 silhouette that never cleared 0.05 cm.
+// Oracle: the exact-distance triangle machinery the stand rows already use, so
+// the gap this law asserts is the gap the assembled tree really has. Two shells:
+// the whole engine (the plug must clear the moving valve heads beside its bore)
+// and the castings alone (the bore has to leave real aluminium around itself).
+const P = SPEC.plug;
+const FACE_A = B.deckA + H.gasketT; // 24.25 head deck face: the mouth of the bore
+
+let fullShell = null;
+let castShell = null;
+// The units are named, not defaulted, for two reasons. (1) A part measured against
+// itself always reads zero: this law probes a point ON each cylinder's plug axis,
+// and the plug now drawn there would become the nearest surface to its own probe.
+// (2) The two shells are the ones row P1-G13 publishes, so the shell this gate
+// measures stays the shell that record describes. The triangle counts are printed
+// by the law itself rather than repeated here.
+const MEASURED_UNITS = ['block', 'cranktrain', 'valvetrain', 'heads', 'manifolds'];
+function plugShells() {
+  if (!fullShell) {
+    fullShell = engineTriangles(proxyMaterials(), { units: MEASURED_UNITS });
+    castShell = engineTriangles(proxyMaterials(), { units: ['block', 'heads'] });
+  }
+  return { fullShell, castShell };
+}
+
+test('a plug channel is machined on every cylinder axis: the plug keeps its clearance end to end', async () => {
+  const shells = plugShells();
+  // vacuity guard: the casting-only shell must really carry the castings
+  assert.ok(shells.castShell.tris.length > 20000,
+    `the casting-only shell holds ${shells.castShell.tris.length} triangles - the law would measure nothing`);
+  assert.ok(shells.fullShell.tris.length > shells.castShell.tris.length,
+    'the whole-engine shell is not bigger than the casting-only shell');
+  const st = plugStack();
+  const samples = stackSamples(st, B.deckA + 1.6);
+  // Margins, not raw distances: what the law gates is the air left OVER the
+  // silhouette radius, so the tracker compares margins to margins.
+  const worst = { air: { m: Infinity }, cast: { m: Infinity } };
+  for (const cyl of SPEC.cylinders) { // one channel per cylinder, count read live
+    const sx = B.stations[cyl.station];
+    for (const along of samples) {
+      const w = bankPoint(cyl.bank, along, 0, sx); // out 0: the cylinder bore axis
+      const p = [w.x, w.y, w.z];
+      const need = stackRadius(st.segs, along);
+      const air = triDistance(shells.fullShell, p);
+      if (air.d - need < worst.air.m) {
+        worst.air = { m: air.d - need, d: air.d, need, at: [cyl.num, along, air.who] };
+      }
+      if (along >= FACE_A) {
+        const c = triDistance(shells.castShell, p);
+        if (c.d - need < worst.cast.m) {
+          worst.cast = { m: c.d - need, d: c.d, need, at: [cyl.num, along, c.who] };
+        }
+      }
+    }
+  }
+  console.log(`plug channel audit: ${SPEC.cylinders.length} cylinder axes x ${samples.length} heights; boss face along ${PLUG_BOSS_A}, silhouette ${st.bottom.toFixed(2)}..${st.top.toFixed(2)}; tightest air around the silhouette ${worst.air.m.toFixed(4)} cm against ${P.clr} (surface ${worst.air.d.toFixed(4)} from cyl ${worst.air.at[0]} along ${worst.air.at[1]} (${worst.air.at[2]}, silhouette radius ${worst.air.need.toFixed(2)})); tightest aluminium wall ${worst.cast.m.toFixed(4)} cm against ${P.wallCasting} (surface ${worst.cast.d.toFixed(4)} from cyl ${worst.cast.at[0]} along ${worst.cast.at[1]} (${worst.cast.at[2]}, ${worst.cast.need.toFixed(2)})); shells ${shells.castShell.tris.length} casting / ${shells.fullShell.tris.length} engine triangles`);
+  assert.ok(worst.air.m >= P.clr,
+    `the plug silhouette stands ${worst.air.d.toFixed(4)} cm from ${worst.air.at[2]} at cyl ${worst.air.at[0]} along ${worst.air.at[1]} and needs ${worst.air.need.toFixed(2)} of it, leaving ${worst.air.m.toFixed(4)} cm: the channel must keep ${P.clr} cm of air, and issue #11 measured this casting crowding the axis to 0.03 cm`);
+  assert.ok(worst.cast.m >= P.wallCasting,
+    `only ${worst.cast.m.toFixed(4)} cm between the plug bore and ${worst.cast.at[2]} at cyl ${worst.cast.at[0]} along ${worst.cast.at[1]} (surface ${worst.cast.d.toFixed(4)}, silhouette radius ${worst.cast.need.toFixed(2)}): the head must keep ${P.wallCasting} cm of aluminium around the bore it is machined into`);
+});
+
+test('the plug stands clear of its own piston at TDC and its bore opens at the machined deck face', async () => {
+  const st = plugStack();
+  const tdcCrown = C.radius + SPEC.rod.length + SPEC.piston.compressionHeight; // 22.4 flat crown at TDC
+  const mouth = B.deckA + H.gasketT;
+  const thread = st.segs.find((s) => s.name === 'thread');
+  const hex = st.segs.find((s) => s.name === 'hex');
+  const live = st.segs.filter((s) => s.name === 'nose' || s.name === 'electrode');
+  const crossed = st.segs.filter((s) => s.a0 < mouth && s.a1 > mouth);
+  console.log(`plug reach audit: silhouette bottom ${st.bottom.toFixed(4)} cm, TDC crown plane ${tdcCrown.toFixed(4)} cm, air ${st.bottom - tdcCrown} cm against ${P.crownAir}; bore mouth at the head deck face ${mouth.toFixed(2)}, bore length to the boss face ${(PLUG_BOSS_A - mouth).toFixed(2)} cm; threaded part ${thread.a0.toFixed(2)}..${thread.a1.toFixed(2)}, segments crossing the mouth ${crossed.map((s) => s.name).join('+') || 'none'}, live end ${live.map((s) => s.name).join('+')} standing below it`);
+  assert.ok(hex.a0 === PLUG_BOSS_A,
+    `the hex must seat on the machined plug-boss face at ${PLUG_BOSS_A}, it starts at ${hex.a0}`);
+  assert.ok(thread.a1 === PLUG_BOSS_A && thread.a0 > mouth,
+    `the threaded part runs ${thread.a0.toFixed(2)}..${thread.a1.toFixed(2)} against the head material between the boss face ${PLUG_BOSS_A} and the machined mouth ${mouth}: it must be screwed into the casting and must not stand down inside the combustion chamber`);
+  assert.ok(crossed.length > 0 && st.bottom < mouth,
+    `the plug must pass through the mouth at ${mouth} with its live end below it (${st.bottom.toFixed(2)}): segments crossing ${crossed.map((s) => s.name).join('+') || 'none'}`);
+  assert.ok(crossed.every((s) => live.includes(s) || s.name === 'shell'),
+    `only the insulator nose, the electrode and the metal shell may stand inside the combustion chamber, not ${crossed.filter((s) => !live.includes(s) && s.name !== 'shell').map((s) => s.name).join('+')}`);
+});
+
+
+
+
+// ============ A1-G7: manufacturable cam bearings (issue #8 addendum item 4) ============
+// Written RED against the casting that exists today, and measuring it instead of naming it:
+//   - every one of the 28 columns is one closed 360-degree lathe ring (kind `boss`) with a
+//     2.1000 cm bore, while the tallest thing a cam carries is a 3.1000 cm nose: a tunnel
+//     that closes the circle around the cam line at under the nose cannot be assembled;
+//   - nothing in the head is a bearing shell: that 2.1000 cm bore rides the cam's own
+//     2.0500 cm collar, and the 0.05 between them is typed as SPEC.head.bossClr;
+//   - the part named `cap` machines no bore at all - its nearest material stands 3.3322 cm
+//     off the cam line - and it is fused into the casting instead of being the bolt-on half
+//     of a split, line-bored tunnel;
+//   - no shell anywhere carries an oil hole, because no shell exists.
+// Tolerances. Machined faces here are drawn as THREE absarcs: the chord sag of a
+// 32-segment absarc at a 2.05 cm bore is 0.0024 cm, so 0.006 cm - 2.5x that - is the floor
+// under which two faces may honestly be called line-bored to one radius.
+const NOSE_R = H.camBaseRadius + V.maxLift; // 3.1000: crown radius of the cam outline
+const ARC_TOL = 0.006;
+const CAST_HEAD = 'castAluminumHead'; // only the head casting machines a bore
+const colWin = (bx) => [bx - CAM.bearingHalf - 0.3, bx + CAM.bearingHalf + 0.3];
+// A bearing column, its tab pair, its shells and its own housing reach this far out from
+// the cam axis line. The OTHER cam line of the same bank stands 2 * |out| = 12.07 cm away,
+// so this window keeps a column model to one tunnel: without it the exhaust column at the
+// same crank-axis station would read as part of the intake column.
+const COL_RAD = bearingStack().housingOutRel + 0.5;
+const camLine = (bank, valve) => ({ along: camAlongA(bank), out: camOutA(bank, valve) });
+
+const headMeshes = (group, bank) => {
+  const list = [];
+  group.getObjectByName(`head-${bank}`).traverse((o) => { if (o.isMesh) list.push(o); });
+  return list;
+};
+
+/** Bank-frame radial direction at azimuth psi: psi 0 = crown-ward, 90 = out, 180 = deck. */
+function azDir(bank, psiDeg) {
+  return new THREE.Vector3().fromArray(bankUp(bank)).multiplyScalar(Math.cos(psiDeg * DEG))
+    .addScaledVector(new THREE.Vector3().fromArray(bankOut(bank)), Math.sin(psiDeg * DEG))
+    .normalize();
+}
+
+/**
+ * A vertex list inside one bearing column, in cam-line-relative bank frame: x is the
+ * crank-axis station, along/out are measured from the cam axis line, r is the distance
+ * from that line and psi = atan2(out, along) is the azimuth the A1-G7 laws split the
+ * tunnel on (psi 0 crown-ward, 180 deck-ward, split plane at psi +/-90).
+ */
+function columnFrameOf(v, bank, camA, oCam, points, x0, x1) {
+  const rel = [];
+  for (const p of points) {
+    if (p.x < x0 - 1e-6 || p.x > x1 + 1e-6) continue;
+    const along = alongOf(v, bank, p) - camA;
+    const out = outOf(v, bank, p) - oCam;
+    const r = Math.hypot(along, out);
+    if (r > COL_RAD) continue; // stands at another tunnel's line, not in this column
+    rel.push({ x: p.x, along, out, r, psi: Math.atan2(out, along) / DEG });
+  }
+  return rel;
+}
+
+/** One part's vertices inside one bearing column, in cam-line-relative bank frame. */
+function columnFrame(mesh, v, bank, line, win) {
+  return columnFrameOf(v, bank, line.along, line.out, verts(mesh), win[0], win[1]);
+}
+
+const thinSample = (arr, n) => {
+  const step = Math.max(1, Math.floor(arr.length / n));
+  const out = [];
+  for (let i = 0; i < arr.length; i += step) out.push(arr[i]);
+  return out;
+};
+
+/**
+ * One bearing column, measured. `removable` here is a geometric verdict and not a flag: a
+ * part can come off the tunnel only if every one of its vertices stands on the crown side
+ * of the split plane through the cam axis (the plane holding the crank axis and the bank's
+ * out vector) AND a ray out of its footprint along that plane's normal stays clear of the
+ * rest of the casting. That is the only motion a cap can take, it is the same motion the
+ * cam needs to be laid into the tunnel, so what the cam sees is exactly the parts that are
+ * NOT removable. userData.boltOn has to agree with the verdict: a part marked bolt-on whose
+ * vertices span the split plane is a claim the casting does not support.
+ */
+function columnModel(group, bank, v, line, bx, headTris) {
+  const win = colWin(bx);
+  const mid = bankPoint(bank, line.along, line.out, bx);
+  const region = regionTris(headTris,
+    [win[0], mid.y - NOSE_R - 1.5, mid.z - NOSE_R - 1.5],
+    [win[1], mid.y + NOSE_R + 1.5, mid.z + NOSE_R + 1.5]);
+  const up = new THREE.Vector3().fromArray(bankUp(bank));
+  const parts = [];
+  for (const o of headMeshes(group, bank)) {
+    const rel = columnFrame(o, v, bank, line, win);
+    if (!rel.length) continue;
+    const rMin = Math.min(...rel.map((q) => q.r));
+    const crown = rel.filter((q) => q.along > ARC_TOL).length;
+    const deck = rel.filter((q) => q.along < -ARC_TOL).length;
+    const p = {
+      mesh: o, name: o.name, kind: o.userData.kind, cast: o.material?.name === CAST_HEAD,
+      flag: o.userData.boltOn === true, rel, rMin,
+      rMax: Math.max(...rel.map((q) => q.r)),
+      wall: Math.max(...rel.map((q) => q.r)) - rMin,
+      arc: coverage(rel.filter((q) => Math.abs(q.r - rMin) <= ARC_TOL).map((q) => q.psi)).arc,
+      crown, deck,
+      crownOnly: crown > 0 && deck === 0, deckOnly: deck > 0 && crown === 0,
+      blocked: [], removable: false, // a part that spans the split plane is cast integral
+    };
+    parts.push(p);
+  }
+  // A part that stands wholly on the crown side of the split plane is part of the
+  // bolt-on assembly: it lifts with the cap, so it can never be the material holding a
+  // crown-side part down. Only material that spans the split plane - material fused into
+  // the casting - blocks a lift, and that is what a cap has to be measured against.
+  const boltOnAssembly = new Set(parts.filter((p) => p.crownOnly).map((p) => p.name));
+  for (const p of parts) {
+    if (!p.crownOnly) continue;
+    const others = region.filter((t) => t.label !== p.name && !boltOnAssembly.has(t.label));
+    for (const q of thinSample(p.rel, 16)) {
+      const from = bankPoint(bank, line.along + q.along, line.out + q.out, q.x);
+      const hits = raycast(others, new THREE.Vector3(from.x, from.y, from.z), up, 0.05, 9.0);
+      if (hits.length) p.blocked.push(`${hits[0].label} at ${hits[0].t.toFixed(4)} cm above a vertex at psi ${q.psi.toFixed(1)}`);
+    }
+    p.removable = p.crownOnly && p.blocked.length === 0;
+  }
+  const reach = parts.filter((p) => p.cast && p.rMin <= NOSE_R);
+  const boreR = reach.length ? Math.min(...reach.map((p) => p.rMin)) : Infinity;
+  // A part holds the bore only if it carries a real arc of it: the flat inner face of a
+  // bolt tab happens to stand at the bore radius too, and a tab is not a bearing surface.
+  const owners = reach.filter((p) => Math.abs(p.rMin - boreR) <= ARC_TOL && p.arc >= 90);
+  const shells = parts.filter((p) => !p.cast && Math.abs(p.rMax - boreR) <= ARC_TOL && p.wall > ARC_TOL);
+  // Only the casting can close the circle: a bearing shell is a replaceable part, and the
+  // cam is laid in after the shells are pressed in, so the closure a cam has to pass is
+  // the closure the head casting itself cannot take off.
+  const permanent = new Set(parts.filter((p) => p.cast && !p.removable).map((p) => p.name));
+  return {
+    parts, reach, boreR, owners, shells,
+    permanentTris: region.filter((t) => permanent.has(t.label)),
+    allTris: region,
+  };
+}
+
+const who = (list) => list.map((p) => `${p.kind}${p.removable ? '/bolt-on' : ''} ${p.rMin.toFixed(4)}`).join(', ');
+
+test('A1-G7: no cam column closes the circle around the cam line under the nose the cam carries', async () => {
+  const { group } = await buildHeads();
+  let worst = { arc: -1 };
+  const rows = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        const closed = [];
+        let tightest = Infinity, who2 = null;
+        for (let psi = 0; psi < 360; psi += 3) {
+          const dir = azDir(bank, psi);
+          let first = Infinity, label = null;
+          for (const sx of [bx - CAM.bearingHalf, bx, bx + CAM.bearingHalf]) {
+            const o = bankPoint(bank, line.along, line.out, sx);
+            const hits = raycast(m.permanentTris, new THREE.Vector3(o.x, o.y, o.z), dir, 0.05, NOSE_R + 0.5);
+            if (hits.length && hits[0].t < first) { first = hits[0].t; label = hits[0].label; }
+          }
+          if (first < NOSE_R) {
+            closed.push(psi);
+            if (first < tightest) { tightest = first; who2 = label; }
+          }
+        }
+        const cov = coverage(closed);
+        rows.push(`${bank} ${valve} x${bx}: ${cov.arc} of 360 deg closed under ${NOSE_R.toFixed(4)} cm, nearest standing face ${Number.isFinite(tightest) ? tightest.toFixed(4) : 'none'} (${who2 ?? 'nothing'})`);
+        if (cov.arc > worst.arc) worst = { arc: cov.arc, at: `${bank}-${valve}-x${bx}`, tightest, who2 };
+      }
+    }
+  }
+  console.log(`A1-G7 assembly sweep, 3 of ${rows.length}:\n  ${rows.slice(0, 3).join('\n  ')}`);
+  console.log(`A1-G7 worst column ${worst.at}: ${worst.arc} deg closed, nearest face ${worst.tightest.toFixed(4)} cm (${worst.who2}), cam nose ${NOSE_R.toFixed(4)} cm`);
+  assert.ok(worst.arc <= 200,
+    `${worst.at}: ${worst.arc} of 360 degrees of the cam line are closed by casting that cannot come off, standing at ${worst.tightest.toFixed(4)} cm (${worst.who2}), while a cam carries a ${NOSE_R.toFixed(4)} cm nose. A tunnel that closes the whole circle around the cam line under the nose cannot be assembled: a DOHC cam is laid in with the crown half open. The loaded half may stand at the line bore, the other half has to be a cap.`);
+});
+
+test('A1-G7: every cam line bore is split on one plane through the axis and line-bored to one published radius', async () => {
+  const { group } = await buildHeads();
+  const rows = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        if (!m.owners.length) continue;
+        rows.push(`${bank} ${valve} x${bx}: bore ${m.boreR.toFixed(4)} held by [${who(m.owners)}] | other cast parts in the column [${who(m.reach.filter((p) => !m.owners.includes(p)))}]`);
+        assert.equal(m.owners.length, 2,
+          `${bank} ${valve} bearing x${bx}: ${m.owners.length} cast part(s) machine the cam line bore [${who(m.reach)}]. A split, line-bored tunnel is machined by two halves against one cutter in one setting: a cradle in the head and a cap. One part holding the whole bore is a bushing cast into the head, not a bearing.`);
+        assert.ok(Math.abs(m.boreR - CAM.bearingR) <= ARC_TOL,
+          `${bank} ${valve} x${bx}: the head machines its cam bore at ${m.boreR.toFixed(4)} cm while the published bearing stands at ${CAM.bearingR} cm. The ${(m.boreR - CAM.bearingR).toFixed(4)} cm difference is the running clearance itself - a line-bore stands at the bearing's own radius, and the clearance is carried by a shell.`);
+        const [a, b] = m.owners;
+        assert.ok(Math.abs(a.rMin - b.rMin) <= ARC_TOL,
+          `${bank} ${valve} x${bx}: the two halves of one line bore stand at ${a.rMin.toFixed(4)} (${a.name}) and ${b.rMin.toFixed(4)} (${b.name}), ${(a.rMin - b.rMin).toFixed(4)} cm apart. Line-boring machines both halves to one radius with the same cutter.`);
+        assert.ok((a.crownOnly && b.deckOnly) || (b.crownOnly && a.deckOnly),
+          `${bank} ${valve} x${bx}: ${a.name} holds ${a.crown} crown-side and ${a.deck} deck-side vertices, ${b.name} holds ${b.crown} and ${b.deck}. The two halves of a split bore must lie on opposite sides of one plane through the cam axis; a part holding both sides is not a split and nothing comes off.`);
+        for (const o of m.owners) {
+          assert.ok(o.arc >= 150 && o.arc <= 200,
+            `${bank} ${valve} x${bx}: ${o.name} machines ${o.arc} deg of the bore face. One half of a split bore carries its own 180 degrees, within the 0.006 cm arc tolerance.`);
+        }
+      }
+    }
+  }
+  console.log(`A1-G7 line-bore owners, 3 of ${rows.length}:\n  ${rows.slice(0, 3).join('\n  ')}`);
+});
+
+test('A1-G7: the half of every column that carries bore is a cap that lifts off along its split plane', async () => {
+  const { group } = await buildHeads();
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        if (!m.reach.length) continue;
+        const caps = m.owners.filter((p) => p.removable);
+        // crownSide is every crown-side casting in the column, including the ones that
+        // never reach the bore: that is what a cap has to be measured against.
+        const crownSide = m.parts.filter((p) => p.crownOnly);
+        const nearest = crownSide.slice().sort((a, b) => a.rMin - b.rMin)[0];
+        assert.equal(caps.length, 1,
+          `${bank} ${valve} x${bx}: ${caps.length} of the parts that machine the ${m.boreR.toFixed(4)} cm bore can be lifted off it. The half that has to come off has to carry half that bore; the nearest crown-side casting in this column is ${nearest ? `${nearest.name} at ${nearest.rMin.toFixed(4)} cm, ${(nearest.rMin - m.boreR).toFixed(4)} cm past the bore surface, so it carries no bearing surface at all` : 'nothing at all'}.`);
+        for (const p of m.owners) {
+          assert.equal(p.flag, p.removable,
+            `${bank} ${valve} x${bx}: ${p.name} is marked boltOn=${p.flag} while its ${p.crown} crown-side and ${p.deck} deck-side vertices${p.crownOnly ? ' stand wholly on the crown side with a clear lift path' : ' span the split plane, so it is part of the casting'}. The bolt-on claim has to match the geometry.`);
+        }
+        for (const c of caps) {
+          assert.equal(c.blocked.length, 0,
+            `${bank} ${valve} x${bx}: ${c.blocked.length} lift rays out of ${c.name} are blocked by cast-integral material (first: ${c.blocked[0] ?? 'none'}). A cap has to lift straight along the normal of its split plane.`);
+        }
+      }
+    }
+  }
+});
+
+test('A1-G7: every column carries two bearing shells line-bored into its tunnel, each riding its own clearance', async () => {
+  const { group } = await buildHeads();
+  const rows = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        if (!m.reach.length) continue;
+        rows.push(`${bank} ${valve} x${bx}: ${m.shells.length} shell(s) [${who(m.shells)}] in a ${m.boreR.toFixed(4)} cm bore over a ${H.camJournalRadius} cm cam journal`);
+        assert.equal(m.shells.length, 2,
+          `${bank} ${valve} x${bx}: ${m.shells.length} part(s) in this column carry an outer face machined to the ${m.boreR.toFixed(4)} cm line bore with material inside it. A cam bearing is a replaceable shell: without one the bore wears into the head casting and the head is scrap. Today the ${m.boreR.toFixed(4)} cm bore rides the cam's own ${CAM.bearingR} cm collar and the ${(m.boreR - CAM.bearingR).toFixed(4)} cm left between them is typed into the spec.`);
+        const [a, b] = m.shells;
+        assert.ok((a.crownOnly && b.deckOnly) || (b.crownOnly && a.deckOnly),
+          `${bank} ${valve} x${bx}: shells ${a.name} (${a.crown} crown / ${a.deck} deck vertices) and ${b.name} (${b.crown} crown / ${b.deck} deck) are not one crown half and one cradle half, so the tunnel cannot be opened and relined the way a split bore is.`);
+        for (const s of m.shells) {
+          const br = SPEC.cam.bearing;
+          assert.ok(br, `${bank} ${valve} x${bx}: SPEC.cam.bearing is not published, so the shell wall and the running clearance it carries have no source.`);
+          assert.ok(Math.abs(s.wall - br.shellWall) <= ARC_TOL,
+            `${bank} ${valve} x${bx}: shell ${s.name} is ${s.wall.toFixed(4)} cm thick while SPEC.cam.bearing.shellWall publishes ${br.shellWall} cm.`);
+          assert.ok(Math.abs(s.rMin - (H.camJournalRadius + br.oilFilm)) <= ARC_TOL,
+            `${bank} ${valve} x${bx}: shell ${s.name} stands at ${s.rMin.toFixed(4)} cm while the ${H.camJournalRadius} cm cam journal plus the published ${br.oilFilm} cm oil film is ${(H.camJournalRadius + br.oilFilm).toFixed(4)} cm.`);
+        }
+      }
+    }
+  }
+  console.log(`A1-G7 bearing shells, 3 of ${rows.length}:\n  ${rows.slice(0, 3).join('\n  ')}`);
+});
+
+test('A1-G7: every bearing shell is drilled through at its published oil azimuth with the published hole', async () => {
+  const { group } = await buildHeads();
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is not published: the oil-hole radius, the oil film and the azimuth each half carries its hole at have no single source, so no oil way in the tunnel can be gated at all.');
+  // A radial ray stays inside a straight drill of radius r - drilled along its own
+  // radial axis - while offset * r stays under r_hole, and the last shell material the
+  // ray meets sits at the line bore: so the widest offset that still reads as open
+  // void implies the drilled radius, measured on the shell's own surface. The old form
+  // of this law asked only for "a void with wall beside it" and passed a shell whose
+  // oil band had no drilling at all, because the half of the shell that simply is not
+  // there (the cradle side of a cap shell) reads as a void with wall 95 deg away
+  // (tmp/oilprobe.mjs: void 91..269 deg).
+  // The drilling is a straight cylinder along the radial direction, so a radial ray
+  // stays inside it while its distance off the drill axis - r * sin(offset) - stays
+  // under the hole radius, and the last shell material the ray can meet sits at the
+  // line bore: bisecting the open/closed edge of the void around the published azimuth
+  // therefore implies the drilled radius, measured on the shell's own surface. The old
+  // form of this law asked only for "a void with wall beside it" and passed a shell
+  // whose oil band carries no drilling at all, because the half of the shell that
+  // simply is not there - the deck side of a cap shell - reads as a void with solid
+  // wall 95 deg away (tmp/oilprobe.mjs: void 91..269 deg).
+  const REACH_DEG = 12; // half the published oil band: past this a void is not a hole
+  let withHole = 0;
+  const detail = [];
+  const offenders = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        for (const s of m.shells) {
+          const own = m.allTris.filter((t) => t.label === s.name);
+          const azList = s.mesh.userData.oilAz;
+          assert.ok(Array.isArray(azList) && azList.length >= 1,
+            `${s.name}: the drawn shell names no oil azimuth of its own, so nothing says where its oil way has to be machined`);
+          const az = azList[0];
+          const at = bankPoint(bank, line.along, line.out, bx);
+          const o = new THREE.Vector3(at.x, at.y, at.z);
+          const hitsAt = (psi) => raycast(own, o, azDir(bank, psi), s.rMin - 0.02, s.rMax + 0.02).length;
+          const open = (psi) => hitsAt(psi) === 0;
+          const hits = hitsAt(az);
+          assert.ok(hits === 0,
+            `${s.name}: a ray along the published oil azimuth ${az} deg crosses the shell's own wall ${hits} times - the shell is not drilled through where its oil way is published`);
+          assert.ok(!open(az + REACH_DEG) && !open(az - REACH_DEG),
+            `${s.name}: the shell is still open ${REACH_DEG} deg either side of its oil azimuth - that is a region of the shell that is missing, not a drilled hole`);
+          // bisect outward from the published azimuth: the last ray that still reads
+          // as open void is the tangent of the drilled cylinder
+          const edge = (sign) => {
+            let near = az;
+            for (let step = REACH_DEG / 2; step > 1e-4; step /= 2) {
+              if (open(near + sign * step)) near += sign * step;
+            }
+            return Math.abs(near - az);
+          };
+          const halfL = edge(-1), halfR = edge(1);
+          assert.ok(Math.abs(halfL - halfR) < 0.01,
+            `${s.name}: the drilling runs -${halfL.toFixed(4)}..+${halfR.toFixed(4)} deg around its azimuth - a machined hole is centred on the axis it was drilled along`);
+          const holeR = Math.sin(halfL * DEG) * s.rMax;
+          detail.push(`${bank} ${valve} x${bx} ${s.name}: open -${halfL.toFixed(4)}..+${halfR.toFixed(4)} deg at ${az} deg, implied hole ${holeR.toFixed(4)} cm against the published ${br.oilHoleR} cm`);
+          // The builder has no CSG: a drilled round is a curveFacet polygon, and a
+          // 14-gon of a 0.1 cm hole presents 0.0975 cm to a ray at its flat side. The
+          // gate is the published radius inside that discretisation - wide enough for
+          // the polygon, narrow enough that a missing or half-size drilling fails.
+          if (Math.abs(holeR - br.oilHoleR) > 0.01) offenders.push(`${s.name} measures ${holeR.toFixed(4)} cm of drilling against the published ${br.oilHoleR} cm`);
+          withHole += 1;
+        }
+      }
+    }
+  }
+  const needed = CAM.bearings.length * 4 * 2; // 7 journals x 4 DOHC camshafts x 2 halves per split bore
+  console.log(`A1-G7 shell oil ways, 3 of ${detail.length}:\n  ${detail.slice(0, 3).join('\n  ')}`);
+  console.log(`A1-G7 shells carrying a proved oil way: ${withHole} of ${needed}`);
+  assert.equal(withHole, needed,
+    `${withHole} of ${needed} bearing shells are proved open along the radial direction at the oil azimuth they themselves name, with solid wall on both sides. A shell without an oil hole has no oil in its running clearance: it runs metal-to-metal, which is the failure the review named for the whole bearing stack.`);
+  assert.deepEqual(offenders, [],
+    `${offenders.length} shell oil way(s) are not the published drilling: ${offenders.join('; ')}. SPEC.cam.bearing.oilHoleR publishes ${br.oilHoleR} cm - an oil way of any other width is not the hole the published stack calls for.`);
+});
+
+test('A1-G7: every cap and cradle stands on a drilled tab pair with a cap bolt through both', async () => {
+  const { group } = await buildHeads();
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is not published: the tab stand-off, the tab height and the bolt-hole radius that say where a cap bolt may stand have no source, so the cap has nothing to stand on.');
+  const capBoltSets = ['L', 'R'].map((b) => group.getObjectByName(`cam-cap-bolts-${b}`));
+  let drilled = 0;
+  const holes = [];
+  for (const bank of ['L', 'R']) {
+    const v = bankVectors(bank);
+    const headTris = trisOf(headMeshes(group, bank));
+    const up = new THREE.Vector3().fromArray(bankUp(bank));
+    for (const valve of valves) {
+      const line = camLine(bank, valve);
+      for (const bx of CAM.bearings) {
+        const m = columnModel(group, bank, v, line, bx, headTris);
+        const tabs = m.parts.filter((p) => p.kind === 'tab');
+        // derived, not typed: one cap tab and one cradle tab per side of the cam axis
+        // line, and the bolt is measured at both sides
+        const needTabs = 2 * 2;
+        assert.equal(tabs.length, needTabs,
+          `${bank} ${valve} x${bx}: ${tabs.length} tab(s) stand in this column, a cap/cradle pair each side of the cam axis line is ${needTabs}. A split bore is held by a bolt through a tab on the cap into a tab on the cradle: without the pair the cap is glued, not bolted.`);
+        assert.equal(new Set(tabs.map((t) => t.crownOnly)).size, 2,
+          `${bank} ${valve} x${bx}: the ${tabs.length} tabs in this column are not one crown half and one deck half (${tabs.map((t) => `${t.name} ${t.crownOnly ? 'crown' : 'deck'}`).join(', ')}); a cap bolt has to clamp a tab on each side of the split plane.`);
+        // The published bolt line: mid of the tab span from the line bore out to the
+        // tab's outer radius, exactly the line the tab law in A1-G7 derives from SPEC.
+        const tabR = m.boreR + br.castWall + br.tabStand;
+        const boltR = (m.boreR + tabR) / 2;
+        for (const side of [-1, 1]) {
+          for (const t of tabs) {
+            const own = m.allTris.filter((q) => q.label === t.name);
+            // The tab's own measured extent along the split-plane normal: the probe is
+            // derived from the part being measured, never from the published numbers -
+            // otherwise a tab machined to the wrong height would still pass.
+            const aLo = Math.min(...t.rel.map((q) => q.along));
+            const aHi = Math.max(...t.rel.map((q) => q.along));
+            const probe = (offset) => {
+              // Segment through the whole tab: it starts clear below the tab's own lower
+              // face and ends clear above its upper face, so a solid tab is crossed twice
+              // (entry + exit) and a drilled tab is crossed not at all.
+              const foot = bankPoint(bank, line.along + aLo - 0.6, line.out + side * (boltR + offset), bx);
+              return raycast(own, new THREE.Vector3(foot.x, foot.y, foot.z), up, 0.05, (aHi - aLo) + 1.15).length;
+            };
+            // Derived probe span, printed once per column so a wrong tab height is
+            // visible in the record instead of silently accepted.
+            if (side === 1 && t.kind === 'tab') holes.push(`${t.name}: tab along ${aLo.toFixed(4)}..${aHi.toFixed(4)} (published ${br.tabH} high), crossings at the bolt line ${probe(0)}, outboard ${probe(br.boltHoleR + 0.15)}, inboard ${probe(-(br.boltHoleR + 0.15))}`);
+            // A solid tab is crossed twice by this segment (entry + exit faces). A
+            // machined bolt hole is a through-void along the probe axis: zero crossings.
+            if (probe(0) === 0 && probe(br.boltHoleR + 0.15) >= 2 && probe(-(br.boltHoleR + 0.15)) >= 2) drilled++;
+          }
+        }
+      }
+    }
+  }
+  const neededTabsHoles = CAM.bearings.length * 4 * 2 * 2; // 28 columns x 2 tabs x 2 bolt sides
+  console.log(`A1-G7 tab machining, 3 of ${holes.length}:\n  ${holes.slice(0, 3).join('\n  ')}`);
+  console.log(`A1-G7 drilled tab holes proved: ${drilled} of ${neededTabsHoles}`);
+  assert.equal(drilled, neededTabsHoles,
+    `${drilled} of ${neededTabsHoles} cap tabs are drilled through for their bolt: a ray along the split-plane normal through the tab at the published bolt line crosses nothing. A tab that is not drilled is a boss the bolt has to be cast into.`);
+  const neededBolts = CAM.bearings.length * 4 * 2;
+  assert.ok(capBoltSets.every((s) => s && s.isInstancedMesh),
+    `no per-bank cam-cap-bolts-L / cam-cap-bolts-R instanced mesh exists: ${neededBolts} cap bolts are the only thing holding ${CAM.bearings.length * 4} split caps onto their cradles. Today the caps are cast integral with the head and nothing holds them down.`);
+  const held = capBoltSets.reduce((a, s) => a + s.count, 0);
+  assert.equal(held, neededBolts, `the two bank bolt sets hold ${held} instances, the split bore needs ${neededBolts} (two per column: one each side of the cam line)`);
+  for (const [bank, s] of ['L', 'R'].map((b, i) => [b, capBoltSets[i]])) {
+    assert.equal(s.count, CAM.bearings.length * 2 * 2,
+      `cam-cap-bolts-${bank} holds ${s.count} bolts; ${bank} bank has ${CAM.bearings.length} columns x 2 cam lines x 2 sides of the split bore = ${CAM.bearings.length * 2 * 2} caps to hold down`);
+  }
+});
+
+test('A1-G7: the whole bearing stack is published in SPEC.cam.bearing and every radius in it derives', async () => {
+  const br = SPEC.cam.bearing;
+  assert.ok(br, 'SPEC.cam.bearing is missing: the oil film, the shell wall, the casting wall, the tab stand-off, the bolt geometry and the oil-hole radius of the cam tunnel are not published at all, so the head cannot be built from one source and the review\'s "no load-bearing full 360 degree boss" has nothing to be measured against.');
+  const shellIdR = H.camJournalRadius + br.oilFilm;
+  const boreR = shellIdR + br.shellWall;
+  assert.ok(Math.abs(boreR - CAM.bearingR) <= 1e-9,
+    `the published stack puts the line bore at ${boreR.toFixed(6)} cm while SPEC.cam.bearingR says ${CAM.bearingR} cm: the two halves of the tunnel are bored against the bearing radius, so one of them is wrong.`);
+  assert.ok(H.bossClr === undefined,
+    `SPEC.head.bossClr still publishes ${H.bossClr} cm of clearance typed between the cam and a cast bore. That clearance is now carried by ${br.shellWall} cm of shell over a ${br.oilFilm} cm oil film; keeping both keys means two sources for one running clearance.`);
+  const castOdR = boreR + br.castWall;
+  const tabR = castOdR + br.tabStand;
+  assert.ok(tabR > NOSE_R,
+    `the cap tab outer radius ${tabR.toFixed(4)} cm has to stand outside the ${NOSE_R.toFixed(4)} cm nose the cam carries, or the bolt hole cannot be drilled without cutting into the cam's swept circle.`);
+  const boltOut = (boreR + tabR) / 2;
+  const hexCircumR = br.boltAcrossR / Math.cos(Math.PI / 6);
+  assert.ok(hexCircumR <= (tabR - boreR) / 2,
+    `the cap bolt's hex needs ${hexCircumR.toFixed(4)} cm across the corners while the tab span from the ${boreR.toFixed(4)} cm bore to the ${tabR.toFixed(4)} cm tab edge only has ${((tabR - boreR) / 2).toFixed(4)} cm half-width around the bolt line at ${boltOut.toFixed(4)} cm: the bolt head would overhang the tab.`);
+  assert.ok(br.oilHoleR < br.shellWall,
+    `the oil hole is ${br.oilHoleR} cm in radius and the shell it is drilled through is ${br.shellWall} cm thick: a hole wider than the wall it stands in is not a drilling.`);
+  // Where a column's housing wall stands is derived from the fastener it has to clear:
+  // the cap bolt line, its hex across the corners, the published socket clearance.
+  // The drawn risers are measured against this in the column contract above.
+  const st = bearingStack();
+  const housingIn = boltOut + hexCircumR + br.wrenchClr;
+  assert.ok(br.wrenchClr > 0 && br.housingWall > 0,
+    `SPEC.cam.bearing has to publish the socket clearance and the housing wall it derives the column's housing from, got ${br.wrenchClr} and ${br.housingWall}.`);
+  assert.ok(Math.abs(st.housingInRel - housingIn) <= 1e-9,
+    `the drawn stack puts the housing wall at ${st.housingInRel.toFixed(6)} cm off the cam axis line; the published numbers put it at ${housingIn.toFixed(6)} cm (bolt line ${boltOut.toFixed(4)} + hex ${hexCircumR.toFixed(4)} + socket ${br.wrenchClr}).`);
+  assert.ok(Math.abs(st.housingOutRel - (housingIn + br.housingWall)) <= 1e-9,
+    `the drawn stack puts the housing's outer face at ${st.housingOutRel.toFixed(6)} cm, the published wall of ${br.housingWall} cm from ${housingIn.toFixed(4)} gives ${(housingIn + br.housingWall).toFixed(6)} cm.`);
+  assert.ok(housingIn > tabR,
+    `the housing wall at ${housingIn.toFixed(4)} cm has to stand outside the ${tabR.toFixed(4)} cm tab ring, or the column casting is where the cap has to lift off its split plane.`);
 });

@@ -6,7 +6,7 @@
 // can never disagree with the simulation, and the gates can drive the real buttons.
 // The slider bounds are the animation module's published RPM_MIN / RPM_MAX, not a
 // second copy typed into the markup.
-import { RPM_MAX, RPM_MIN } from '../engine/animation.js';
+import { RPM_MAX, RPM_MIN, THROTTLE_MAX, THROTTLE_MIN } from '../engine/animation.js';
 import { SPEC } from '../engine/spec.js';
 import { strokeOf } from '../engine/timing.js';
 
@@ -22,6 +22,9 @@ export function createPanel({ state, view, rig, say, doc = document }) {
     reset: el('btn-reset'),
     rpm: el('rpm'),
     rpmOut: el('rpm-out'),
+    throttle: el('throttle'),
+    throttleOut: el('throttle-out'),
+    advance: el('advance-out'),
     slowmo: el('slowmo'),
     cut: el('btn-cut'),
     explode: el('btn-explode'),
@@ -47,6 +50,42 @@ export function createPanel({ state, view, rig, say, doc = document }) {
     els.rpm.value = String(state.rpm); // the clamp is the authority, echo it back
     rpmReadout();
   });
+
+  // --- LOAD: the throttle the ignition model reads ----------------------------
+  // Same rule as the rpm control: the bounds are the animation module's published
+  // THROTTLE_MIN / THROTTLE_MAX, and every value the widget shows afterwards is the
+  // clamped value the state module returned. The load is what decides the manifold
+  // vacuum, so it is the control that moves the spark the scene draws.
+  els.throttle.min = String(THROTTLE_MIN);
+  els.throttle.max = String(THROTTLE_MAX);
+  els.throttle.value = String(state.throttle);
+  const loadReadout = () => {
+    els.throttleOut.textContent = `${Number(els.throttle.value)} %`;
+  };
+  els.throttle.addEventListener('input', () => {
+    state.setThrottle(Number(els.throttle.value));
+    els.throttle.value = String(state.throttle);
+    loadReadout();
+    // No say() here: dragging a slider is a continuous gesture, and every frame of
+    // it pushing a line into the status region would overwrite the confirmation the
+    // user reads after a button - which its own gate law holds open.
+  });
+
+  // --- the ignition breakdown the HUD prints, term by term -------------------
+  // Printed from state.advance(), the object the render loop is fed, and the clamp
+  // marker appears only when the three terms really pass SPEC.ignition.maxTotalDeg:
+  // a HUD that prints "clamped" while nothing is clamped is decoration, not a readout.
+  const advanceLine = () => {
+    const a = state.advance();
+    const terms = a.base + a.centrifugal + a.vacuum;
+    const limit = SPEC.ignition.maxTotalDeg;
+    const clampNote = terms > limit ? ` - clamped at ${limit}°` : '';
+    return (
+      `IGNITION - base ${a.base.toFixed(1)}° - centrifugal ${a.centrifugal.toFixed(1)}°` +
+      ` - vacuum ${a.vacuum.toFixed(1)}° - total ${a.total.toFixed(1)}°${clampNote}` +
+      ` - at ${a.rpm} rpm at ${a.throttle} %`
+    );
+  };
 
   // --- slow motion: the vocabulary lives in the markup, the limit lives in the
   // state module, so whatever it clamps to is what the control shows next
@@ -127,7 +166,7 @@ export function createPanel({ state, view, rig, say, doc = document }) {
   };
 
   // --- repaint from the authorities, every frame, without churn --------------
-  const last = { run: null, cut: null, sep: null, rpm: null, cycle: null, insp: null };
+  const last = { run: null, cut: null, sep: null, rpm: null, throttle: null, adv: null, cycle: null, insp: null };
   const press = (node, on) => {
     node.setAttribute('aria-pressed', on ? 'true' : 'false');
     node.dataset.on = on ? '1' : '0';
@@ -159,6 +198,20 @@ export function createPanel({ state, view, rig, say, doc = document }) {
       last.rpm = state.rpm;
       rpmReadout();
     }
+    // The load widget follows the state module too, so a load commanded through the
+    // exported setter is visible on the slider and in its readout.
+    if (Number(els.throttle.value) !== state.throttle) {
+      els.throttle.value = String(state.throttle);
+      last.throttle = state.throttle;
+      loadReadout();
+    }
+    // The advance line repaints whenever any term moves: rpm alone changes the
+    // centrifugal term, load alone changes the vacuum term, and both are user-settable.
+    const adv = advanceLine();
+    if (last.adv !== adv) {
+      last.adv = adv;
+      els.advance.textContent = adv;
+    }
     // the four-stroke cycle of cylinder 1, on the same crank angle the renderer
     // is drawing pistons and valves from. The degree is part of what is compared,
     // not just the stroke name: gated on the stroke alone the line sits frozen at
@@ -173,6 +226,7 @@ export function createPanel({ state, view, rig, say, doc = document }) {
     }
   };
   rpmReadout();
+  loadReadout();
   slowmoReadout();
   sync();
 

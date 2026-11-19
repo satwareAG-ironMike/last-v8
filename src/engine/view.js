@@ -156,7 +156,22 @@ export function explodeRules() {
     rule(/^rod-cyl\d+$/, (n) => `bank-${partBank(n)}`, 1),
     rule(/^piston-cyl\d+$/, (n) => `bank-${partBank(n)}`, 2),
     rule(/^gasket-[LR]$/, (n) => `bank-${partBank(n)}`, 3),
+    // A spark plug is threaded INTO the head casting through the machined channel
+    // row P1-G13 measures, so it comes off with that head: same family,
+    // same stage. Measured rather than asserted - a later stage stands the plug
+    // further out than the head it is screwed into and widens the framing the
+    // camera has to fit, and a family of its own (bore-L/R or out-L/R) lets the
+    // plug either overtake or interpenetrate the head it came out of. The numbers
+    // are printed by the laws in test/view.test.mjs section 13 and by the
+    // explode/framing laws above them.
+    rule(/^plug-cyl\d+$/, (n) => `bank-${partBank(n)}`, 4),
     rule(/^head-[LR]$/, (n) => `bank-${partBank(n)}`, 4),
+    // A cam bearing cap bolt is screwed down through the cap tab and the cradle
+    // tab cast into ONE bank's head casting, so it leaves with that head: same
+    // family, same stage, exactly like the spark plug above. Per-bank meshes are
+    // what makes this rule possible at all - a single mesh named cam-cap-bolts
+    // carries no bank, so partBank reads null and no family can be derived.
+    rule(/^cam-cap-bolts-([LR])$/, (n) => `bank-${partBank(n)}`, 4),
     rule(/^valve-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 5),
     rule(/^spring-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 6),
     rule(/^bucket-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 7),
@@ -324,8 +339,20 @@ export function partLabel(name) {
   }
   const cam = /^cam-([LR])-(intake|exhaust)$/.exec(name);
   if (cam) return `Camshaft - ${cam[1] === 'L' ? 'left' : 'right'} bank ${cam[2]} (half crank speed)`;
+  const plug = /^plug-cyl(\d+)$/.exec(name);
+  if (plug) {
+    const c = SPEC.cylinders.find((k) => k.num === Number(plug[1]));
+    const station = c ? `station ${SPEC.block.stations[c.station]}, ${c.bank === 'L' ? 'left' : 'right'} bank, fire ${c.powerTDC}\u00b0` : '';
+    return `Spark plug - cylinder ${plug[1]} - ${station}`;
+  }
   const cover = /^cam-cover-([LR])-(intake|exhaust)$/.exec(name);
   if (cover) return `Cam cover - ${cover[1] === 'L' ? 'left' : 'right'} bank ${cover[2]}`;
+  const capBolt = /^cam-cap-bolts-([LR])$/.exec(name);
+  if (capBolt) {
+    const side = capBolt[1] === 'L' ? 'left' : 'right';
+    const columns = SPEC.cam.bearings.length * 2; // 7 journals per cam x 2 cam lines per bank
+    return `Cam bearing cap bolts - ${side} bank: ${columns * 2} bolts, one each side of the line bore at the ${columns} split bearing columns of this bank`;
+  }
   const head = /^head-([LR])$/.exec(name);
   if (head) return `Cylinder head - ${head[1] === 'L' ? 'left' : 'right'} bank`;
   const gasket = /^gasket-([LR])$/.exec(name);

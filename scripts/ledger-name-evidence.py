@@ -125,7 +125,12 @@ IDENTITY = """  SHOT FILE IDENTITY (recorded after tmp/g7-run14.out, whose print
 """
 IDENTITY_ANCHOR = "  SAME POSE SAME PICTURE:"
 
-ROW_HEAD = re.compile(r"^- \[[ x]\] (G[0-9a-z]+):")
+# One row-id grammar, shared with ROW_ID in scripts/ledger-audit.mjs: the bare G<id> ids
+# this ledger used up to G7, and the phase-prefixed ids issue #8 declares (P1-G1, A1-G9,
+# P2-G5, A2-G5). A row either tool walks past is a row nobody checks - its indented claim
+# lines get attributed to the previous row instead.
+ROW_ID = r"(?:[A-Z][0-9]+-)?G[0-9a-z]+"
+ROW_HEAD = re.compile(r"^- \[[ x]\] (" + ROW_ID + r"):")
 STUB_EVIDENCE = "  EVIDENCE: pending"
 
 # The one title change a later commit is allowed to make. `prove` compares row titles
@@ -167,12 +172,28 @@ def git_show(rev, path="GATES.md"):
 
 
 def verify_map():
+    """Check every MAP entry this tree can check; return what it cannot.
+
+    Two different findings, deliberately treated differently. A cited file that IS here
+    but hashes to something else is a broken citation and aborts in every mode. A cited
+    file that is simply not here is the normal shape of a fresh checkout or a CI runner:
+    tmp/ and shots/ are gitignored, so only the original harness tree carries them, and
+    the RECIPE paragraph of GATES.md already says a run whose file is gone stays recorded
+    by its hash alone. --prove and --diff read a COMMITTED base plus this file, so they
+    run with those entries named as unverifiable; a mode that would write a file name onto
+    a row refuses instead, because naming a file this tree cannot check is exactly the
+    dishonesty this script was written to remove.
+    """
+    unverifiable = []
     for row, m in MAP.items():
         for hpre, path in m.items():
-            assert os.path.exists(path), f"{row}: {path} is missing"
+            if not os.path.exists(path):
+                unverifiable.append(f"{row}: {path} is not on disk in this tree")
+                continue
             with open(path, "rb") as fh:
                 real = hashlib.sha256(fh.read()).hexdigest()
             assert real.startswith(hpre), f"{row}: {path} hashes {real[:8]}, cited {hpre}"
+    return unverifiable
 
 
 def apply_names(text):
@@ -181,10 +202,16 @@ def apply_names(text):
     row = None
     for line in text.split("\n"):
         if line.startswith("- ["):
-            g = re.search(r"\b(G[0-9a-z]+):", line)
+            g = re.search(r"\b(" + ROW_ID + r"):", line)
             row = g.group(1) if g else None
         for hpre, path in MAP.get(row or "", {}).items():
-            hit = re.search(r"output-sha256=" + hpre + r"[0-9a-f]{56}", line)
+            # One citation grammar with scripts/ledger-audit.mjs and test/ledger.test.mjs
+            # (issue #13): output-sha256=, output=, driver= and the bare sha256= this file's
+            # pinned-identity paragraphs write. Measured on this tree the widening attaches
+            # no new name (14 insertions before and after) because every hash this tool's
+            # MAP knows is cited in the labelled form; the grammar is shared so a citation
+            # cannot be checkable in one tool and invisible in the other.
+            hit = re.search(r"(?:output-sha256|output|driver|sha256)=" + hpre + r"[0-9a-f]{56}", line)
             if not hit:
                 continue
             rest = line[hit.end():]
@@ -321,11 +348,21 @@ def main():
     ap.add_argument("--prove", action="store_true", help="prove the working file against the base invariant")
     ap.add_argument("--diff", action="store_true", help="show derived form vs the working file")
     args = ap.parse_args()
-    verify_map()
+    unverifiable = verify_map()
+    total_map = sum(len(m) for m in MAP.values())
+    note = (f"note: {len(unverifiable)} of {total_map} named run files are not on disk in this tree "
+            f"(tmp/ and shots/ are gitignored, so only the harness tree that produced them carries them); "
+            f"the recorded hashes stand as the record for those rows") if unverifiable else ""
 
     derived, n_ins = derive(git_show(BASE))
 
     if args.prove:
+        # The proof reads the committed base plus this file - it needs no scratch file,
+        # which is why it is the mode a fresh checkout or a CI runner can actually run.
+        if unverifiable:
+            print(note)
+        for u in unverifiable:
+            print("  unverifiable here: " + u)
         return prove(open("GATES.md").read())
 
     work = open("GATES.md").read()

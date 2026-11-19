@@ -1,6 +1,7 @@
 // App shell: WebGLRenderer, test-cell environment, lights, block casting,
 // cranktrain, DOHC valvetrain, the two cylinder heads, the intake / exhaust
-// manifolds and the industrial test stand that carries the engine. UI and
+// manifolds, the eight spark plugs whose tips flash on their own firingProgress
+// window, and the industrial test stand that carries the engine. UI and
 // camera rigs land in the following commit; everything visual here is
 // procedural (see src/render/materials.js).
 import * as THREE from 'three';
@@ -8,8 +9,10 @@ import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
 import { createCranktrain } from './render/cranktrain.js';
 import { createValvetrain } from './render/valvetrain.js';
+import { createDrive } from './render/drive.js';
 import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
+import { createPlugs } from './render/plugs.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
@@ -83,10 +86,20 @@ const cranktrain = createCranktrain(materials);
 engine.add(cranktrain.group);
 const valvetrain = createValvetrain(materials);
 engine.add(valvetrain.group);
+// Four roller chains, one per DOHC camshaft: the only part of the drive that
+// moves on its own math rather than riding a parent group, because a chain is
+// not a rigid body - src/engine/drive.js poses every roller at the pitch.
+const drive = createDrive(materials);
+engine.add(drive.group);
 const heads = createHeads(materials);
 engine.add(heads.group);
 const manifolds = createManifolds(materials);
 engine.add(manifolds.group);
+// The eight plugs are their own assembly, not part of the head: they are service
+// parts, they are inspected and exploded as members of their own, and the tip glow
+// is the only thing in the scene that is a light rather than a machined surface.
+const plugs = createPlugs(materials);
+engine.add(plugs.group);
 
 // The camera and its rig. The pose is NOT written here: SPEC.view carries the
 // swept boot framing (engine, manifolds and the whole test stand uncropped in a
@@ -223,6 +236,10 @@ function loop() {
   state.step(dt);
   cranktrain.update(state.theta);
   valvetrain.update(state.theta);
+  drive.update(state.theta); // every roller re-posed at the pitch, at the engagement the gaps present
+  // The tip flash is pose-driven, not frame-driven: it reads the same crank
+  // degrees at 1x as at 1/50, which is what the frame-rate law gates.
+  plugs.update(state.theta, state.advance().total);
   const w = readKeys();
   if (w.fwd || w.strafe || w.rise) rig.walk(w, dt); // held keys walk every frame
   view.update(dt); // eases the exploded view and keeps the section on the hoisted engine
@@ -296,7 +313,7 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.10-view',
+  version: 'v8-0.11-load',
   SPEC,
   bankOut,
   bankUp,
@@ -309,6 +326,7 @@ window.__v8 = {
   engine,
   cranktrain,
   valvetrain,
+  drive,
   heads,
   manifolds,
   stand,
@@ -317,6 +335,7 @@ window.__v8 = {
   start: () => state.start(),
   stop: () => state.stop(),
   setRpm: (v) => state.setRpm(v),
+  setThrottle: (v) => state.setThrottle(v),
   setSlowmo: (f) => state.setSlowmo(f),
   orbitBy: (dx, dy) => rig.orbit(dx, dy),
   zoomBy: (notches) => rig.zoom(notches),
