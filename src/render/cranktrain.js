@@ -8,11 +8,13 @@ import * as THREE from 'three';
 import { SPEC, DEG } from '../engine/spec.js';
 import { crankPinPoint, pistonPinPoint, pistonAlong } from '../engine/timing.js';
 import { latheX, latheBank, worldBox } from './parts.js';
-import { extrude, alignX, sprocketGeometry } from './primitives.js';
+import { extrude, alignX, chainSprocketGeometry } from './primitives.js';
+import { driveContract, gapCutR, hubRadius, tipRadius } from '../engine/drive.js';
 
 const C = SPEC.crank;
 const P = SPEC.piston;
 const R = SPEC.rod;
+const CH = SPEC.chain;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 /** Closed solid cylinder about world X (outer-first winding). */
@@ -99,7 +101,11 @@ function buildCrank(materials) {
     ['main-aft', -26.5, -18.95],
   ];
   for (const [name, x0, x1] of mains) put(name, latheX(solidX(C.mainRadius, x0, x1), 40), materials);
-  put('nose-stub', latheX(solidX(C.noseRadius, 26.45, 28.65), 32), materials);
+  // The nose: the 3.0 cm main journal runs up to the machined shoulder at
+  // x 28.6, then the blank is turned down to the 2.4 cm spigot the four bored
+  // cam-drive sprocket hubs press onto (SPEC.crank.sprocket.bore).
+  put('nose-stub', latheX(solidX(C.noseRadius, 26.45, C.sprocket.x0), 32), materials);
+  put('nose-spigot', latheX(solidX(C.sprocket.bore, C.sprocket.x0, C.sprocket.x1), 32), materials);
 
   // pins, webs, bosses per station
   for (const s of SPEC.block.stations) {
@@ -139,27 +145,42 @@ function buildCrank(materials) {
   }
   crank.add(flywheel);
 
-  // nose sprocket for the cam drive: 18 machined teeth; cam sprockets are 36
+  // Nose sprocket stack for the cam drive: four bored 18-tooth lanes, one per
+  // DOHC chain, machined on the turned-down 2.4 cm spigot and located by a
+  // shoulder fore and a retaining collar aft (GATES row A1-G2, issue #4).
+  // Each lane carries its own gap lattice clocked to its own chain: src/engine/
+  // drive.js measured that ONE common 18-gap tooth set for all four chains
+  // leaves 72-108 of 360 sampled crank positions impossible for a rigid
+  // 88-link chain inside the published tensioner travel.
   const sprocket = new THREE.Group();
   sprocket.name = 'sprocket';
-  const spDrum = new THREE.Mesh(latheX(solidX(C.sprocket.radius, C.sprocket.x0, C.sprocket.x1), 40), materials.crankShaft);
-  spDrum.name = 'sprocket-drum';
-  const spTeeth = new THREE.Mesh(
-    sprocketGeometry(C.sprocket.teeth, C.sprocket.pitchR, C.sprocket.toothH, C.sprocket.x1 - C.sprocket.x0, 0),
-    materials.chainSteel
-  );
-  // bevels are asymmetric along the extrusion axis: land the measured bbox on the band
-  spTeeth.geometry.computeBoundingBox();
-  spTeeth.geometry.translate(
-    (C.sprocket.x0 + C.sprocket.x1) / 2 - (spTeeth.geometry.boundingBox.min.x + spTeeth.geometry.boundingBox.max.x) / 2,
-    0, 0
-  );
-  spTeeth.name = 'sprocket-teeth';
-  for (const m of [spDrum, spTeeth]) {
+  const KS = SPEC.cam.sprocket;
+  const hubR = hubRadius(C.sprocket.pitchR);
+  const laneHalf = CH.toothW / 2;
+  const laneMid = (i) => KS.bands[i] + KS.width / 2;
+  const put2 = (name, geo, mat, part) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.name = name;
     m.castShadow = true;
     m.receiveShadow = true;
-    m.userData.part = 'cam drive sprocket';
+    m.userData.part = part;
     sprocket.add(m);
+    return m;
+  };
+  put2('sprocket-shoulder', latheX(solidX(hubR, C.sprocket.x0, KS.bands[0] + laneHalf - CH.bandClr), 40),
+    materials.crankShaft, 'sprocket locating shoulder');
+  put2('sprocket-collar', latheX(solidX(hubR, KS.bands[3] + KS.width / 2 + laneHalf + CH.bandClr, C.sprocket.x1), 40),
+    materials.crankShaft, 'sprocket retaining collar');
+  const dc = driveContract();
+  const tipR = tipRadius(C.sprocket.pitchR);
+  for (const run of dc.runs) {
+    const i = run.bandIndex;
+    const lane = put2(`sprocket-lane-${i}`,
+      chainSprocketGeometry(C.sprocket.teeth, C.sprocket.pitchR, tipR, gapCutR(), CH.toothW, C.sprocket.bore, run.phase.crank),
+      materials.chainSteel, 'cam drive sprocket');
+    lane.position.x = laneMid(i);
+    lane.userData.band = KS.bands[i];
+    lane.userData.chain = `cam-chain-${run.bank}-${run.valve}`;
   }
   crank.add(sprocket);
 

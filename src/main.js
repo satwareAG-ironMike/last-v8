@@ -9,6 +9,7 @@ import { createEnvironment, createMaterials } from './render/materials.js';
 import { createBlock } from './render/block.js';
 import { createCranktrain } from './render/cranktrain.js';
 import { createValvetrain } from './render/valvetrain.js';
+import { createDrive } from './render/drive.js';
 import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
 import { createPlugs } from './render/plugs.js';
@@ -85,6 +86,11 @@ const cranktrain = createCranktrain(materials);
 engine.add(cranktrain.group);
 const valvetrain = createValvetrain(materials);
 engine.add(valvetrain.group);
+// Four roller chains, one per DOHC camshaft: the only part of the drive that
+// moves on its own math rather than riding a parent group, because a chain is
+// not a rigid body - src/engine/drive.js poses every roller at the pitch.
+const drive = createDrive(materials);
+engine.add(drive.group);
 const heads = createHeads(materials);
 engine.add(heads.group);
 const manifolds = createManifolds(materials);
@@ -230,6 +236,7 @@ function loop() {
   state.step(dt);
   cranktrain.update(state.theta);
   valvetrain.update(state.theta);
+  drive.update(state.theta); // every roller re-posed at the pitch, at the engagement the gaps present
   // The tip flash is pose-driven, not frame-driven: it reads the same crank
   // degrees at 1x as at 1/50, which is what the frame-rate law gates.
   plugs.update(state.theta, state.advance().total);
@@ -319,6 +326,7 @@ window.__v8 = {
   engine,
   cranktrain,
   valvetrain,
+  drive,
   heads,
   manifolds,
   stand,

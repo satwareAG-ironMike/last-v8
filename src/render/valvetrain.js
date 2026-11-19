@@ -12,11 +12,13 @@ import {
   valveSeatPoint, camAxisPoint,
 } from '../engine/timing.js';
 import { latheX } from './parts.js';
-import { extrude, alignX, alignYTo, sprocketGeometry, springGeometry } from './primitives.js';
+import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
+import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
 
 const H = SPEC.head;
 const V = SPEC.valves;
 const CAM = SPEC.cam;
+const CH = SPEC.chain;
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const valves = ['intake', 'exhaust'];
@@ -101,11 +103,17 @@ function buildCam(bank, valve, bandX, materials) {
     lobe.userData.noseDir = new THREE.Vector3(0, Math.sin(idx * DEG), Math.cos(idx * DEG));
   }
 
-  const sp = sprocketGeometry(CAM.sprocket.teeth, CAM.sprocket.pitchR, CAM.sprocket.toothH, CAM.sprocket.width, 0);
-  // bevels are asymmetric along the extrusion axis: land the measured bbox on the band
-  sp.computeBoundingBox();
-  sp.translate(bandX + CAM.sprocket.width / 2 - (sp.boundingBox.min.x + sp.boundingBox.max.x) / 2, 0, 0);
-  put(`cam-sprocket-${bank}-${valve}`, sp, materials.chainSteel, 'cam drive sprocket');
+  // 36-tooth cam sprocket: bored 1.75 so the continuous camshaft journal runs
+  // straight through it, 0.13 cm thick sitting in the middle of its own
+  // 0.3 cm chain band, and its gap lattice clocked to the chain it actually
+  // rides (src/engine/drive.js) - not a decorative gear on the cam end.
+  const spK = CAM.sprocket;
+  const lay = chainLayout(bank, valve);
+  const spGeo = chainSprocketGeometry(spK.teeth, spK.pitchR, tipRadius(spK.pitchR), gapCutR(),
+    CH.toothW, spK.bore, lay.phase.cam);
+  const sp = put(`cam-sprocket-${bank}-${valve}`, spGeo, materials.chainSteel, 'cam drive sprocket');
+  sp.position.x = bandX + spK.width / 2;
+  sp.userData.chain = `cam-chain-${bank}-${valve}`;
   return cam;
 }
 
