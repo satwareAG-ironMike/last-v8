@@ -410,8 +410,27 @@ export const SPEC = {
     journalAft: -28.7, // continuous journal: aft bearing ... through all 4 sprocket bands
     journalFore: 29.95,
     bearings: [-27.5, -22, -11, 0, 11, 22, 27.5], // 7 journals per camshaft
-    bearingR: 2.05,
+    bearingR: 2.05, // the LINE BORE: both halves of every tunnel are machined to this
     bearingHalf: 1.1,
+    // ---- the cam bearing stack (A1-G7, issue #8 addendum item 4) ----
+    // Only the walls are published. journalR -> +oilFilm -> shellIdR, +shellWall ->
+    // bearingR (the line bore), +castWall -> casting OD, +tabStand -> the bolt tab:
+    // every radius, the cap bolt line and the nose clearance derive in
+    // src/engine/bearings.js. The running clearance is the oil film under a
+    // replaceable shell, never a number typed between the cam and a cast bore.
+    bearing: {
+      oilFilm: 0.04, // hydrodynamic film the journal rides on
+      shellWall: 0.26, // replaceable shell: 1.79 inside, 2.05 outside against the bore
+      castWall: 0.75, // head casting wall outside the line bore
+      tabStand: 0.60, // the cap tab stands this far off the casting
+      tabH: 1.90, // tab height along the split-plane normal; a cap bolt is 2 x this
+      tabInset: 0.15, // tab half width along the cam axis: bearing width minus this
+      boltHoleR: 0.24, // cap bolt hole machined through both tabs
+      boltAcrossR: 0.52, // cap bolt head across flats
+      oilHoleR: 0.10, // radial oil way drilled through every shell
+      oilAz: { cradle: [150, 210], cap: [60, 300] }, // psi 0 crown-ward, 180 deck-ward
+      shellFacets: 24, // radial cuts per half shell: a hole is a drill, not a notch
+    },
     // 36 teeth = 2x the 18-tooth crank sprocket; one chain per camshaft, each
     // running in its own published band on the front face: four bands 0.3 cm wide
     // exactly filling the 28.6..29.8 sprocket stack (src/engine/drive.js).
