@@ -400,3 +400,593 @@ test('nothing floats: continuous camshafts through 7 bearings, drive sprockets i
     assert.equal(count(cam, 'bearing-'), 7, `${name}: 7 bearing journals expected`);
   }
 });
+
+// ---- A1-G2 / A1-G1: the cam chain drive (issue #4) -------------------------
+// One roller chain per DOHC camshaft, each in its own published band, driven
+// from the crank nose. The acceptance bar issue #4 sets is a REAL chain:
+// 18/36 teeth at the published 3.45 / 6.9 pitch radii and the derived 1.204 cm
+// pitch, tooth spaces machined from the roller profile so the rollers ride IN
+// the gaps, no link and no tooth crossing each other, and all four cam
+// sprockets wrapped from the crank. Every number below is either read out of
+// SPEC.crank.sprocket / SPEC.cam.sprocket by src/engine/drive.js, or measured
+// off the drawn solids - never typed into this file.
+const CH = SPEC.chain;
+const CS = SPEC.crank.sprocket;
+const KS = SPEC.cam.sprocket;
+const BANDS = KS.bands;
+const BANDS_ORDER = ['cam-L-intake', 'cam-L-exhaust', 'cam-R-intake', 'cam-R-exhaust'];
+const chainNames = BANDS_ORDER.map((g) => `cam-chain-${g.slice(4)}`);
+
+async function buildDrive() {
+  const { createDrive } = await import('../src/render/drive.js');
+  const mats = {};
+  for (const n of ['chainSteel', 'camShaft', 'anodized'])
+    mats[n] = new THREE.MeshStandardMaterial({ name: n });
+  return createDrive(mats);
+}
+async function buildCrank() {
+  const { createCranktrain } = await import('../src/render/cranktrain.js');
+  const mats = {};
+  for (const n of ['crankShaft', 'chainSteel', 'metal', 'journalBearing', 'shell', 'bolt', 'cap', 'web'])
+    mats[n] = new THREE.MeshStandardMaterial({ name: n });
+  return createCranktrain(mats);
+}
+
+const inPlane = (v) => ({ y: v.y, z: v.z });
+const planeDist = (a, b) => Math.hypot(a.y - b.y, a.z - b.z);
+const planeAz = (a) => wrap360(Math.atan2(a.y, a.z) / DEG);
+
+/**
+ * World-space profile vertices of a sprocket mesh, in the (y, z) plane the
+ * chain runs in, relative to that sprocket's own axis.
+ */
+function profile(mesh, axis) {
+  mesh.updateWorldMatrix(true, false);
+  const pos = mesh.geometry.attributes.position;
+  const v = new THREE.Vector3();
+  const out = [];
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    out.push({ y: v.y - axis.y, z: v.z - axis.z, w: { y: v.y, z: v.z } });
+  }
+  const r = out.map((p) => Math.hypot(p.y, p.z));
+  const min = Math.min(...r), max = Math.max(...r);
+  return { pts: out, minR: min, maxR: max };
+}
+
+/**
+ * Machined tooth spaces read OUT OF THE DRAWN SOLID: the vertices that belong
+ * to a gap are the ones standing inside the tip circle, and each gap's cutter
+ * arc is fitted to them by least squares. Returns the cutter centre and radius,
+ * so this file never re-derives what the renderer machined.
+ */
+function machinedGaps(mesh, axis, teeth, bore = 0) {
+  const { pts } = profile(mesh, axis);
+  const tipR = Math.max(...pts.map((p) => Math.hypot(p.y, p.z)));
+  const seen = new Map(); // the extrusion repeats every contour point on each wall
+  const cand = [];
+  for (const p of pts) {
+    const r = Math.hypot(p.y, p.z);
+    if (r > tipR - 1e-6) continue; // the tooth tip land: not part of a cutter arc
+    if (r <= bore + 1e-6) continue; // the bored spigot it runs on: not part of a cutter arc
+    const key = `${p.y.toFixed(9)}|${p.z.toFixed(9)}`;
+    if (seen.has(key)) continue;
+    seen.set(key, p);
+    cand.push(p);
+  }
+  // The gap floors are what the drawing machines lowest, so they are the seeds;
+  // every other flank vertex belongs to the floor it stands nearest to.
+  const floorR = Math.min(...cand.map((p) => Math.hypot(p.y, p.z)));
+  const groups = cand
+    .filter((p) => Math.hypot(p.y, p.z) <= floorR + 1e-6)
+    .map((p) => ({ az: planeAz(p), pts: [] }));
+  for (const p of cand) {
+    const a = planeAz(p);
+    let best = 0, bestD = Infinity;
+    groups.forEach((g, i) => {
+      const d = Math.abs(((a - g.az + 180) % 360 + 360) % 360 - 180);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    groups[best].pts.push(p);
+  }
+  const gaps = [];
+  for (const [k, entry] of groups.map((g, i) => [i, g])) {
+    const ps = entry.pts;
+    if (ps.length < 3) continue;
+    let sy = 0, sz = 0, syy = 0, szz = 0, syz = 0, sry = 0, srz = 0;
+    for (const p of ps) {
+      const r2 = p.y * p.y + p.z * p.z;
+      sy += p.y; sz += p.z; syy += p.y * p.y; szz += p.z * p.z; syz += p.y * p.z; sry += r2 * p.y; srz += r2 * p.z;
+    }
+    const n = ps.length;
+    const a11 = syy - sy * sy / n, a12 = syz - sy * sz / n, a22 = szz - sz * sz / n;
+    const b1 = sry - sy * (syy + szz) / n, b2 = srz - sz * (syy + szz) / n;
+    // 2*(a11*cy + a12*cz) = b1, 2*(a12*cy + a22*cz) = b2 for the linearized
+    // circle equation y2+z2 - 2 c.p + const = 0.
+    const det = a11 * a22 - a12 * a12;
+    const cy = (b1 * a22 - b2 * a12) / (2 * det), cz = (b2 * a11 - b1 * a12) / (2 * det);
+    const rad = ps.reduce((s, p) => s + Math.hypot(p.y - cy, p.z - cz), 0) / n;
+    gaps.push({ k, cy, cz, rad, az: planeAz({ y: cy, z: cz }), n: ps.length });
+  }
+  // profile() already stands every point off the sprocket's own axis, so its
+  // own minR is the drawn bore radius and its maxR is the drawn tip circle
+  const { minR } = profile(mesh, axis);
+  return { gaps, tipR, minR };
+}
+
+test('A1-G2 every cam-drive number derives from the two published sprockets', async () => {
+  const { chainPitch, wrapRadius, gapCutR, tipRadius, rootRadius, hubRadius } = await import('../src/engine/drive.js');
+  assert.ok(!('pitch' in CH) && !('pitchR' in CH) && !('teeth' in CH),
+    'SPEC.chain must not type a pitch or tooth count of its own: the drive derives them from the sprockets');
+  const p = chainPitch();
+  const arc = (sp) => (2 * Math.PI * sp.pitchR) / sp.teeth;
+  assert.ok(Math.abs(p - arc(KS)) < 1e-12 && Math.abs(p - arc(CS)) < 1e-12,
+    `chain pitch ${p} must be the shared pitch circle of both sprockets`);
+  assert.ok(Math.abs(p - 1.204) < 5e-4, `the published drive pitch is 1.204 cm, measured ${p.toFixed(5)}`);
+  // A chain sprocket's tip circle is a machined consequence of the roller it
+  // has to carry: the roller stands in the gap with its outer edge at the tip.
+  for (const sp of [CS, KS]) {
+    const want = sp.pitchR + p / 2 - CH.rollerR;
+    assert.ok(Math.abs(tipRadius(sp.pitchR) - want) < 1e-9,
+      `${sp.teeth}T tip radius ${tipRadius(sp.pitchR)} != pitchR + pitch/2 - rollerR = ${want}`);
+    assert.ok(Math.abs(rootRadius(sp.pitchR) - (sp.pitchR - gapCutR())) < 1e-9,
+      `${sp.teeth}T root radius must sit one cutter radius below the pitch circle`);
+    assert.ok(rootRadius(sp.pitchR) > sp.bore,
+      `${sp.teeth}T bore ${sp.bore} leaves no web under the machined root ${rootRadius(sp.pitchR)}`);
+  }
+  // The chain wraps the polygon through the gap centres, not the tip circle.
+  for (const sp of [CS, KS]) {
+    const wr = wrapRadius(sp.teeth);
+    assert.ok(wr > sp.pitchR && wr < tipRadius(sp.pitchR),
+      `${sp.teeth}T wrap radius ${wr} must lie between the pitch circle and the tip`);
+    const chord = 2 * wr * Math.sin(Math.PI / sp.teeth);
+    assert.ok(Math.abs(chord - p) < 1e-9, `${sp.teeth}T rollers one tooth apart must be one pitch apart`);
+  }
+  // Printed, not typed: every derived drive number this row quotes comes out of
+  // this run record, so the doc can re-quote it without hand-copying a figure.
+  console.log(`A1-G2 drive derivation: pitch ${p.toFixed(13)} cm = 2pi x ${CS.pitchR}/${CS.teeth}T = 2pi x ${KS.pitchR}/${KS.teeth}T; `
+    + `wrap seat ${wrapRadius(CS.teeth).toFixed(4)}/${wrapRadius(KS.teeth).toFixed(4)} cm, polygon action ${(wrapRadius(CS.teeth) - CS.pitchR).toFixed(6)}/${(wrapRadius(KS.teeth) - KS.pitchR).toFixed(6)} cm; `
+    + `cutter ${gapCutR().toFixed(4)} cm, tip ${tipRadius(CS.pitchR).toFixed(4)}/${tipRadius(KS.pitchR).toFixed(4)} cm, `
+    + `root ${rootRadius(CS.pitchR).toFixed(4)}/${rootRadius(KS.pitchR).toFixed(4)} cm, hub ${hubRadius(CS.pitchR).toFixed(4)}/${hubRadius(KS.pitchR).toFixed(4)} cm`);
+});
+
+test('A1-G2 the loop is a whole number of links: whole teeth, take-up inside the published travel', async () => {
+  const { driveContract, chainPitch, gapCutR, tipRadius } = await import('../src/engine/drive.js');
+  const dc = driveContract();
+  const p = chainPitch();
+  assert.equal(dc.chainCount, 4, 'one chain per DOHC camshaft');
+  assert.deepEqual(dc.bands, BANDS);
+  for (const r of dc.runs) {
+    const step1 = 360 / CS.teeth, step2 = 360 / KS.teeth;
+    assert.ok(Number.isInteger(r.wrap.crank) && Number.isInteger(r.wrap.cam), 'wraps must be whole teeth');
+    assert.equal(r.wrap.crank * step1 + r.wrap.cam * step2, 360,
+      `wrap ${r.wrap.crank}T crank + ${r.wrap.cam}T cam must close 360 deg of chain turn`);
+    assert.equal(r.linkCount, r.rollers.length, 'one roller per link');
+    assert.ok(Math.abs(r.loop - r.linkCount * p) < 1e-9, 'the loop is linkCount links of the pitch');
+    for (const key of ['A', 'B']) {
+      const s = r.spans[key];
+      assert.ok(Number.isInteger(s.links) && s.links > 1, `span ${key} carries a whole number of links`);
+      assert.ok(s.takeUp > 1e-9, `span ${key}: a taut chain must not need the links stretched`);
+      assert.ok(s.takeUp <= CH.tensionerTravel,
+        `span ${key} closure ${s.takeUp.toFixed(4)} cm exceeds the published tensioner travel ${CH.tensionerTravel}`);
+      assert.ok(s.distance <= s.links * p, `span ${key} is longer than its ${s.links} rigid links`);
+      assert.ok(s.bow.rise > 0 && s.bow.rise < 2, `span ${key} bow ${s.bow.rise} is not a chain deflection`);
+    }
+    assert.equal(r.linkCount % 2, 0, 'an even link count closes without a bending link');
+    assert.ok(gapCutR() > CH.rollerR, 'the machined gap must be bigger than the roller it carries');
+  }
+  assert.equal(new Set(dc.linkCounts).size, 1, 'all four chains are the same length');
+  assert.equal(new Set(dc.wrapCounts).size, 1, 'all four chains wrap the same number of teeth');
+  const D = dc.runs[0].D;
+  // A spur pair would have to stand at the sum of its pitch radii; the two axes
+  // are 36.48 cm apart, so no 3.45 / 6.9 gear pair can ever touch - the chain
+  // is not a stylistic choice here, it is the only way this geometry works.
+  assert.ok(D > tipRadius(CS.pitchR) + tipRadius(KS.pitchR),
+    `a direct gear mesh needs the axes at ${tipRadius(CS.pitchR) + tipRadius(KS.pitchR)} cm or nearer, they stand ${D} cm apart`);
+  assert.ok(Math.abs(D - (CS.pitchR + KS.pitchR)) > 25,
+    `the pitch radii sum to ${CS.pitchR + KS.pitchR} while the axes stand ${D} apart`);
+  const r0 = dc.runs[0];
+  console.log(`A1-G2 chain loops: ${dc.chainCount} chains in bands ${dc.bands.join('/')} cm, ${r0.linkCount} links of ${p.toFixed(4)} cm `
+    + `each wrapping ${r0.wrap.crank}T crank + ${r0.wrap.cam}T cam (loop ${r0.loop.toFixed(4)} cm), cam axes ${D.toFixed(4)} cm from the crank `
+    + `against a ${tipRadius(CS.pitchR) + tipRadius(KS.pitchR)} cm tip-sum and a ${CS.pitchR + KS.pitchR} cm pitch-sum`);
+  for (const key of ['A', 'B']) {
+    const s = r0.spans[key];
+    console.log(`A1-G2 span ${key}: ${s.distance.toFixed(4)} cm between seats on ${s.links} rigid links, take-up ${s.takeUp.toFixed(4)} cm `
+      + `of ${CH.tensionerTravel} cm published travel, bow rise ${s.bow.rise.toFixed(4)} cm on a R ${s.bow.R.toFixed(2)} cm arc`);
+  }
+});
+
+test('A1-G2 four chains, one per DOHC camshaft, each riding its own published band', async () => {
+  const { driveContract } = await import('../src/engine/drive.js');
+  const dc = driveContract();
+  const { group } = await buildDrive();
+  group.updateMatrixWorld(true);
+  const seen = new Map();
+  for (let i = 0; i < chainNames.length; i++) {
+    const ch = group.getObjectByName(chainNames[i]);
+    assert.ok(ch, `chain group ${chainNames[i]} missing`);
+    const bb = new THREE.Box3().setFromObject(ch);
+    const lo = BANDS[i], hi = BANDS[i] + KS.width;
+    assert.ok(bb.min.x >= lo + CH.bandClr - 1e-6 && bb.max.x <= hi - CH.bandClr + 1e-6,
+      `${ch.name}: chain x ${bb.min.x.toFixed(4)}..${bb.max.x.toFixed(4)} outside band ${lo}..${hi} by >= ${CH.bandClr}`);
+    assert.equal(count(ch, `${ch.name}-roller-`), dc.runs[i].linkCount,
+      `${ch.name}: ${count(ch, `${ch.name}-roller-`)} drawn rollers for the ${dc.runs[i].linkCount} links the measured chain has`);
+    console.log(`${ch.name}: drawn x ${bb.min.x.toFixed(4)}..${bb.max.x.toFixed(4)} cm inside its published band ${lo}..${hi} cm, `
+      + `${count(ch, `${ch.name}-roller-`)} rollers on the measured ${dc.runs[i].loop.toFixed(4)} cm loop`);
+    seen.set(lo, ch.name);
+    for (const kind of ['guide', 'tensioner'])
+      assert.ok(ch.getObjectByName(`${ch.name}-${kind}`), `${ch.name}: ${kind} missing`);
+  }
+  assert.equal(seen.size, 4, 'four distinct bands');
+  for (let i = 1; i < BANDS.length; i++) {
+    const a = group.getObjectByName(chainNames[i - 1]), b = group.getObjectByName(chainNames[i]);
+    const pa = new THREE.Box3().setFromObject(a), pb = new THREE.Box3().setFromObject(b);
+    assert.ok(pb.min.x - pa.max.x >= CH.bandClr - 1e-6,
+      `chains ${a.name} and ${b.name} touch: ${pa.max.x.toFixed(4)} vs ${pb.min.x.toFixed(4)}`);
+  }
+});
+
+test('A1-G2 the drawn chain is the measured chain: one roller per link, every link exactly the pitch', async () => {
+  const { chainLayout, chainPitch } = await import('../src/engine/drive.js');
+  const { group } = await buildDrive();
+  group.updateMatrixWorld(true);
+  const p = chainPitch();
+  for (const bank of ['L', 'R']) {
+    for (const valve of ['intake', 'exhaust']) {
+      const name = `cam-chain-${bank}-${valve}`;
+      const ch = group.getObjectByName(name);
+      const rollers = [];
+      ch.traverse((o) => { if (o.name.startsWith(`${name}-roller-`)) rollers.push(o); });
+      const lay = chainLayout(bank, valve);
+      assert.equal(rollers.length, lay.linkCount,
+        `${name}: ${rollers.length} drawn rollers for ${lay.linkCount} links`);
+      let worst = 0;
+      for (const o of rollers) worst = Math.max(worst, Math.abs(o.userData.pitch - p));
+      assert.ok(worst < 1e-9, `${name}: worst drawn link ${worst.toFixed(9)} cm off the ${p.toFixed(5)} cm pitch`);
+      const centres = rollers.map((o) => inPlane(new THREE.Vector3().setFromMatrixPosition(o.matrixWorld)));
+      for (let i = 0; i < centres.length; i++) {
+        const a = centres[i], b = centres[(i + 1) % centres.length];
+        assert.ok(Math.abs(planeDist(a, b) - p) < 1e-6,
+          `${name}: drawn roller ${i} to ${i + 1} stands ${planeDist(a, b).toFixed(6)} cm, need ${p.toFixed(6)}`);
+      }
+    }
+  }
+});
+
+test('A1-G2 the tooth spaces are machined where the chain engages them, with the roller\'s own air', async () => {
+  const { chainLayout, gapCutR } = await import('../src/engine/drive.js');
+  const { group } = await buildDrive();
+  const vt = await buildValvetrain();
+  const crank = await buildCrank();
+  group.updateMatrixWorld(true);
+  vt.group.updateMatrixWorld(true);
+  crank.group.updateMatrixWorld(true);
+  let worstAir = 9, leastAir = 9, checked = 0;
+  for (const bank of ['L', 'R']) {
+    for (const valve of ['intake', 'exhaust']) {
+      const name = `cam-chain-${bank}-${valve}`;
+      const ch = group.getObjectByName(name);
+      const lay = chainLayout(bank, valve);
+      const cam = vt.group.getObjectByName(`cam-${bank}-${valve}`);
+      const sp = cam.getObjectByName(`cam-sprocket-${bank}-${valve}`);
+      const axis = { y: lay.cam.y, z: lay.cam.z };
+      const { gaps, tipR, minR } = machinedGaps(sp, axis, KS.teeth, KS.bore);
+      assert.ok(Math.abs(minR - KS.bore) < 1e-3,
+        `${sp.name}: drawn bore ${minR.toFixed(4)} cm is not the ${KS.bore} cm cam journal it must run on`);
+      assert.ok(Math.abs(tipR - (KS.pitchR + chainPitchOf(KS) / 2 - CH.rollerR)) < 1e-3,
+        `${sp.name}: drawn tip circle ${tipR.toFixed(4)} cm is not the machined one`);
+      assert.equal(gaps.length, KS.teeth, `${sp.name}: ${gaps.length} machined gaps drawn, need ${KS.teeth}`);
+      for (const g of gaps) {
+        assert.ok(Math.abs(g.rad - gapCutR()) < 1e-3,
+          `${sp.name} gap ${g.k}: cutter radius ${g.rad.toFixed(4)} != rollerR + gapClr ${gapCutR()}`);
+        assert.ok(Math.abs(Math.hypot(g.cy, g.cz) - KS.pitchR) < 1e-3,
+          `${sp.name} gap ${g.k}: cutter centred at radius ${Math.hypot(g.cy, g.cz).toFixed(4)}, need the pitch circle ${KS.pitchR}`);
+      }
+      // every roller the chain puts on this sprocket
+      const onCam = ch.children.filter((o) => o.name.startsWith(`${name}-roller-`) && o.userData.on === 'cam');
+      assert.ok(onCam.length >= 2, `${name}: no rollers on the cam sprocket`);
+      for (const o of onCam) {
+        const c = inPlane(new THREE.Vector3().setFromMatrixPosition(o.matrixWorld));
+        const rel = { y: c.y - lay.cam.y, z: c.z - lay.cam.z };
+        let best = 9;
+        for (const g of gaps) best = Math.min(best, Math.hypot(rel.y - g.cy, rel.z - g.cz));
+        const air = gapCutR() - best - CH.rollerR;
+        assert.ok(best + CH.rollerR <= gapCutR(),
+          `${name}: roller at ${planeAz(rel).toFixed(2)} deg stands ${best.toFixed(4)} from the gap centre and crosses its wall`);
+        worstAir = Math.min(worstAir, air); checked += 1;
+        assert.ok(Math.hypot(rel.y, rel.z) < tipR, `${name}: roller stands outside the tip circle it is supposed to ride in`);
+      }
+      // and the crank side of the same chain
+      const lane = crank.group.getObjectByName('crank').getObjectByName('sprocket')
+        .getObjectByName(`sprocket-lane-${BANDS_ORDER.indexOf(`cam-${bank}-${valve}`)}`);
+      assert.ok(lane, `crank sprocket lane for ${name} missing`);
+      const cg = machinedGaps(lane, { y: 0, z: 0 }, CS.teeth, CS.bore);
+      assert.ok(Math.abs(cg.minR - CS.bore) < 1e-3,
+        `crank lane ${lane.name}: drawn bore ${cg.minR.toFixed(4)} cm is not the ${CS.bore} cm nose spigot it is machined on`);
+      assert.equal(cg.gaps.length, CS.teeth, `crank lane ${lane.name}: ${cg.gaps.length} gaps, need ${CS.teeth}`);
+      const onCrank = ch.children.filter((o) => o.name.startsWith(`${name}-roller-`) && o.userData.on === 'crank');
+      assert.ok(onCrank.length >= 2, `${name}: no rollers on the crank sprocket`);
+      for (const o of onCrank) {
+        const c = inPlane(new THREE.Vector3().setFromMatrixPosition(o.matrixWorld));
+        let best = 9;
+        for (const g of cg.gaps) best = Math.min(best, Math.hypot(c.y - g.cy, c.z - g.cz));
+        worstAir = Math.min(worstAir, gapCutR() - best - CH.rollerR); checked += 1;
+        assert.ok(best + CH.rollerR <= gapCutR(),
+          `${name}: crank roller stands ${best.toFixed(4)} off its gap centre and crosses the machined wall`);
+      }
+      leastAir = Math.min(leastAir, gapCutR());
+    }
+  }
+  assert.ok(checked >= 4 * (2 + 2), `${checked} engaged rollers measured, too few to call this a drive`);
+  assert.ok(worstAir > 0.02, `the tightest machined air around a roller is ${worstAir.toFixed(4)} cm`);
+  assert.ok(worstAir <= CH.gapClr + 1e-3,
+    `worst air ${worstAir.toFixed(4)} cm exceeds the published running clearance ${CH.gapClr}`);
+  function chainPitchOf(sp) { return (2 * Math.PI * sp.pitchR) / sp.teeth; }
+});
+
+test('A1-G2 no drawn tooth crosses a drawn roller, and no chain plate shares x with a tooth', async () => {
+  const { chainPitch } = await import('../src/engine/drive.js');
+  const { group } = await buildDrive();
+  const vt = await buildValvetrain();
+  const crank = await buildCrank();
+  for (const g of [group, vt.group, crank.group]) g.updateMatrixWorld(true);
+  const p = chainPitch();
+  let worst = 0, worstAt = '';
+  for (const bank of ['L', 'R']) {
+    for (const valve of ['intake', 'exhaust']) {
+      const name = `cam-chain-${bank}-${valve}`;
+      const ch = group.getObjectByName(name);
+      const i = BANDS_ORDER.indexOf(`cam-${bank}-${valve}`);
+      const rollers = ch.children.filter((o) => o.name.startsWith(`${name}-roller-`));
+      const cam = vt.group.getObjectByName(`cam-${bank}-${valve}`);
+      const meshes = [
+        cam.getObjectByName(`cam-sprocket-${bank}-${valve}`),
+        crank.group.getObjectByName('crank').getObjectByName('sprocket').getObjectByName(`sprocket-lane-${i}`),
+      ];
+      const axisOf = [
+        { y: rollers[0].userData.axis.y, z: rollers[0].userData.axis.z },
+        { y: 0, z: 0 },
+      ];
+      for (let m = 0; m < meshes.length; m++) {
+        const { pts } = profile(meshes[m], axisOf[m]);
+        for (const o of rollers) {
+          const c = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+          for (const q of pts) {
+            const d = Math.hypot(q.w.y - c.y, q.w.z - c.z);
+            if (worstAt === '' || d < worst) { worst = d; worstAt = `${name} roller to ${meshes[m].name}`; }
+          }
+        }
+      }
+      // side plates vs the tooth lane they have to clear
+      const plates = ch.children.filter((o) => o.name.startsWith(`${name}-plates`));
+      assert.equal(plates.length, 2, `${name}: a roller chain has two side-plate layers, got ${plates.length}`);
+      const lanes = [
+        new THREE.Box3().setFromObject(meshes[0]),
+        new THREE.Box3().setFromObject(meshes[1]),
+      ];
+      for (const pl of plates) {
+        const pb = new THREE.Box3().setFromObject(pl);
+        for (const lb of lanes) {
+          // a plate is clear when it lies wholly before or wholly behind the
+          // tooth lane it runs beside: the air is then the nearer of the two
+          // measured gaps, which is the LARGER of these two signed numbers
+          const clear = Math.max(pb.min.x - lb.max.x, lb.min.x - pb.max.x);
+          assert.ok(clear >= CH.plateClr - 1e-6,
+            `${name} plate x ${pb.min.x.toFixed(4)}..${pb.max.x.toFixed(4)} shares x with a tooth lane ${lb.min.x.toFixed(4)}..${lb.max.x.toFixed(4)} (air ${clear.toFixed(4)})`);
+        }
+      }
+      const plateLayers = plates.map((pl) => new THREE.Box3().setFromObject(pl));
+      const inner = Math.min(plateLayers[0].max.x, plateLayers[1].max.x);
+      const outer = Math.max(plateLayers[0].min.x, plateLayers[1].min.x);
+      assert.ok(outer - inner >= CH.channel - 1e-6,
+        `${name}: the channel between its plate layers is ${outer - inner}, need ${CH.channel} for a ${CH.toothW} tooth`);
+      assert.ok(outer - inner <= CH.channel + 1e-6, `${name}: channel ${outer - inner} wider than published`);
+      const xOf = (b) => `${b.min.x.toFixed(4)}..${b.max.x.toFixed(4)}`;
+      console.log(`${name}: two plate layers x ${xOf(plateLayers[0])} and x ${xOf(plateLayers[1])} cm `
+        + `leave a ${outer - inner} cm channel for the ${CH.toothW} cm tooth they ride beside`);
+      // adjacent rollers on the drawn loop stand one pitch apart: a chain whose
+      // own links overlap is not a chain
+      let worstJoint = 9;
+      for (const o of rollers) {
+        const c = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+        for (const q of rollers) {
+          if (q === o) continue;
+          const e = new THREE.Vector3().setFromMatrixPosition(q.matrixWorld);
+          const d = Math.hypot(c.y - e.y, c.z - e.z);
+          if (d < worstJoint) worstJoint = d;
+        }
+      }
+      assert.ok(worstJoint >= p - 1e-6,
+        `${name}: its closest pair of drawn rollers stands ${worstJoint.toFixed(4)} cm apart, under the ${p.toFixed(4)} cm pitch`);
+    }
+  }
+  assert.ok(worst >= CH.rollerR - 1e-6,
+    `a tooth vertex stands ${worst.toFixed(4)} cm from a roller centre - ${worstAt}`);
+});
+
+test('A1-G2 the drive is a chain riding in the gaps, not a band over the sprocket tips', async () => {
+  const { tipRadius } = await import('../src/engine/drive.js');
+  const { group } = await buildDrive();
+  group.updateMatrixWorld(true);
+  for (const bank of ['L', 'R']) {
+    for (const valve of ['intake', 'exhaust']) {
+      const name = `cam-chain-${bank}-${valve}`;
+      const ch = group.getObjectByName(name);
+      const rollers = ch.children.filter((o) => o.name.startsWith(`${name}-roller-`));
+      const lay = rollers[0].userData.layout;
+      const onCam = rollers.filter((o) => o.userData.on === 'cam');
+      const onCrank = rollers.filter((o) => o.userData.on === 'crank');
+      const camR = onCam.map((o) => planeDist(inPlane(new THREE.Vector3().setFromMatrixPosition(o.matrixWorld)), lay.cam));
+      const crankR = onCrank.map((o) => Math.hypot(o.userData.rel.y, o.userData.rel.z));
+      const tipC = tipRadius(CS.pitchR), tipK = tipRadius(KS.pitchR);
+      assert.ok(Math.max(...camR) < tipK && Math.max(...crankR) < tipC,
+        `${name}: a wrap roller stands outside its sprocket's tip circle - the chain would ride over the teeth`);
+      assert.ok(Math.min(...camR) > tipK - CH.rollerR - 1e-6 && Math.min(...crankR) > tipC - CH.rollerR - 1e-6,
+        `${name}: a wrap roller is cut deeper than the tip circle minus the roller radius`);
+      const perGap = new Map();
+      for (const o of rollers) {
+        if (o.userData.gap === undefined) continue;
+        const k = `${o.userData.on}:${o.userData.gap}`;
+        perGap.set(k, (perGap.get(k) ?? 0) + 1);
+      }
+      for (const [k, n] of perGap)
+        assert.equal(n, 1, `machined ${k} carries ${n} rollers: one roller per gap`);
+      assert.equal(perGap.size, rollers.filter((o) => o.userData.gap !== undefined).length,
+        `${name}: gaps are double-booked`);
+    }
+  }
+});
+
+test('A1-G1 no chain part, sprocket lane or shoe crosses the fore casting plane', async () => {
+  const { group } = await buildDrive();
+  const crank = await buildCrank();
+  const vt = await buildValvetrain();
+  for (const g of [group, crank.group, vt.group]) g.updateMatrixWorld(true);
+  const FACE = SPEC.head.deckFore ?? SPEC.crank.sprocket.x0; // 28.6: the machined shoulder
+  const bb = new THREE.Box3().setFromObject(group);
+  assert.ok(bb.min.x >= CS.x0 - 1e-6, `chain drive reaches x ${bb.min.x.toFixed(4)} behind the sprocket plane ${CS.x0}`);
+  for (const bank of ['L', 'R']) {
+    for (const valve of ['intake', 'exhaust']) {
+      const cam = vt.group.getObjectByName(`cam-${bank}-${valve}`);
+      const sp = new THREE.Box3().setFromObject(cam.getObjectByName(`cam-sprocket-${bank}-${valve}`));
+      assert.ok(sp.min.x >= FACE - 1e-6, `cam sprocket for ${bank} ${valve} reaches ${sp.min.x.toFixed(4)} into the head shoulder at ${FACE}`);
+    }
+  }
+  const lanes = crank.group.getObjectByName('crank').getObjectByName('sprocket');
+  assert.ok(lanes, 'crank nose sprocket group missing');
+  for (let i = 0; i < BANDS.length; i++) {
+    const lane = lanes.getObjectByName(`sprocket-lane-${i}`);
+    assert.ok(lane, `crank sprocket lane ${i} missing: four DOHC sprockets need four lanes`);
+    const lb = new THREE.Box3().setFromObject(lane);
+    assert.ok(Math.abs(lb.min.x - (BANDS[i] + KS.width / 2 - CH.toothW / 2)) < 1e-3,
+      `crank lane ${i} sits at ${lb.min.x.toFixed(4)}..${lb.max.x.toFixed(4)}, not centred in band ${BANDS[i]}`);
+  }
+  assert.equal(count(lanes, 'sprocket-lane-'), 4, 'one 18-tooth lane per chain');
+});
+
+test('A1-G1 the chain holds its pose, its link length and its gap lock through a full 720 deg cycle', async () => {
+  const { driveContract, chainPose, chainPitch, gapCutR, wrapRadius } = await import('../src/engine/drive.js');
+  const dc = driveContract();
+  const p = chainPitch();
+  let worstLink = 0, worstSeat = 0, worstAir = 9, seats = 0;
+  let takeMin = 9, takeMax = 0, hops = 0;
+  const seenWrap = new Map();
+  const seenHop = new Set();
+  for (let theta = 0; theta < 720; theta += 2) {
+    for (const lay of dc.runs) {
+      const pose = chainPose(lay, theta);
+      assert.equal(pose.rollers.length, lay.linkCount, `link count changed at crank ${theta}`);
+      const c1 = wrapRadius(CS.teeth), c2 = wrapRadius(KS.teeth);
+      for (const r of pose.rollers) {
+        if (r.on === 'crank') {
+          assert.ok(Math.abs(planeDist(r, { y: 0, z: 0}) - c1) < 1e-6,
+            `crank wrap roller left the wrap circle at crank ${theta}`);
+        } else if (r.on === 'cam') {
+          assert.ok(Math.abs(planeDist(r, lay.cam) - c2) < 1e-6,
+            `cam wrap roller left the wrap circle at crank ${theta}`);
+        }
+      }
+      for (const l of pose.links) worstLink = Math.max(worstLink, Math.abs(l.chord - p));
+      for (const key of ['A', 'B']) {
+        const s = pose.spans[key];
+        takeMin = Math.min(takeMin, s.takeUp);
+        takeMax = Math.max(takeMax, s.takeUp);
+        assert.ok(s.takeUp > 1e-9 && s.takeUp <= CH.tensionerTravel,
+          `span ${key} closure ${s.takeUp.toFixed(4)} at crank ${theta} outside the published travel ${CH.tensionerTravel}`);
+      }
+      // the drawn sprockets turn at the ratio the teeth realise: crank theta,
+      // cam theta/2. The chain's seats must sit in those rotated gaps.
+      for (const r of pose.rollers) {
+        if (r.gap === undefined) continue;
+        seats += 1;
+        const rel = r.on === 'cam' ? { y: r.y - lay.cam.y, z: r.z - lay.cam.z } : r;
+        const gap = r.on === 'cam' ? pose.gaps.cam[r.gap] : pose.gaps.crank[r.gap];
+        const off = Math.hypot(rel.y - gap.y, rel.z - gap.z);
+        worstSeat = Math.max(worstSeat, off);
+        worstAir = Math.min(worstAir, gapCutR() - off - CH.rollerR);
+      }
+      seenWrap.set(`${pose.wrap.crank}+${pose.wrap.cam}`, (seenWrap.get(`${pose.wrap.crank}+${pose.wrap.cam}`) ?? 0) + 1);
+      seenHop.add(`${pose.engagement.h1}:${pose.engagement.h2}`);
+      hops = seenHop.size;
+    }
+  }
+  // A rigid-link chain seats on the polygon through the gap centres, not on the
+  // arc-pitch circle the gaps are machined from, so the seating offset is the
+  // polygon action - derived here from the published pitch and tooth counts,
+  // never typed - and it has to fit inside the air the gaps are cut with.
+  const polygonAction = Math.max(
+    wrapRadius(CS.teeth) - CS.pitchR,
+    wrapRadius(KS.teeth) - KS.pitchR,
+  );
+  console.log(`A1-G2 720 deg cycle at 2 crank degrees x 4 chains: seated rollers ${seats}, worst seating offset ${worstSeat.toFixed(6)} cm = the polygon action ${polygonAction.toFixed(6)} cm, `
+    + `tightest roller air inside a machined gap ${worstAir.toFixed(4)} cm of the ${CH.gapClr} cm published clearance, `
+    + `worst link error ${worstLink.toFixed(9)} cm of the ${p.toFixed(4)} cm pitch, take-up band ${takeMin.toFixed(4)}..${takeMax.toFixed(4)} cm of ${CH.tensionerTravel} cm travel, `
+    + `engagement steps ${[...seenWrap.keys()].join('/')}, wrap-centre hops ${hops}`);
+  assert.ok(worstLink < 1e-6, `worst drawn link off the pitch over 720 deg: ${worstLink.toFixed(9)} cm`);
+  assert.ok(Math.abs(worstSeat - polygonAction) < 1e-9,
+    `worst roller-to-gap seating offset ${worstSeat.toFixed(9)} cm is not the polygon action ${polygonAction.toFixed(9)} cm`);
+  assert.ok(worstSeat <= gapCutR() - CH.rollerR + 1e-9,
+    `seating offset ${worstSeat.toFixed(9)} cm exceeds the ${gapCutR() - CH.rollerR} cm the gaps are cut with`);
+  assert.ok(worstAir > 0.02, `tightest roller air over the cycle: ${worstAir.toFixed(4)} cm`);
+  assert.ok(seats >= 4 * 720 / 2 * 2, `${seats} seated rollers measured over the cycle`);
+  for (const [k, n] of seenWrap) assert.ok(n > 0, k);
+});
+
+test('A1-G2 the guide and the tensioner ride the two bows the closure needs', async () => {
+  const { driveContract, chainPose } = await import('../src/engine/drive.js');
+  const { group } = await buildDrive();
+  group.updateMatrixWorld(true);
+  const dc = driveContract();
+  for (const lay of dc.runs) {
+    const name = `cam-chain-${lay.bank}-${lay.valve}`;
+    const ch = group.getObjectByName(name);
+    const guide = ch.getObjectByName(`${name}-guide`);
+    const shoe = ch.getObjectByName(`${name}-tensioner`);
+    assert.ok(guide.userData.onSpan && shoe.userData.onSpan, `${name}: guide/shoe not assigned to a span`);
+    assert.notEqual(guide.userData.onSpan, shoe.userData.onSpan, `${name}: guide and tensioner on the same span`);
+    const pose = chainPose(lay, 0);
+    for (const [kind, obj, spanKey] of [['guide', guide, guide.userData.onSpan], ['tensioner', shoe, shoe.userData.onSpan]]) {
+      const s = pose.spans[spanKey];
+      const apex = s.apex;
+      const c = new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
+      const d = Math.hypot(c.y - apex.y, c.z - apex.z);
+      assert.ok(d < 1e-3, `${name} ${kind} is ${d.toFixed(4)} cm off the bow apex it is supposed to ride`);
+      assert.ok(Math.abs(obj.userData.padRise - s.bow.rise) < 1e-6,
+        `${name} ${kind} pad rise ${obj.userData.padRise} != measured span closure rise ${s.bow.rise}`);
+      assert.ok(s.takeUp <= CH.tensionerTravel || kind === 'guide',
+        `${name}: the guide span closure ${s.takeUp.toFixed(4)} needs the tensioner`);
+
+      // The pad has to be machined CLEAR of the chain it rides, and it has to
+      // stand where the bow says - not hovering somewhere safe and useless.
+      // Both bounds come from the drawn solid and the span's own arc numbers.
+      const pad = obj.children.find((o) => o.isMesh);
+      assert.ok(pad, `${name} ${kind}: no pad solid drawn on its mount`);
+      const pg = pad.geometry.attributes.position;
+      let loY = 9, hiY = -9, loZ = 9, hiZ = -9;
+      for (let i = 0; i < pg.count; i++) {
+        loY = Math.min(loY, pg.getY(i)); hiY = Math.max(hiY, pg.getY(i));
+        loZ = Math.min(loZ, pg.getZ(i)); hiZ = Math.max(hiZ, pg.getZ(i));
+      }
+      const run = hiY - loY;
+      const inv = new THREE.Matrix4().copy(pad.matrixWorld).invert();
+      let air = 9;
+      for (const o of ch.children.filter((x) => x.name.startsWith(`${name}-roller-`))) {
+        const p = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).applyMatrix4(inv);
+        // the pad only ever turns about world X, so a roller (its swept volume a
+        // cylinder of rollerR along that same axis) reduces to its centre point
+        // standing off the pad rectangle in the (y, z) plane
+        const dy = Math.max(Math.abs(p.y) - hiY, Math.abs(p.y) - -loY, 0);
+        const dz = p.z > hiZ ? p.z - hiZ : (p.z < loZ ? loZ - p.z : 0);
+        air = Math.min(air, Math.hypot(dy, dz) - CH.rollerR);
+      }
+      assert.ok(air >= CH.plateClr - 1e-9,
+        `${name} ${kind}: its pad stands only ${air.toFixed(4)} cm clear of the rollers it rides (need the published ${CH.plateClr} cm air)`);
+      const sag = s.bow.R - Math.sqrt(s.bow.R * s.bow.R - (run / 2) * (run / 2));
+      assert.ok(air <= CH.plateClr + sag + 1e-6,
+        `${name} ${kind}: its pad stands ${air.toFixed(4)} cm off the chain when the bow lets it stand at most ${CH.plateClr + sag} - it is not riding its span`);
+      console.log(`${name} ${kind} on span ${spanKey}: pad face ${pad.userData.faceGap} cm off the roller centres, `
+        + `pad run ${run.toFixed(4)} cm sagging ${sag.toFixed(4)} cm on the span's R ${s.bow.R.toFixed(2)} cm bow, `
+        + `tightest pad-to-roller air ${air.toFixed(4)} cm against the published ${CH.plateClr} cm, in ${pad.material.name}`);
+    }
+  }
+});
