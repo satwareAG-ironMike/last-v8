@@ -12,17 +12,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SPEC, bankPoint, bankUp, bankOut, camAxisBank } from '../src/engine/spec.js';
+import { bearingStack } from '../src/engine/bearings.js';
 import { createBlock } from '../src/render/block.js';
 import { createCranktrain } from '../src/render/cranktrain.js';
 import { createValvetrain } from '../src/render/valvetrain.js';
 import { createHeads } from '../src/render/heads.js';
 import { createManifolds, manifoldSpecs } from '../src/render/manifolds.js';
+import { BANK_RE, closestToShell, newShell, REACH, shellAdd, shellBox, surfaceOf } from './support/surface-clearance.mjs';
 
 const M = SPEC.manifold;
 const B = SPEC.block;
 const H = SPEC.head;
 const valves = ['intake', 'exhaust'];
 const EPS = 1e-4;
+const exempt = new Set(['exFlange', 'exNeck', 'inFlange', 'inNeck']); // these mate by design
 
 const materials = new Proxy({}, {
   get: (t, k) => (t[k] ??= new THREE.MeshStandardMaterial({ name: String(k) })),
@@ -233,11 +236,30 @@ test('exhaust flanges and necks mate exactly onto the head outboard port face', 
   }
 });
 
-test('intake flanges mate onto the head inboard face and the plenum clears every cam boss', async () => {
+test('intake flanges mate onto the head inboard face and the plenum clears every cam bearing column', async () => {
   const { group } = build();
-  // a cam boss is a sleeve around the 2.05 bearing: its outer surface sits at
-  // cam-axis |out| + bearingR + 0.75 wall, measured 8.13 on the real casting
-  const bossReach = Math.abs(camAxisBank('L', 'intake')[1]) + SPEC.cam.bearingR + 0.75;
+  // The furthest thing a cam bearing column puts out from the cam axis line is no
+  // longer the column itself: A1-G7 stands each column on a cast bearing housing
+  // whose risers run past the wrench at a cap bolt and up to the cam cover seating
+  // plane. That reach is measured off the drawn housings of the intake line, not
+  // typed - it used to be the old closed boss (bearingR + a typed 0.75 wall) and
+  // before the columns existed at all.
+  const heads = createHeads(materials).group;
+  const [camA, oCam] = camAxisBank('L', 'intake');
+  const vL = bankVectors('L');
+  let towerReach = 0;
+  for (const o of heads.getObjectByName('head-L').children) {
+    if (o.userData.kind !== 'housing' || o.userData.valve !== 'intake') continue;
+    for (const q of vertsOf(o).map((p) => localOf(vL, 'L', p)))
+      towerReach = Math.max(towerReach, Math.hypot(q.along - camA, q.out - oCam));
+  }
+  // Diagnostic, not the clearance law: the housing must at least reach the column
+  // it carries. A plenum is not kept out of a casting by comparing the two parts'
+  // individual extremes - those extremes happen at different points in space - so
+  // the clearance itself is measured pair by pair below.
+  assert.ok(towerReach > bearingStack().castOdR - EPS,
+    `the drawn bearing housing reaches ${towerReach.toFixed(4)} cm off the cam axis line, less than the ${bearingStack().castOdR} cm column outside of the stack - the housing does not reach the column it is meant to carry`);
+  console.log(`plenum-to-bearing-tower reach diagnostic: housing reaches ${towerReach.toFixed(4)} cm off the intake cam axis line at |out| ${Math.abs(oCam).toFixed(4)}, i.e. the tower stands out to |out| ${(Math.abs(oCam) + towerReach).toFixed(4)}`);
   for (const bank of ['L', 'R']) {
     const v = bankVectors(bank);
     for (const st of B.stations) {
@@ -251,11 +273,19 @@ test('intake flanges mate onto the head inboard face and the plenum clears every
     }
     const plenum = group.getObjectByName(`plenum-${bank}`);
     const vs = vertsOf(plenum);
-    const deepestOut = Math.max(...vs.map((p) => p.dot(v.out)));
-    // plenum is inboard of the head: its outboard-most point must clear the cam
-    // boss reach (boss OD 2.85 around the cam axis at |out| 5.28) by >= 1 cm
-    assert.ok(deepestOut <= -bossReach - 1.0 + EPS,
-      `plenum outboard face ${deepestOut} does not clear the cam boss at -${bossReach}`);
+    // The plenum hangs in the V, inboard of every cam bearing column of this bank.
+    // Its clearance of that casting is measured as a pair - plenum surface against
+    // the drawn housing triangles, exactly, by test/support/surface-clearance.mjs -
+    // because the two parts' individual extents happen at different points in space
+    // and comparing them proves nothing. 1 cm is the minimum a cast tower and a
+    // bolted plenum bar may stand apart.
+    const tower = newShell();
+    for (const o of heads.getObjectByName(`head-${bank}`).children)
+      if (o.userData.kind === 'housing' && o.userData.valve === 'intake') shellAdd(tower, o);
+    const near = closestToShell(plenum, tower);
+    console.log(`plenum ${bank} closest approach to a cam bearing housing: ${near.d === Infinity ? `over ${REACH}` : near.d.toFixed(3)} cm at ${bank} ${near.into || 'nothing'}`);
+    assert.ok(near.d >= 1.0,
+      `plenum ${bank} stands only ${near.d.toFixed(3)} cm from ${near.into} at (${near.at ? `${near.at.x.toFixed(2)}, ${near.at.y.toFixed(2)}, ${near.at.z.toFixed(2)}` : 'n/a'}) - a cast cam bearing housing and the plenum bar it has to route around need at least 1 cm between their surfaces`);
     const halfX = Math.max(...vs.map((p) => Math.abs(p.x)));
     assert.ok(halfX <= SPEC.crank.sprocket.x0 - 5.0, `plenum reaches x ${halfX}, too close to the ${SPEC.crank.sprocket.x0} sprocket band`);
     const aMin = Math.min(...vs.map((p) => p.dot(v.up)));
@@ -302,7 +332,6 @@ test('collector and pair outlets are sized for the flow of the tubes they merge'
 
 test('nothing in the pipework touches the block, heads, valvetrain or cranktrain', async () => {
   const { group } = build();
-  const exempt = new Set(['exFlange', 'exNeck', 'inFlange', 'inNeck']); // these mate by design
   let worst = Infinity, worstAt = null;
   for (const bank of ['L', 'R']) {
     const v = bankVectors(bank);
@@ -318,6 +347,50 @@ test('nothing in the pipework touches the block, heads, valvetrain or cranktrain
     });
   }
   assert.ok(worst >= 0.5, `closest pipework-to-engine gap ${worst.toFixed(3)} cm at ${JSON.stringify(worstAt)}`);
+});
+
+// A1-G7 (issue #8 addendum item 4): the head now carries 28 cast cam bearing
+// housings. A bearing housing is casting that cannot be moved, so the pipework has
+// to be routed around it - and the 1 cm voxel reading used above can miss a real
+// intrusion (a pipe vertex and a casting vertex in neighbouring cells can sit
+// 0.5 cm apart in the grid while their surfaces interpenetrate). This law therefore
+// measures the same pair exactly: every pipework surface point against the real
+// housing triangles with test/support/engine-triangles.mjs. Flanges and necks are
+// exempt because they mate onto the head port face by design.
+test('A1-G7: every cam bearing housing keeps the pipework out of its casting (exact measure)', async () => {
+  const { group: headGroup } = createHeads(materials);
+  const { group: pipeGroup } = createManifolds(materials);
+  headGroup.updateMatrixWorld(true);
+  pipeGroup.updateMatrixWorld(true);
+  const housings = [];
+  for (const bank of ['L', 'R'])
+    for (const o of headGroup.getObjectByName(`head-${bank}`).children)
+      if (o.userData.kind === 'housing') housings.push(o);
+  assert.equal(housings.length, 28, '28 cam bearing housings expected, one per bearing column');
+  const housingShell = newShell();
+  for (const h of housings) shellAdd(housingShell, h);
+  const pipeShell = newShell();
+  const pipes = [];
+  pipeGroup.traverse((o) => {
+    if (!o.isMesh || o.isInstancedMesh) return;
+    if (!BANK_RE.test(o.name) || exempt.has(o.userData.kind)) return;
+    pipes.push(o);
+    shellAdd(pipeShell, o);
+  });
+  const rows = [];
+  const probe = (shell, o, other) => {
+    const r = closestToShell(o, shell);
+    if (r.d < REACH) rows.push({ d: r.d, from: o.name, into: r.into, at: `${r.at.x.toFixed(2)}, ${r.at.y.toFixed(2)}, ${r.at.z.toFixed(2)}`, other });
+  };
+  for (const h of housings) probe(pipeShell, h, 'pipework');
+  for (const o of pipes) probe(housingShell, o, 'bearing housing');
+  rows.sort((a, b) => a.d - b.d);
+  const seen = new Set(), uniq = [];
+  for (const r of rows) { const k = `${r.from}|${r.into}`; if (seen.has(k)) continue; seen.add(k); uniq.push(r); }
+  const bad = uniq.filter((r) => r.d < 0.5);
+  console.log(`A1-G7 housing-to-pipework clearance, ${uniq.length} pairs within ${REACH} cm, 8 closest: ${uniq.slice(0, 8).map((r) => `${r.d.toFixed(3)} ${r.from} <-> ${r.into}`).join('; ')}`);
+  assert.equal(bad.length, 0,
+    `${bad.length} housing/pipework pairs stand under 0.5 cm, the closest being ${uniq.length ? `${uniq[0].d.toFixed(3)} cm between ${uniq[0].from} and ${uniq[0].into} at (${uniq[0].at})` : 'none'}. A cam bearing housing is cast into the head and the pipework is bolted outside it: where the two share volume, either the housing shape or the runner/primary routing has to change - a header that passes through a bearing tower cannot be built.`);
 });
 
 test('pipework never enters the cam sweep, the crankcase rotating bay or a bore tunnel', async () => {

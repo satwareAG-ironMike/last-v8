@@ -315,9 +315,12 @@ test('A1-G3 the machined lobe: base circle, ramps, flanks, nose, lift, duration,
     );
   }
   // journal / base-circle / nose stepping: everything turned or ground lands on the
-  // 0.05 cm increment a grinder or a cam journal grinder works in
+  // 0.05 cm increment a grinder or a cam journal grinder works in. SPEC.cam.bearingR
+  // is named the line bore the head machines, not a bearing: A1-G7 publishes the
+  // stack, and the bearing that rides in that bore is a 0.26 cm shell over a 1.75 cm
+  // cam journal (src/engine/bearings.js).
   const step = 0.05;
-  const names = { 'cam base circle': SPEC.head.camBaseRadius, 'cam journal': SPEC.head.camJournalRadius, 'cam bearing': SPEC.cam.bearingR, 'max lift': SPEC.valves.maxLift };
+  const names = { 'cam base circle': SPEC.head.camBaseRadius, 'cam journal': SPEC.head.camJournalRadius, 'cam line bore': SPEC.cam.bearingR, 'max lift': SPEC.valves.maxLift };
   if (SPEC.valves.lobeNoseRadius !== undefined) names['lobe nose radius'] = SPEC.valves.lobeNoseRadius;
   for (const [name, v] of Object.entries(names)) {
     assert.ok(Math.abs(v / step - Math.round(v / step)) < 1e-9, `${name} ${v} is not stepped to ${step} cm`);
