@@ -520,6 +520,12 @@ test('A1-G7 each bank carries its own cam bearing cap bolt set', (t) => {
     assert.ok(/left bank|right bank/.test(label) && label.includes(bank === 'L' ? 'left' : 'right'),
       `partLabel("${name}") reads "${label}" - the bolts hold the caps of one bank, so the label has to say which`);
 
+    // the label is a teardown instruction a builder reads, so the number it states
+    // has to be the number the mesh actually carries
+    const labelBolts = Number((label.match(/(\d+)\s+bolts/) || [])[1]);
+    assert.equal(labelBolts, obj.count,
+      `partLabel("${name}") tells the builder ${labelBolts} bolts, the mesh carries ${obj.count}: "${label}"`);
+
     // the fastener leaves with the casting it is screwed into: same family, same
     // stage as its head (see the spark plug note in explodeRules for why a later
     // stage or a family of its own breaks the chain)

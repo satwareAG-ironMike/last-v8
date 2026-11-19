@@ -166,6 +166,12 @@ export function explodeRules() {
     // explode/framing laws above them.
     rule(/^plug-cyl\d+$/, (n) => `bank-${partBank(n)}`, 4),
     rule(/^head-[LR]$/, (n) => `bank-${partBank(n)}`, 4),
+    // A cam bearing cap bolt is screwed down through the cap tab and the cradle
+    // tab cast into ONE bank's head casting, so it leaves with that head: same
+    // family, same stage, exactly like the spark plug above. Per-bank meshes are
+    // what makes this rule possible at all - a single mesh named cam-cap-bolts
+    // carries no bank, so partBank reads null and no family can be derived.
+    rule(/^cam-cap-bolts-([LR])$/, (n) => `bank-${partBank(n)}`, 4),
     rule(/^valve-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 5),
     rule(/^spring-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 6),
     rule(/^bucket-cyl\d+-(intake|exhaust)$/, (n) => `bank-${partBank(n)}`, 7),
@@ -341,6 +347,12 @@ export function partLabel(name) {
   }
   const cover = /^cam-cover-([LR])-(intake|exhaust)$/.exec(name);
   if (cover) return `Cam cover - ${cover[1] === 'L' ? 'left' : 'right'} bank ${cover[2]}`;
+  const capBolt = /^cam-cap-bolts-([LR])$/.exec(name);
+  if (capBolt) {
+    const side = capBolt[1] === 'L' ? 'left' : 'right';
+    const columns = SPEC.cam.bearings.length * 2; // 7 journals per cam x 2 cam lines per bank
+    return `Cam bearing cap bolts - ${side} bank: ${columns * 2} bolts, one each side of the line bore at the ${columns} split bearing columns of this bank`;
+  }
   const head = /^head-([LR])$/.exec(name);
   if (head) return `Cylinder head - ${head[1] === 'L' ? 'left' : 'right'} bank`;
   const gasket = /^gasket-([LR])$/.exec(name);
