@@ -1,8 +1,13 @@
 // Cylinder heads: two aluminium castings standing on the block deck through a
 // compressed copper head gasket. The deck rails carry the 32 head bolts and the
-// gasket clamping load; each casting carries the 28 cam bearing bosses (bore =
-// bearing OD + 0.05 running clearance), the bearing caps and clamps, four cam
-// girder bridges, the bucket guide bores, the machined spring-seat floors, the
+// gasket clamping load; each casting carries the 28 split, line-bored cam bearing
+// columns (A1-G7): a cradle half cast integral with the head, a cap half bolted onto
+// a drilled tab pair, and a replaceable bearing shell with an oil hole inside each
+// half - all machined to the one published line bore from src/engine/bearings.js.
+// The closed 360-degree boss, its web, its clamps and the cam girder bridges that
+// used to carry the cam are gone: no crown-side girder stands along the tunnel,
+// because one would block either the cap lift path or the wrench at a cap bolt.
+// The bucket guide bores, the machined spring-seat floors, the
 // spring tubes, the valve guides and the hardened seat inserts exactly on the
 // timing.js seat/axis points, plus four bolt-on cam covers whose ceiling clears
 // every rotating lobe nose. Every dimension derives from src/engine/spec.js and
@@ -14,10 +19,13 @@
 // carry the four chain sprockets (band starts at 28.6) outside the casting.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { SPEC, bankPoint, bankUp, camAxisBank, HEAD_TOP_A } from '../engine/spec.js';
+import {
+  SPEC, BANKS, DEG, bankPoint, bankOut, bankUp, camAxisBank, HEAD_TOP_A,
+} from '../engine/spec.js';
+import { bearingStack } from '../engine/bearings.js';
 import { camAxisPoint, valveAxisDir, valveSeatPoint } from '../engine/timing.js';
 import { boxInBank, latheBank, latheX } from './parts.js';
-import { alignYTo, boltGeometry, instancedBolts } from './primitives.js';
+import { alignYTo, boltGeometry, circleHole, extrude, instancedBolts } from './primitives.js';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -30,7 +38,7 @@ const CAM_A = camAxisBank('L', 'intake')[0]; // cam axis `along`, identical for 
 const EDGE = 28.55; // fore/aft head faces: inboard of the sprocket band
 const BAND = SPEC.crank.sprocket.x0; // 28.6: first cam chain sprocket plane
 // The fore cam bearing (27.5 + 1.1) ends exactly at the sprocket band, so the
-// boss face IS the machined shoulder the sprocket locates against: only the
+// column face IS the machined shoulder the sprocket locates against: only the
 // bearing column may reach that plane, the rest of the casting stops at EDGE.
 const SHOULDER = BAND;
 const DECK_X0 = B.stations[3] - B.pitch / 2; // -22: block deck ends
@@ -38,18 +46,148 @@ const DECK_X1 = B.stations[0] + B.pitch / 2; //  22
 const valves = ['intake', 'exhaust'];
 const ref = (bank) => SPEC.cylinders.find((c) => c.bank === bank); // the station-0 cylinder
 
-// casting top planes, all derived from the cam axis rather than invented
-const WEB_TOP = CAM_A - 2.55; // 33.045 cam column tops, just under the boss belt
-const PORT_TOP = CAM_A - 3.4; // 32.195 exhaust port bulkheads, clear of every boss
+// casting top planes, all derived from the cam axis and the published bearing stack
+const ST = bearingStack(); // src/engine/bearings.js: journal -> film -> shell -> bore -> casting -> tab
+const WEB_TOP = CAM_A - ST.castOdR; // 33.18 cam column tops: the casting tops out at the tunnel
+const PORT_TOP = CAM_A - 3.4; // 32.195 exhaust port bulkheads, clear of every column
 const STAY_TOP = H.stayTopA; // 30.0 deck ribs under the bucket towers
-const CAP_TOP = CAM_A + 3.095; // 38.69 machined cover bolt-on plane above each boss
-const COVER_CEIL = HEAD_TOP_A - H.coverPlate; // 39.895 cover ceiling: clears the lobe sweep
-// Bearing clamps sit below the cam line: their innermost corner stays outside
-// the 2.10 machined boss bore and clears the 1.75 journal by more than 0.7.
-const CLAMP_A0 = CAM_A - 3.2;
-const CLAMP_A1 = CAM_A - 2.3;
+const CAP_TOP = CAM_A + ST.castOdR; // 38.78 machined plane at the top of the split caps
+const COL_W = CAM.bearingHalf; // column width: the machined bore spans exactly the bearing
+// Each column stands on its own cast cam bearing housing: a deck-side web whose top
+// face is embedded HOUSING_FUSE into the column's casting OD (so the column is fused
+// cast material, not a part resting on it), a tie rib running out from that web on the
+// deck side of the split plane, and a housing riser each side of the cam axis line. A
+// riser stands past the wrench swept around a cap bolt head (ST.housingInRel in
+// src/engine/bearings.js), so a socket turns freely at every cap bolt, and its top face
+// at CAP_TOP is the machined plane the cam cover bolts down onto. Nothing of a housing
+// reaches inside the line bore: a column holding material inside its own bore is a
+// bushing, not a bearing.
+const HOUSING_FUSE = 0.10; // web top face embedded into the column OD band
+const HOUSING_TOP = WEB_TOP + HOUSING_FUSE; // 33.28 top of the deck-side web under the tunnel
+const HOUSING_IN = H.gasketId + 0.1; // base inboard edge: clear of the gasket inner band
+const HOUSING_OUT = H.gasketOd; // base outboard edge: the machined head face the
+// exhaust flanges stand on (SPEC.manifold.exFlangeT lands on exactly this plane)
+const HOUSING_RIB0 = SPEC.manifold.exFlangeA1 + 0.2; // 29.8: a housing tie rib starts
+// above the top edge of the exhaust flange it runs past, and clear of the port necks
+const HOUSING_W = COL_W + 0.4; // half width of a housing along the cam axis
+// The cover walls stand on the housing riser top faces, inset from the riser edges, so
+// the cover is a bolt-on shroud seated on cast material and carries no load.
+const COVER_INSET = 0.1;
+const COVER_WALL_IN = ST.housingInRel + COVER_INSET;
+const COVER_WALL_OUT = COVER_WALL_IN + 0.3;
+const COVER_CEIL = HEAD_TOP_A - H.coverPlate; // cover ceiling: clears the lobe sweep
+// Half-arc sampling: a 32-segment absarc at a 2.05 bore sags 0.0024 cm, and the A1-G7
+// laws call two faces line-bored to one radius within 0.006 cm. These outlines are
+// sampled at the same resolution, so the machined face IS the drawn face.
+const ARC_SEGS = 32;
 
-const clampX = (x0, x1) => [Math.max(x0, -SHOULDER), Math.min(x1, SHOULDER)];
+
+/**
+ * Machined solid built from an outline in the bank frame. The outline points and holes
+ * are given as (p, q) components along the two requested shape directions; the helper
+ * picks the bank's right-handed basis and mirrors the outline with the basis when the
+ * bank needs the other axis order - which is what keeps normals outward, the same
+ * handedness rule parts.js bankFrame follows. No boolean geometry exists here: a hole
+ * drawn in the outline is machined along the extrusion direction, so the direction is
+ * chosen per part and never left to convenience.
+ *
+ * `place` is what puts the solid where the engine says it stands: the outline is drawn
+ * around the cam axis LINE, so `place.axial` is the window along the extrusion direction
+ * and `place.line` is where that line sits in the bank frame. Extrusion output is
+ * centred on the local origin, so without this a bored ring would sit centred on the
+ * world origin instead of on its bearing station.
+ */
+function machined(bank, dirP, dirQ, extrudeDir, pts, holes = [], place = {}, curveSegments = 1) {
+  let basis = [dirP, dirQ, extrudeDir];
+  let swapped = false;
+  let m = new THREE.Matrix4().makeBasis(...basis);
+  if (m.determinant() < 0) {
+    basis = [dirQ, dirP, extrudeDir];
+    swapped = true;
+    m = new THREE.Matrix4().makeBasis(...basis);
+  }
+  if (m.determinant() < 0) throw new Error(`machined: no right-handed basis for bank ${bank}`);
+  const at = (p, q) => (swapped ? [q, p] : [p, q]);
+  const shape = new THREE.Shape();
+  pts.forEach(([p, q], i) => {
+    const [x, y] = at(p, q);
+    if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+  });
+  shape.closePath();
+  for (const [p, q, r] of holes) { const [x, y] = at(p, q); shape.holes.push(circleHole(x, y, r, false)); }
+  const [a0, a1] = place.axial;
+  const g = extrude(shape, a1 - a0, { bevel: 0, curveSegments });
+  g.applyMatrix4(m);
+  const off = extrudeDir.clone().multiplyScalar((a0 + a1) / 2);
+  const [lx, ly] = at(...(place.offset ?? [0, 0]));
+  off.addScaledVector(basis[0], lx).addScaledVector(basis[1], ly);
+  if (place.line) {
+    off.add(new THREE.Vector3().fromArray(bankUp(bank)).multiplyScalar(place.line.along)
+      .addScaledVector(new THREE.Vector3().fromArray(bankOut(bank)), place.line.out));
+  }
+  g.translate(off.x, off.y, off.z);
+  return g;
+}
+
+const XHAT = () => new THREE.Vector3(1, 0, 0);
+const bankUpV = (bank) => new THREE.Vector3().fromArray(bankUp(bank));
+const bankOutV = (bank) => new THREE.Vector3().fromArray(bankOut(bank));
+
+const polar = (r, psiDeg) => [r * Math.cos(psiDeg * DEG), r * Math.sin(psiDeg * DEG)]; // [along, out]
+
+/**
+ * Machined half ring: one half of a split cam tunnel, from the line bore out to the
+ * casting OD, bored along the crank axis. psi is measured the way the A1-G7 laws measure
+ * it: psi = atan2(out, along), 0 crown-ward, 180 deck-ward, so the split plane through
+ * the cam axis is exactly psi = +/-90 and the two halves cannot overlap. `line` is the
+ * cam axis line this half ring is bored around.
+ */
+function halfRing(bank, line, rIn, rOut, psi0, psi1, x0, x1) {
+  const pts = [];
+  for (let i = 0; i <= ARC_SEGS; i++) pts.push(polar(rOut, psi0 + (psi1 - psi0) * i / ARC_SEGS));
+  for (let i = 0; i <= ARC_SEGS; i++) pts.push(polar(rIn, psi1 - (psi1 - psi0) * i / ARC_SEGS));
+  // outline components are (out, along): the shape axes the bore is machined against
+  const ordered = pts.map(([a, o]) => [o, a]);
+  return machined(bank, bankOutV(bank), bankUpV(bank), XHAT(), ordered, [],
+    { axial: [x0, x1], line });
+}
+
+/**
+ * Bolt tab: a pad machined along the split-plane normal and drilled along that same
+ * normal, so the cap bolt runs through a real drilling. Both tabs stand tabInset clear
+ * of the split plane: the line bore is machined by its own cutter, the bolt holes are a
+ * separate operation, exactly as a head is machined. Out is measured off the cam axis
+ * line, x along the crank axis.
+ */
+function tabPad(bank, line, bx, side, crown) {
+  const a0 = crown ? ST.tabInset : -(ST.tabInset + ST.tabH);
+  const a1 = crown ? ST.tabInset + ST.tabH : -ST.tabInset;
+  const x0 = bx - ST.tabHalf, x1 = bx + ST.tabHalf;
+  const o0 = side * ST.boreR, o1 = side * ST.tabR;
+  const pts = [[x0, o0], [x1, o0], [x1, o1], [x0, o1]];
+  const holes = [[(x0 + x1) / 2, side * ST.boltOutRel, ST.boltHoleR]];
+  return machined(bank, XHAT(), bankOutV(bank), bankUpV(bank), pts, holes,
+    { axial: [a0, a1], line }, 14);
+}
+
+/**
+ * One radial cut of a bearing shell: a slab extruded along the radial direction, so a
+ * circle in its outline is a radial through-drill. An axially extruded shell cannot carry
+ * one at all - a notch there would cut the shell in half instead of drilling it. The cut
+ * spans cutDeg of azimuth each side of psi and halfAxial each side of the bearing centre,
+ * and its outer face stands at rFace so its corner lands exactly on the line bore radius.
+ */
+function radialFacet(bank, line, bx, psi, cutDeg, halfAxial, rIn, rFace, drilled) {
+  const halfTang = Math.sin(cutDeg * DEG) * ((rIn + rFace) / 2);
+  const pts = [[-halfAxial, -halfTang], [halfAxial, -halfTang], [halfAxial, halfTang], [-halfAxial, halfTang]];
+  const holes = drilled ? [[0, 0, ST.oilHoleR]] : [];
+  const up = bankUpV(bank);
+  const out = bankOutV(bank);
+  const d = up.clone().multiplyScalar(Math.cos(psi * DEG)).addScaledVector(out, Math.sin(psi * DEG)).normalize();
+  const tang = d.clone().cross(XHAT()); // (X-hat, d x X-hat, d) is right-handed for either bank
+  return { geo: machined(bank, XHAT(), tang, d, pts, holes,
+    { axial: [rIn, rFace], offset: [bx, 0], line }, 14), dir: d };
+}
 
 /** Solid of revolution about a timing.js valve axis, profile [radius, s along axis]. */
 function latheValve(cyl, valve, pairs) {
@@ -60,6 +198,13 @@ function latheValve(cyl, valve, pairs) {
   g.translate(seat.x, seat.y, seat.z);
   return g;
 }
+
+/**
+ * mergeGeometries needs compatible attributes: the extruded outlines are indexed and
+ * boxInBank is not, so everything that is merged into one machined part is converted
+ * here first. A merged part is one machined solid, which is what the A1-G7 laws count.
+ */
+const forMerge = (g) => (g.index ? g.toNonIndexed() : g);
 
 function mesh(name, geometry, material, kind, userData = {}) {
   const m = new THREE.Mesh(geometry, material);
@@ -121,44 +266,93 @@ function headCasting(bank, materials) {
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
   }
 
-  // 4. cam bearing columns, 14 per bank on the cam axis line: a merged web
-  //    (crossbar + two legs straddling the bore), the machined boss, its cap
-  //    and two bearing clamps.
+  // 4. the 14 cam bearing columns per bank: a split, line-bored tunnel machined to
+  //    the one published line bore (src/engine/bearings.js), standing on the cam axis
+  //    line. The cradle half is cast integral and bored on the deck side of one plane
+  //    through that line; the cap half stands on the crown side of the same plane and
+  //    comes straight off along its normal; a replaceable shell with a radial oil hole
+  //    lines each half. Each column is carried by its own housing - a deck-side web
+  //    fused into the column OD, tie ribs and a housing riser each side of the line
+  //    that the cam cover bolts onto - and a replaceable shell lines each half. No part
+  //    of a column holds material inside its own bore: that would be a bushing, not a
+  //    bearing. userData.boltOn states which halves come off, and the A1-G7 laws measure
+  //    that claim against the casting.
+  const span = (a, b) => [Math.min(a, b), Math.max(a, b)];
   for (const valve of valves) {
     const O = camAxisBank(bank, valve)[1];
-    const cap = camAxisPoint(ref(bank), valve);
+    const sgn = Math.sign(O);
+    const line = { along: CAM_A, out: O };
+    // riser faces, absolute in the bank frame: housingInRel/housingOutRel are measured
+    // off the cam axis line, so a riser stands at the line plus its own offset
+    const outR = span(O + sgn * ST.housingInRel, O + sgn * ST.housingOutRel); // outboard
+    const inR = span(O - sgn * ST.housingInRel, O - sgn * ST.housingOutRel); // inboard
+    const base = [sgn * HOUSING_IN, sgn * HOUSING_OUT]; // under the bore, on the band
     for (const bx of CAM.bearings) {
-      const [x0, x1] = clampX(bx - 1.25, bx + 1.25);
-      const leg = (o0, o1) => boxInBank(bank, 30.0, WEB_TOP, o0, o1, x0, x1, 0.2);
-      add(`bossweb-${bank}-${valve}-${bx}`, mergeGeometries([
-        boxInBank(bank, FACE, WEB_TOP, O - 1.25, O + 1.25, x0, x1, 0.25),
-        leg(O + 0.6, O + 1.25),
-        leg(O - 1.25, O - 0.6),
-      ], false), rib, 'bossweb', { bx, valve });
+      const x0 = bx - COL_W, x1 = bx + COL_W;
+      const hx0 = Math.max(bx - HOUSING_W, -EDGE), hx1 = Math.min(bx + HOUSING_W, EDGE);
 
-      const r0 = CAM.bearingR + H.bossClr; // 2.10 machined bearing bore
-      const r1 = r0 + 0.75; // 2.85 boss OD
-      const boss = latheX([[r0, x0], [r1, x0], [r1, x1], [r0, x1], [r0, x0]]);
-      boss.translate(0, cap.y, cap.z);
-      add(`boss-${bank}-${valve}-${bx}`, boss, rib, 'boss', { bx, valve });
+      // the split tunnel: one machined half ring each side of the split plane through
+      // the cam axis line, both bored to the published line bore and topped at the
+      // published casting OD, each spanning exactly the published bearing width
+      add(`cradle-${bank}-${valve}-${bx}`,
+        halfRing(bank, line, ST.boreR, ST.castOdR, 90, 270, x0, x1), rib, 'cradle', { bx, valve });
+      add(`cap-${bank}-${valve}-${bx}`,
+        halfRing(bank, line, ST.boreR, ST.castOdR, -90, 90, x0, x1), rib, 'cap',
+        { bx, valve, boltOn: true });
 
-      add(`cap-${bank}-${valve}-${bx}`, boxInBank(bank, CAP_TOP - 0.95, CAP_TOP,
-        O - 2.75, O + 2.75, x0, x1, 0.2), rib, 'cap', { bx, valve });
+      // the column's housing, one merged casting: a deck-side web directly under the
+      // tunnel with its top face embedded into the column OD band, a tie rib running
+      // out to each housing riser, and the risers themselves standing past the wrench
+      // line at a cap bolt with their top face at CAP_TOP for the cover to bolt onto.
+      const housing = mergeGeometries([
+        boxInBank(bank, FACE, HOUSING_TOP, ...span(base[0], base[1]), hx0, hx1, 0.2),
+        boxInBank(bank, HOUSING_RIB0, HOUSING_TOP, ...span(base[1], outR[0]), hx0, hx1, 0.2),
+        boxInBank(bank, HOUSING_RIB0, HOUSING_TOP, ...span(inR[1], base[0]), hx0, hx1, 0.2),
+        boxInBank(bank, HOUSING_TOP, CAP_TOP, ...outR, hx0, hx1, 0.2),
+        boxInBank(bank, HOUSING_TOP, CAP_TOP, ...inR, hx0, hx1, 0.2),
+      ].map(forMerge), false);
+      add(`housing-${bank}-${valve}-${bx}`, housing, rib, 'housing', { bx, valve });
 
+      // the tab pair: one pad on the cap half, one on the cradle half, each drilled
+      // through along the split-plane normal for its cap bolt, mirrored to both sides
+      // of the cam axis line. The cradle tab is machined out of the cradle itself -
+      // its own boss, exactly as a crankcase web carries a main cap tab.
       for (const s of [1, -1]) {
-        add(`clamp-${bank}-${valve}-${bx}-${s > 0 ? 'o' : 'i'}`,
-          boxInBank(bank, CLAMP_A0, CLAMP_A1, s * (O + 1.1), s * (O + 2.7), x0, x1, 0.15),
-          rib, 'clamp', { bx, valve });
+        for (const crown of [true, false]) {
+          add(`tab-${bank}-${valve}-${bx}-${crown ? 'cap' : 'cradle'}-${s > 0 ? 'o' : 'i'}`,
+            tabPad(bank, line, bx, s, crown), rib, 'tab', { bx, valve, boltOn: crown });
+        }
       }
-    }
 
-    // 5. cam girder bridges tie adjacent bearing columns together at the cap
-    //    row - the only belt high enough to clear the 1.75 journal, at the
-    //    lobe-free x window between two cylinder stations.
-    for (const [i, [xa, xb]] of [[6.95, 15.05], [-15.05, -6.95]].entries()) {
-      const s = Math.sign(O);
-      add(`bridge-${bank}-${valve}-${i}`, boxInBank(bank, CAP_TOP - 0.95, CAP_TOP,
-        O + s * 1.2, O + s * 2.4, xa, xb, 0.2), rib, 'bridge');
+      // the shell: a replaceable half shell pressed into each half of the tunnel. Its
+      // outside face IS the line bore and its inside face is the journal plus the oil
+      // film. Each half is bored full bearing width at its two end bands; the middle
+      // band (ST.shellBandHalf) is where the oil way is machined, and because no CSG
+      // exists here it is built from three radial cuts - the centre one carries the
+      // published oil-hole drilling ALONG its own extrusion direction, so the oil way
+      // is a drilled hole and not a notch that would cut the shell in half. The cut
+      // corners are compensated to land exactly on the line bore radius.
+      const mid = ST.shellBandHalf;
+      const endIn = COL_W - mid; // end band runs from the column face to the drilled band
+      const cutDeg = 5; // azimuth half width of one radial cut, neighbours overlap
+      const rMid = (ST.shellIdR + ST.boreR) / 2;
+      const chord = Math.sin(cutDeg * DEG) * rMid; // its tangential half width
+      const rFace = Math.sqrt(ST.boreR ** 2 - chord ** 2); // so the corner hits the bore
+      for (const [crown, psi0, psi1] of [[true, -90, 90], [false, 90, 270]]) {
+        const oilPsi = crown ? ST.oilAz.cap[0] : ST.oilAz.cradle[0];
+        const parts = [
+          halfRing(bank, line, ST.shellIdR, ST.boreR, psi0, psi1, bx - COL_W, bx - endIn),
+          halfRing(bank, line, ST.shellIdR, ST.boreR, psi0, psi1, bx + endIn, bx + COL_W),
+          halfRing(bank, line, ST.shellIdR, ST.boreR, psi0, oilPsi - (ST.oilBandDeg - 1), bx - mid, bx + mid),
+          halfRing(bank, line, ST.shellIdR, ST.boreR, oilPsi + (ST.oilBandDeg - 1), psi1, bx - mid, bx + mid),
+          radialFacet(bank, line, bx, oilPsi, cutDeg, mid, ST.shellIdR, rFace, true).geo,
+          radialFacet(bank, line, bx, oilPsi - 8, cutDeg, mid, ST.shellIdR, rFace, false).geo,
+          radialFacet(bank, line, bx, oilPsi + 8, cutDeg, mid, ST.shellIdR, rFace, false).geo,
+        ].map(forMerge);
+        add(`shell-${bank}-${valve}-${bx}-${crown ? 'cap' : 'cradle'}`,
+          mergeGeometries(parts, false), materials.bearingShell, 'shell',
+          { bx, valve, boltOn: crown, oilAz: crown ? ST.oilAz.cap : ST.oilAz.cradle });
+      }
     }
   }
 
@@ -210,21 +404,53 @@ function headCasting(bank, materials) {
   return head;
 }
 
-/** Bolt-on cam cover: plate + four walls, feet machined onto the bearing caps. */
+/**
+ * Bolt-on cam cover: plate + four walls standing on the machined split-cap plane. The
+ * wall offset is not a round number: it is derived from the cap bolt line plus the
+ * hex plus a wrench (COVER_WALL_IN), so every cap bolt is reachable under the cover
+ * and no wall cuts through the tab ring. The 56 cap bolts themselves are the one thing
+ * holding the 28 caps down, so they are drawn as their own instanced mesh.
+ */
 function camCover(bank, valve, materials) {
   const cover = new THREE.Group();
   cover.name = `cam-cover-${bank}-${valve}`;
   const O = camAxisBank(bank, valve)[1];
   const put = (name, geometry) => cover.add(mesh(name, geometry, materials.castAluminumHead, 'cover'));
   const [x0, x1] = [-28.05, 28.05];
+  const wIn = COVER_WALL_IN, wOut = COVER_WALL_OUT;
 
-  put('plate', boxInBank(bank, COVER_CEIL, HEAD_TOP_A, O - 2.75, O + 2.75, -EDGE, EDGE, 0.3));
-  put('wall-out', boxInBank(bank, CAP_TOP, COVER_CEIL, O + 2.05, O + 2.75, x0, x1, 0.2));
-  put('wall-in', boxInBank(bank, CAP_TOP, COVER_CEIL, O - 2.75, O - 2.05, x0, x1, 0.2));
-  put('wall-fore', boxInBank(bank, CAP_TOP, COVER_CEIL, O - 2.75, O + 2.75, x1, EDGE, 0.2));
-  put('wall-aft', boxInBank(bank, CAP_TOP, COVER_CEIL, O - 2.75, O + 2.75, -EDGE, -x1, 0.2));
+  put('plate', boxInBank(bank, COVER_CEIL, HEAD_TOP_A, O - wOut, O + wOut, -EDGE, EDGE, 0.3));
+  put('wall-out', boxInBank(bank, CAP_TOP, HEAD_TOP_A, O + wIn, O + wOut, x0, x1, 0.2));
+  put('wall-in', boxInBank(bank, CAP_TOP, HEAD_TOP_A, O - wOut, O - wIn, x0, x1, 0.2));
+  put('wall-fore', boxInBank(bank, CAP_TOP, HEAD_TOP_A, O - wOut, O + wOut, x1, EDGE, 0.2));
+  put('wall-aft', boxInBank(bank, CAP_TOP, HEAD_TOP_A, O - wOut, O + wOut, -EDGE, -x1, 0.2));
   cover.userData.ceilingA = COVER_CEIL;
   return cover;
+}
+
+/**
+ * The 56 cap bolts, two per split bearing column, one each side of the cam axis line.
+ * Each stands on the published bolt line - mid of the tab span from the line bore out
+ * to the tab edge - with its head on the machined top face of the cap tab and its
+ * shaft down through both tabs, so it is the fastener the tab drillings were machined
+ * for. Positions derive from the stack; nothing about a cap bolt is typed here.
+ */
+export function camCapBoltSpecs() {
+  const specs = [];
+  for (const bank of ['L', 'R']) {
+    const u = bankUp(bank);
+    for (const valve of valves) {
+      const O = camAxisBank(bank, valve)[1];
+      const aTop = CAM_A + ST.tabInset + ST.tabH; // machined top face of the cap tab
+      for (const bx of CAM.bearings) {
+        for (const s of [1, -1]) {
+          const w = bankPoint(bank, aTop, O + s * ST.boltOutRel, bx);
+          specs.push({ bank, p: [w.x, w.y, w.z], dir: [-u[0], -u[1], -u[2]], s: 1 });
+        }
+      }
+    }
+  }
+  return specs; // 56
 }
 
 export function createHeads(materials) {
@@ -259,6 +485,23 @@ export function createHeads(materials) {
   );
   bolts.name = 'head-bolts';
   bolts.userData.kind = 'bolt';
+
+  // Cap bolts: shaft long enough to run through the cap tab, the split gap and the
+  // cradle tab (2 x tab height plus the inset pair), head on the cap tab's top face.
+  // One instanced set per bank: the bolts hold that bank's caps onto that bank's
+  // cradles, so the set has to carry the bank in its name or no label, no teardown
+  // rule and no inspection menu entry can be built for it (A1-G7, test/view.test.mjs).
+  const capBoltGeo = boltGeometry(2 * ST.boltAcrossR, ST.boltLen / 6, ST.boltHoleR, 2 * (ST.tabInset + ST.tabH) + 0.2);
+  for (const bank of ['L', 'R']) {
+    const capBolts = instancedBolts(
+      camCapBoltSpecs().filter((s) => s.bank === bank),
+      capBoltGeo,
+      materials.fastenerSteel,
+      group
+    );
+    capBolts.name = `cam-cap-bolts-${bank}`;
+    capBolts.userData.kind = 'capBolt';
+  }
 
   group.updateMatrixWorld(true);
   return { group, update: () => {} };

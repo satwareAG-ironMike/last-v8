@@ -32,6 +32,14 @@ export const tabR = castOdR + B.tabStand;
 export const boltOutRel = (boreR + tabR) / 2;
 /** Circumscribed radius of the cap bolt head, from the published across-flats. */
 export const boltCircumR = B.boltAcrossR / Math.cos(Math.PI / 6);
+/**
+ * The cast cam bearing housing wall each column stands on. A cap bolt is turned from
+ * under the cover, so the wall has to stand past the hex by the published wrench
+ * clearance - a wall inside that line blocks the socket - and its top face at
+ * CAP_TOP is the cam cover seating plane.
+ */
+export const housingInRel = boltOutRel + boltCircumR + B.wrenchClr;
+export const housingOutRel = housingInRel + B.housingWall;
 /** Half width of a tab along the cam axis: inset from the bearing width. */
 export const tabHalf = CAM.bearingHalf - B.tabInset;
 /** A cap bolt runs from the top of the cap tab down through the cradle tab. */
@@ -49,8 +57,12 @@ export const oilAz = B.oilAz;
 export function bearingStack() {
   return {
     journalR, oilFilm: B.oilFilm, shellIdR, shellWall: B.shellWall, boreR,
-    castWall: B.castWall, castOdR, tabStand: B.tabStand, tabH: B.tabH, tabR, tabHalf,
+    journalR, oilFilm: B.oilFilm, shellIdR, shellWall: B.shellWall, boreR,
+    castWall: B.castWall, castOdR, tabStand: B.tabStand, tabH: B.tabH,
+    tabInset: B.tabInset, tabR, tabHalf,
     boltOutRel, boltHoleR: B.boltHoleR, boltAcrossR: B.boltAcrossR, boltCircumR, boltLen,
+    wrenchClr: B.wrenchClr, housingWall: B.housingWall, housingInRel, housingOutRel,
+    shellBandHalf: B.shellBandHalf, oilBandDeg: B.oilBandDeg,
     oilHoleR: B.oilHoleR, oilAz, noseR,
     runningClearance: shellIdR - journalR,
     metalToCam: boreR - journalR,

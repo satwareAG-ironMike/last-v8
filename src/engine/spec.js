@@ -141,7 +141,6 @@ export const SPEC = {
     floorT: 0.6, // spring-seat floor thickness; its top plane = guideLength
     bucketBoreR: 2.25, // bucket/guide bore: 0.10 over the 2.15 bucket flange,
     // 0.68 over the 1.57 spring coil OD - the spring rides inside this bore
-    bossClr: 0.05, // cam-bearing running clearance inside each head boss
     coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
     stayTopA: 30.0, // top plane of the deck ribs the bucket towers stand on; the
     // plug boss face the spark plug's hex clamps against stands off this plane
@@ -429,7 +428,15 @@ export const SPEC = {
       boltAcrossR: 0.52, // cap bolt head across flats
       oilHoleR: 0.10, // radial oil way drilled through every shell
       oilAz: { cradle: [150, 210], cap: [60, 300] }, // psi 0 crown-ward, 180 deck-ward
-      shellFacets: 24, // radial cuts per half shell: a hole is a drill, not a notch
+      wrenchClr: 0.35, // socket body standing outside the cap bolt head: the cam
+      // bearing housing wall has to stand this much past the hex or no cap bolt can
+      // be turned under the cover, and the cover bolts onto that wall
+      housingWall: 0.60, // the cast cam bearing housing wall each column stands on,
+      // past the wrench line; its top face at CAP_TOP is the cam cover seating plane
+      shellBandHalf: 0.55, // each shell half is bored full width at its end bands; the
+      // middle band of this half width is where the radial oil way is drilled
+      oilBandDeg: 13, // azimuth the drilled radial band covers around the published
+      // oil azimuth: three radial cuts, the centre one drilled
     },
     // 36 teeth = 2x the 18-tooth crank sprocket; one chain per camshaft, each
     // running in its own published band on the front face: four bands 0.3 cm wide
