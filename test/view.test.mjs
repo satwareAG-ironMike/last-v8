@@ -33,6 +33,7 @@ import { plugStack, segRadius, stackRadius } from './support/plug-stack.mjs';
 import { createCranktrain } from '../src/render/cranktrain.js';
 import { createStand } from '../src/render/stand.js';
 import { createValvetrain } from '../src/render/valvetrain.js';
+import { camCapBoltSpecs } from '../src/render/heads.js';
 
 const V = SPEC.view;
 const FLOOR = SPEC.stand.floorZ;
@@ -481,6 +482,73 @@ test('inspection: every menu entry is a real part, framed by a legal pose', (t) 
   rig.reset();
   rig.update(0);
   t.diagnostic(`inspectables ${entries.length}`);
+});
+
+// ---- A1-G7 the cap bolts as service items of their own bank ------------------
+// 56 cam bearing cap bolts are the only thing holding the 28 split bearing caps
+// onto their cradles (test/heads.test.mjs gates the castings). A bolt a builder
+// has to undo is a service item, and the view only offers a part that
+//   1. is a member of the assembly,
+//   2. carries a human label naming which bank's caps it holds,
+//   3. is ruled in the teardown table with the head it is screwed through,
+// and all three need the bolts to be one mesh per bank: the name `cam-cap-bolts`
+// carries no bank (partBank reads it as null), so partLabel cannot name a bank,
+// and src/ui/viewControls.js drops every member it cannot label from the
+// inspection menu. One bank-blind mesh for both banks is therefore not one bolt
+// set the user can pick, it is no bolt set at all on the menu.
+test('A1-G7 each bank carries its own cam bearing cap bolt set', (t) => {
+  const specs = camCapBoltSpecs();
+  const want = {};
+  for (const bank of ['L', 'R']) want[bank] = specs.filter((s) => s.bank === bank).length;
+  assert.equal(want.L + want.R, specs.length, 'camCapBoltSpecs must publish every bolt under one bank');
+  assert.ok(want.L === want.R && want.L > 0, `expected the same number of cap bolts per bank, got ${want.L} / ${want.R}`);
+
+  for (const bank of ['L', 'R']) {
+    const name = `cam-cap-bolts-${bank}`;
+    const obj = view.members.get(name);
+    assert.ok(obj,
+      `${name} is not a member of the assembly: all ${specs.length} cap bolts are one mesh named "cam-cap-bolts" for both banks, and a name no bank can be read out of is not a part of ${bank === 'L' ? 'left' : 'right'} bank anything`);
+    assert.ok(obj.isInstancedMesh, `${name} is ${obj.type}, not the instanced bolt set the ${want[bank]} cap bolts render as`);
+    assert.equal(obj.count, want[bank],
+      `${name} carries ${obj.count} bolts, but ${want[bank]} cap bolts are published for ${bank === 'L' ? 'left' : 'right'} bank (${specs.length} for both banks at ${SPEC.cam.bearings.length} columns x 2 sides x 2 cam lines)`);
+    assert.equal(obj.userData.kind, 'capBolt', `${name} is not marked as a cam bearing cap bolt`);
+    assert.equal(partBank(name), bank, `partBank("${name}") reads ${partBank(name)} - the teardown table and every bank law read the bank out of the member name`);
+
+    const label = partLabel(name);
+    assert.notEqual(label, name, `${name} carries no human label, and an unlabelled member is dropped from the inspection menu`);
+    assert.ok(/cam bearing cap bolt/i.test(label), `partLabel("${name}") reads "${label}" - it has to name a cam bearing cap bolt`);
+    assert.ok(/left bank|right bank/.test(label) && label.includes(bank === 'L' ? 'left' : 'right'),
+      `partLabel("${name}") reads "${label}" - the bolts hold the caps of one bank, so the label has to say which`);
+
+    // the fastener leaves with the casting it is screwed into: same family, same
+    // stage as its head (see the spark plug note in explodeRules for why a later
+    // stage or a family of its own breaks the chain)
+    const r = explodeRuleFor(name);
+    const head = explodeRuleFor(`head-${bank}`);
+    assert.ok(head, `head-${bank} carries no teardown rule, so a cap bolt cannot be required to travel with it`);
+    assert.ok(r, `${name} is not ruled in the teardown table, so the ${want[bank]} cap bolts of ${bank === 'L' ? 'left' : 'right'} bank stay cast into the head instead of coming off with it`);
+    assert.equal(r.family, head.family, `${name} leaves in family ${r.family}, its head leaves in ${head.family}`);
+    assert.equal(r.stage, head.stage, `${name} leaves at stage ${r.stage}, its head at stage ${head.stage} - a bolt screwed into a head comes off with that head`);
+
+    // and it is offered to the user: on the menu, framed by a legal pose
+    const entry = view.inspectables().find((e) => e.name === name);
+    assert.ok(entry, `${name} is not on the inspection menu`);
+    const focus = view.focusPart(name);
+    assert.ok(focus, `focusPart("${name}") returns nothing`);
+    assert.ok(focus.meshes >= 1, `${name} resolves to no mesh`);
+    const st = rig.state();
+    assert.ok(st.dist >= V.distMin - 1e-6 && st.dist <= V.distMax + 1e-6,
+      `${name} framed outside the rig limits: ${st.dist} (distMin ${V.distMin}, distMax ${V.distMax})`);
+    assert.ok(st.eye.z >= FLOOR + V.eyeMin - 1e-6, `${name} framing puts the eye under the floor plate`);
+  }
+
+  // one mesh per bank, not both: a second mesh under the same 56 bolts would
+  // double-count them in every census and in the exploded view
+  assert.equal(view.members.has('cam-cap-bolts'), false,
+    'a bank-blind "cam-cap-bolts" member is still there next to the per-bank sets');
+  rig.reset();
+  rig.update(0);
+  t.diagnostic(`cap bolts per bank: L ${want.L}, R ${want.R}`);
 });
 
 test('inspection: picking a part reports the member the ray really hit', (t) => {
