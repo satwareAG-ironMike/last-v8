@@ -24,7 +24,7 @@ import {
   idHalfDepth,
   endDiscFaceX,
 } from '../engine/spec.js';
-import { ohvHousing, panPlanes, variantEntry } from '../engine/layout.js';
+import { ohvBearings, ohvHousing, panPlanes, variantEntry } from '../engine/layout.js';
 import { boxInBank, worldBox, latheX, latheBank, machinedArc, machinedCircle } from './parts.js';
 import { alignX, extrude } from './primitives.js';
 
@@ -161,6 +161,59 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
   const aftBush = B.aftMainBossR + 0.1;
   put('main-bush-fore', latheX(ringX(foreBush, SHELL_OUT - 0.05, 23.4, 25.6), 48), materials.castIronBlock);
   put('main-bush-aft', latheX(ringX(aftBush, SHELL_OUT - 0.05, -25.6, -23.4), 48), materials.castIronBlock);
+
+  // 2b. A1-G7 / issue #8 addendum item 4 (slice 8B): the bearings this variant's
+  //     cam runs in. The face the drum and both end walls are bored to IS this
+  //     variant's line bore, so every bushing is a full-round front-insert ring
+  //     whose OUTSIDE face is that bore - the same press fit the cylinder liners
+  //     use, and the bore is cut with the bushings in place, which is what makes
+  //     them captive. The fore ring abuts the retainer, the aft ring the aft end
+  //     wall; the through-bore is the same cylinder at every window, so the three
+  //     mid rings are captured by the cam's own locating collars (slice 8C draws
+  //     that cam and owes them). Each ring's oil way is a machined drilling and
+  //     is machined with the oil system it feeds (A1-G4).
+  if (H) {
+    const G = ohvBearings();
+    for (let i = 0; i < G.windows.length; i++) {
+      const [a, b] = G.windows[i];
+      const ring = latheX(ringX(G.boreR, G.shellIdR, a, b), 48);
+      ring.translate(0, 0, -H.belowCrankCm); // the ring turns about the CAM axis, not the crank's
+      put(`cam-bushing-${i + 1}`, ring, materials.bearingShell);
+    }
+
+    // the retainer: the front-insert cap A1-G7 names for this variant. It stands
+    // proud of the machined fore face over the loaded half of the mouth - from
+    // the published rail plane up to the cam axis, the split plane every bearing
+    // cap in this tree splits at - and its opening is the shell inside, so the
+    // whole cam and every lobe nose slide through it on the way in. Nothing of
+    // the casting reaches this far fore, so the plate bridges the mouth instead
+    // of standing inside it.
+    const plate = new THREE.Shape();
+    const mouth = machinedArc(0, -H.belowCrankCm, G.plateInR, Math.PI, 2 * Math.PI, H.arcStepRad);
+    trace(plate, [
+      [-G.plateHalfY, G.plateBottomZ],
+      [-G.plateHalfY, G.plateTopZ],
+      ...mouth,
+      [G.plateHalfY, G.plateTopZ],
+      [G.plateHalfY, G.plateBottomZ],
+    ]);
+    const plateGeo = alignX(extrude(plate, G.plateThkCm, { bevel: 0, curveSegments: 1 }));
+    plateGeo.translate((G.foreFaceX + G.plateForeX) / 2, 0, 0);
+    put('cam-retainer', plateGeo, materials.fastenerSteel);
+
+    // two bolts, one each side of the loaded cradle, standing along the cam axis
+    // in the skirt's own wall band: their centres sit at the published bolt-chain
+    // radius outside the line bore, at the depression that puts them in the iron
+    // the end wall casts, and their heads bear on the plate.
+    for (const sgn of [1, -1]) {
+      const yc = sgn * G.boltLocalY;
+      const zc = -H.belowCrankCm - G.boltDropCm;
+      put(`cam-retainer-bolt-${sgn > 0 ? '+' : '-'}`, worldBox(
+        G.foreFaceX - G.boltEngageCm, G.plateForeX + G.boltHeadCm,
+        yc - G.boltCircumR, yc + G.boltCircumR,
+        zc - G.boltCircumR, zc + G.boltCircumR, 0.15), materials.fastenerDark);
+    }
+  }
 
   // 3. outboard deck support columns (bottom corners on the OD chord plane)
   //    + inboard bridge webs (inner corners tangent to the void wall),
