@@ -286,6 +286,11 @@ test(`${LAW}: 16 lobes stand at the 4 published cylinder stations at this varian
       assert.equal(past, 0, `${pastWho}: ${past} drawn contour points stand OUTSIDE the machined profile of the ${line.valve} lobe of cyl ${cyl.num} - a grinder's tool path cuts inside the curve, it never adds material`);
       assert.ok(chordErr <= plan.profileChordErrCm + CORNER,
         `${mesh.name}: the drawn chords between contour samples sink ${chordErr.toFixed(4)} cm inside the machined outline; this cam's published contour error is ${plan.profileChordErrCm.toFixed(4)} cm at ${plan.profileStepDeg.toFixed(4)} cam deg steps`);
+      // And the published contour claim is bounded by a machining fact, not by
+      // itself: no lobe of this cam may be contoured coarser than the turned bore
+      // it rides in.
+      assert.ok(plan.profileChordErrCm <= plan.turnedBoreChordErrCm,
+        `${mesh.name}: this cam's ${plan.profileSamples}-step lobe contour publishes ${plan.profileChordErrCm.toFixed(6)} cm of chord error against the ${plan.turnedBoreChordErrCm.toFixed(6)} cm a ${E.TURNED_SEGMENTS}-facet ${B.boreR.toFixed(4)} cm tunnel bore presents at ${plan.profileStepDeg.toFixed(4)} cam deg steps - lobes ground coarser than the bores they run in`);
       const base = SPEC.head.camBaseRadius, nose = lobeMaxRadius(line.valve);
       assert.ok(angDiff(noseAz, idx) <= 0.6, `${mesh.name}: machined nose at ${noseAz.toFixed(2)} deg, index angle ${idx.toFixed(2)} deg`);
       assert.ok(Math.abs(hi - nose) <= FACET, `${mesh.name}: outline max ${hi.toFixed(4)} instead of the machined nose ${nose.toFixed(4)}`);

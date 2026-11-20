@@ -57,13 +57,17 @@ export function lobeChordError(valve, samples) {
 }
 
 /**
- * Contour steps over 360 cam degrees this variant's 16 lobes are ground at. The
- * tree already grinds its DOHC lobes at 2 cam degrees (src/render/valvetrain.js
- * lobeShape, 180 steps); that contour sinks 0.0092 cm inside the machined outline
- * at the closing ramp of the 276-crank-degree exhaust event, which is coarser than
- * the 0.0073 cm a 48-segment 3.40 cm bore presents. Deviation scales as the square
- * of the step, so the step is derived from that ratio and then verified against
- * the published outline, and the same number is used for every lobe of this cam.
+ * Contour steps over 360 cam degrees this variant's 16 lobes are ground at, and the
+ * chord error that contour publishes. The tree already grinds its lobes at 2 cam
+ * degrees (src/render/valvetrain.js lobeShape, 180 steps); measured through
+ * lobeChordError that contour sinks 0.003289 cm (intake) / 0.003280 cm (exhaust)
+ * inside its own machined outline, against the 0.007280 cm a 48-facet 3.4000 cm
+ * turned bore presents - so 180 steps is already finer than the bores this cam
+ * rides in and the answer here is 180 unchanged. The helper is the CHECK, not an
+ * escalator: deviation scales as the square of the step, so if a re-ground lobe
+ * ever needs a finer contour than the tree's own it is derived from that ratio,
+ * verified against the published outline, and ohvCamLayout refuses to publish a
+ * contour coarser than the bore. The same step is used for all 16 lobes.
  */
 export function contourSamples(boundCm, valves = ['intake', 'exhaust']) {
   const base = 180; // 2 cam deg: the contour step the tree's lobes already use
@@ -172,6 +176,9 @@ export function ohvCamLayout(B = ohvBearings()) {
     cur = Math.max(cur, v);
   }
   const contour = contourSamples(turnedChordError(B.boreR));
+  if (contour.chordErrCm > turnedChordError(B.boreR)) {
+    throw new Error(`the OHV cam's ${contour.samples}-step lobe contour leaves ${contour.chordErrCm.toFixed(6)} cm of chord error at ${contour.chordAtDeg.toFixed(2)} cam deg of the ${contour.chordValve} lobe, coarser than the ${turnedChordError(B.boreR).toFixed(6)} cm the ${TURNED_SEGMENTS}-facet ${B.boreR.toFixed(4)} cm tunnel bore this cam rides in presents`);
+  }
   return {
     axis: ohvCamAxis(), journals, lobes, necks,
     journalR: B.journalR, neckR, lobeWidthCm: w, groupHalfCm: B.groupHalfCm,
