@@ -509,6 +509,33 @@ export const SPEC = {
     { num: 7, bank: 'L', station: 3, powerTDC: 180 },
     { num: 8, bank: 'R', station: 3, powerTDC: 90 },
   ],
+
+  // ---------------------------------------------------------------------------
+  // P1-G7 / P1-G5 (issue #8 addendum item 1, issue #16): THE BUILD SWITCH.
+  // SPEC.build.variant selects which variant this tree draws. Every cam, lobe,
+  // follower, drive, placement and naming reading derives from here through
+  // the one helper src/engine/layout.js - no renderer, HTML or README may
+  // type an engine name or count of its own.
+  // The OHV placement is the band issue #16 sweeps against this casting: the
+  // raw rod-big-end interference against the cam's widest outline starts at
+  // crank.radius + rod.bigEndRadius + cam nose = 10.2 cm of centre distance,
+  // and C = 10.8 is the smallest published band value where every crankcase
+  // swing keeps >= 0.6 cm past the nose and >= 1.6 cm past the machined
+  // bearing column (tmp/ohvband.mjs / tmp/v8-ohv-band.out).
+  // drawn: false says the OHV geometry is a published contract, not a scene.
+  // ---------------------------------------------------------------------------
+  identity: { cell: 'SATWARE TEST CELL', serial: 'MULE 01', sn: 'S/N 0008-V8' },
+  build: { variant: 'dohc' },
+  variants: {
+    dohc: { id: 'dohc', badgeWord: 'DOHC', centralCam: false, drawn: true },
+    ohv: {
+      id: 'ohv',
+      badgeWord: 'OHV',
+      centralCam: true,
+      drawn: false,
+      belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
+    },
+  },
 };
 
 export const wrap360 = (d) => ((d % 360) + 360) % 360;
