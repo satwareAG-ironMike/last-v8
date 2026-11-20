@@ -11,7 +11,9 @@
 // type any of these facts beside it.
 // ---------------------------------------------------------------------------
 import { SPEC, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
-import { boreR as lineBoreR, castOdR, noseR, housingInRel, housingOutRel } from './bearings.js';
+import {
+  boreR as lineBoreR, boltCircumR, castOdR, noseR, housingInRel, housingOutRel,
+} from './bearings.js';
 import { lobeProfileRadius } from './timing.js';
 import { chainPitch } from './drive.js';
 
@@ -122,13 +124,20 @@ export function worstOutlineR() {
 
 const clamp1 = (x) => Math.min(1, Math.max(-1, x));
 
-/** every outline that can swing past the cam between it and the crank centre */
+/**
+ * Every outline that can swing past the cam between it and the crank centre, as
+ * [label, reach off the crank axis, x bands it sweeps]. The bands come from the
+ * published crank widths: a rod big end is confined to the web gap, a counter
+ * lobe is counterLobeHalfX wide at its throw, a pin runs pinWidth through both
+ * webs - so a bearing may only stand in an x window no band reaches.
+ */
 export function crankSwings() {
   const K = SPEC.crank;
+  const bands = (half) => SPEC.block.stations.map((s) => [s - half, s + half]);
   return [
-    ['connecting-rod big end', K.radius + SPEC.rod.bigEndRadius],
-    ['counterweight lobe tip', K.counterRadius],
-    ['crank pin sweep', K.radius + K.pinRadius],
+    ['connecting-rod big end', K.radius + SPEC.rod.bigEndRadius, ...bands(K.webIn)],
+    ['counterweight lobe tip', K.counterRadius, ...bands(K.counterLobeHalfX)],
+    ['crank pin sweep', K.radius + K.pinRadius, ...bands(K.pinWidth / 2)],
   ];
 }
 
@@ -149,8 +158,9 @@ export function crankSwings() {
  *   stack's own housing wall outside the bolt/wrench line, and its bottom face is
  *   the plane this variant's pan rails and oil pan are cast on;
  * - a DOHC head bolts its cam cover onto a housing riser. The OHV block cannot
- *   carry that riser inside the crank-side room, so the variant refuses it by name
- *   and supports its bearings on columns stood on the tunnel floor instead.
+ *   carry that riser inside the crank-side room, so the variant refuses it by
+ *   name: this variant's bearings are the front-insert rings ohvBearings()
+ *   derives from this bore and the retainer that holds them, not a riser.
  */
 export function ohvHousing() {
   const v = variantEntry('ohv');
@@ -222,6 +232,130 @@ export function ohvHousing() {
     castOdR,
     // a riser out here leaves less than the crank-side air the swings are owed
     riserRefused: housingOutRel > crankRoomR - T.crankSideAirCm,
+  };
+}
+
+/**
+ * A1-G7 / issue #8 addendum item 4 (slice 8B): the bearings this variant's cam
+ * runs in, derived from the tunnel 8A already bored (tmp/ohvbrg.mjs,
+ * tmp/ohvbrg3.mjs read every number below off the drawn casting and the drawn
+ * crank hardware).
+ *
+ * The face 8A machined through the drum wall IS this variant's line bore, so the
+ * stack reads outward-in from it rather than from the DOHC head's published
+ * bore: the bore is the shell's outside, the shell is bought to the journal plus
+ * a film, and the journal is ground to this cam's own widest outline so every
+ * nose turns in its own bearing AND passes every other one on the way in - the
+ * front-insert reading A1-G7 names, and the reason no load-bearing full-ring
+ * boss here has a bore smaller than a lobe nose.
+ *
+ * The shells are installed before that bore is cut, so the cutter grips them:
+ * the bore and the shell outside are the same cylinder, the same press fit this
+ * tree's liners use. One retainer plate bolts to the machined fore face over the
+ * mouth: it retains the fore shell and takes the cam's thrust, and its opening
+ * is the shell inside, so the whole cam slides through it.
+ */
+export function ohvBearings() {
+  const H = ohvHousing();
+  const T = variantEntry('ohv').tunnel;
+  const CAM = SPEC.cam;
+  const P = CAM.bearing;
+  const B = SPEC.block;
+  const C = H.belowCrankCm;
+  const BH = CAM.bearingHalf;
+
+  // the stack, off the face the casting already has
+  const boreR = H.tunnelBoreR;
+  const shellIdR = boreR - P.shellWall;
+  const journalR = shellIdR - P.oilFilm;
+  const noseR = H.worstOutlineR;
+  const insertAirCm = shellIdR - noseR;
+
+  // five stations: the two machined tunnel faces plus the three gaps between the
+  // published cylinder stations. Every window is the published bearing width
+  // wide and each one abuts a cast face, so the bushings are located: the fore
+  // one by the retainer, the aft one by the aft end wall, the three mid ones by
+  // the cam's own locating collars (the through-bore is the same cylinder the
+  // bushings ride in, so only a cam-side collar can capture them - 8C draws that
+  // cam and its journals, and this is the interface it owes).
+  const foreFaceX = B.stations[0] + B.pitch / 2 + B.slabFront;
+  const aftFaceX = B.stations[3] - B.pitch / 2 - B.slabRear;
+  const mids = B.stations.slice(1).map((s, i) => (s + B.stations[i]) / 2);
+  const stations = [foreFaceX - BH, ...mids, aftFaceX + BH];
+  const windows = stations.map((s) => [s - BH, s + BH]);
+
+  // this variant's own lobe width: 16 lobes and 5 bearings share one span
+  const lobeWidthCm = (B.pitch / 2 - BH - T.lobeAxialAirCm) / 2;
+  const groupHalfCm = 2 * lobeWidthCm;
+  const spanCm = foreFaceX - aftFaceX;
+  const fillCm = SPEC.cylinders.length * 2 * lobeWidthCm + stations.length * 2 * BH;
+  const bands = [
+    ...windows.map(([a, b]) => [a, b, 'bearing']),
+    ...B.stations.map((s) => [s - groupHalfCm, s + groupHalfCm, 'lobes']),
+  ].sort((p, q) => p[0] - q[0]);
+  let minAxialAir = Infinity;
+  for (let i = 1; i < bands.length; i++) minAxialAir = Math.min(minAxialAir, bands[i][0] - bands[i - 1][1]);
+
+  // the loaded cradle is the retained bored arc's own mid: the tunnel floor
+  const cradleArc = H.arcs.boreFloor;
+  const cradleMidDeg = ((cradleArc[0] + cradleArc[1]) / 2) * 180 / Math.PI;
+  const oilBand = [cradleMidDeg - P.oilBandDeg / 2, cradleMidDeg + P.oilBandDeg / 2];
+
+  // the fore retainer plate (A1-G7: "front-insert cam tunnel ... caps"): a plate
+  // standing proud of the machined fore face over the loaded half of the mouth,
+  // from the published rail plane up to the cam axis - the split plane every
+  // bearing cap of this tree splits at. Its opening is the shell inside, so the
+  // whole cam slides through it, and its back face is what the fore bushing
+  // abuts. Jane: the plate is as wide as its own bolt chain demands (mid-wall
+  // bolt line + head + published wrench clearance); the skirt flange alone
+  // (skirtHalfY) would put a bolt head outside the plate.
+  const plateThkCm = P.housingWall;
+  const plateInR = shellIdR;
+  const plateBottomZ = H.skirtZ;
+  const plateTopZ = -C;
+  const plateForeX = foreFaceX + plateThkCm;
+
+  // the bolt line stands in the skirt's own wall band, on the flanks of the
+  // loaded cradle: its radius off the cam axis is the published chain outside
+  // the line bore, and its depression below the axis follows from the published
+  // skirt wall it threads into. The published DOHC chain (boltOutRel = the mean
+  // of boreR and tabR) cannot be used here: this variant has no cap tab, and its
+  // line bore is 3.4000, so a bolt on that mean would sit INSIDE the bore.
+  const boltOutRel = boreR + boltCircumR + P.wrenchClr;
+  const boltLocalY = (H.skirtInboardY + H.skirtHalfY) / 2;
+  const boltDropCm = Math.sqrt(boltOutRel * boltOutRel - boltLocalY * boltLocalY);
+  const boltSpreadDeg = (Math.asin(boltLocalY / boltOutRel) * 180) / Math.PI - (cradleMidDeg - 270);
+  const boltAzDeg = [cradleMidDeg - boltSpreadDeg, cradleMidDeg + boltSpreadDeg];
+  const plateHalfY = boltLocalY + boltCircumR + P.wrenchClr;
+  // the plate's own corner: its widest point stands on the rail plane, so the
+  // radius a law reads off the cam axis is the corner, not the half width
+  const plateCornerR = Math.hypot(plateHalfY, plateBottomZ + C);
+  // the bolt reaches tabStand deep into the machined fore face and its head
+  // stands 2 x tabInset proud of the plate: both are published tab walls
+  const boltEngageCm = P.tabStand;
+  const boltHeadCm = 2 * P.tabInset;
+
+  // what the bore and the plate keep off the drawn crank hardware
+  const crownAirCm = H.crankRoomR - boreR;
+  const noseAirCm = plateInR - noseR;
+  // no bearing stands in a band any throw sweeps: every window sits in the gap
+  // between two published stations, so the air off the nearest band is the half
+  // pitch less the widest throw half, less the bearing half that reaches into it
+  const swungIn = windows.map(([a, b]) =>
+    H.swings.flatMap((sw) => sw.slice(2)).filter(([u, v]) => u < b && a < v));
+  const throwAirCm = B.pitch / 2 - SPEC.crank.pinWidth / 2 - BH;
+
+  return {
+    boreR, shellWall: P.shellWall, shellIdR, oilFilm: P.oilFilm, journalR, noseR,
+    insertAirCm, runningClearance: shellIdR - journalR,
+    lobeWidthCm, groupHalfCm, lobeAxialAirCm: T.lobeAxialAirCm, bearingHalf: BH,
+    foreFaceX, aftFaceX, stations, windows, spanCm, fillCm, minAxialAir,
+    cradleArc, cradleMidDeg, oilBand, oilHoleR: P.oilHoleR,
+    plateThkCm, plateInR, plateHalfY, plateBottomZ, plateTopZ, plateForeX,
+    boltOutRel, boltLocalY, boltDropCm, boltAzDeg, boltSpreadDeg, boltEngageCm, boltHeadCm,
+    plateCornerR, throwAirCm,
+    boltHoleR: P.boltHoleR, boltAcrossR: P.boltAcrossR, boltCircumR,
+    crownAirCm, noseAirCm, swungIn,
   };
 }
 

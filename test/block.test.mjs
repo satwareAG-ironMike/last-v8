@@ -264,10 +264,15 @@ test(`${OHV_CAST}: the drawn OHV casting bores that tunnel out of its own drum w
   // fall inside the ideal circle. Nothing may be forgiven beyond this.
   const sag = (r) => r * (1 - Math.cos(H.arcStepRad / 2));
   const tol = sag(H.tunnelBoreR);
-  // 1. nothing this casting draws stands inside the bored tunnel at a lobe position
+  // 1. no CAST iron of this casting stands inside the bored tunnel at a lobe
+  //    position. The replaceable bearing shells slice 8B installs are the one
+  //    thing that is MEANT to stand in that bore - their own law below reads
+  //    them against it - so this scan is the casting's own iron, nothing else.
+  const SHELL_MATS = ['bearingShell'];
   const X = [B.stations[3] - B.pitch / 2, B.stations[0] + B.pitch / 2];
   let inside = 0, closest = Infinity, closestWho = null, closestAt = null;
   for (const m of solids) {
+    if (SHELL_MATS.includes(m.material.name)) continue;
     const pos = m.geometry.attributes.position;
     m.updateWorldMatrix(true, false);
     for (let i = 0; i < pos.count; i++) {
@@ -372,8 +377,16 @@ test(`${OHV_CAST}: the switch casts two different blocks, and the DOHC casting t
     return c;
   };
   const cd = census(dohc), co = census(ohv);
-  assert.deepEqual(Object.keys(cd).sort(), Object.keys(co).sort(),
-    `the two builds must cast the same named solids; DOHC ${Object.keys(cd).sort().join(', ')} vs OHV ${Object.keys(co).sort().join(', ')}`);
+  // the switch may not rename or drop a solid: every DOHC name has to survive in
+  // the OHV census. What the OHV build may add is its own derived cam-bearing
+  // family (slice 8B, src/engine/layout.js ohvBearings) and nothing else
+  const extra = Object.keys(co).filter((k) => !Object.keys(cd).includes(k)).sort();
+  const ownCamFamily = (k) => /^cam-(bushing-[1-5]|retainer|retainer-bolt-[+-])$/.test(k);
+  assert.ok(extra.every(ownCamFamily),
+    `the OHV build adds names the DOHC build does not cast and this variant's own laws do not derive: ${extra.join(', ')}`);
+  assert.equal(extra.length, 8, `the OHV build adds ${extra.length} of its own cam-bearing solids; the derived family is 5 bushings + 1 retainer + 2 bolts (${extra.join(', ')})`);
+  const missing = Object.keys(cd).filter((k) => !Object.keys(co).includes(k)).sort();
+  assert.equal(missing.length, 0, `the OHV build drops the DOHC solids ${missing.join(', ')}: the switch may re-proportion the casting, not rename or delete what it casts`);
   // the DOHC casting measured against the pre-OHV record above, not against itself
   const readBox = (o) => {
     const b = new THREE.Box3().setFromObject(o);
@@ -419,12 +432,135 @@ test(`${OHV_CAST}: the switch casts two different blocks, and the DOHC casting t
   assert.ok(Math.abs(bo.min.z - (P.panBottomZ - B.oilPanPlugDropCm)) < 1e-6,
     `the OHV casting reaches z ${bo.min.z.toFixed(4)}: the sump on its own rail plane ${P.railZ} hangs ${B.oilPanDepthCm} cm down plus the ${B.oilPanPlugDropCm} cm plug`);
   assert.ok(bo.min.z < bd.min.z - 2, `the OHV casting has to bottom out deeper than the DOHC one (${bd.min.z.toFixed(2)}) because its tunnel floor is at ${L.ohvHousing().floorZ.toFixed(2)}: reads ${bo.min.z.toFixed(2)}`);
-  assert.ok(Math.abs(bo.max.z - bd.max.z) < 1e-9 && Math.abs(bo.max.y - bd.max.y) < 1e-9 && Math.abs(bo.max.x - bd.max.x) < 1e-9,
-    `the decks, the drum width and the slab length are common to both builds: ohv z ${bo.max.z} y ${bo.max.y} x ${bo.max.x} vs dohc z ${bd.max.z} y ${bd.max.y} x ${bd.max.x}`);
+  assert.ok(Math.abs(bo.max.z - bd.max.z) < 1e-9 && Math.abs(bo.max.y - bd.max.y) < 1e-9,
+    `the decks and the drum width are common to both builds: ohv z ${bo.max.z} y ${bo.max.y} vs dohc z ${bd.max.z} y ${bd.max.y}`);
+  const GB = L.ohvBearings();
+  // both castings end at the machined tunnel face; only the OHV build carries
+  // hardware fore of it - the retainer plate plus the bolt heads standing on it
+  const ohvFore = GB.plateForeX + GB.boltHeadCm;
+  assert.ok(Math.abs(bo.max.x - ohvFore) < GEOM_EPS && Math.abs(bd.max.x - GB.foreFaceX) < GEOM_EPS && bo.max.x > bd.max.x,
+    `both castings end at the machined tunnel face ${GB.foreFaceX.toFixed(4)}; the OHV build alone carries its cam retainer (${GB.plateForeX.toFixed(4)}) and its bolt heads out to ${ohvFore.toFixed(4)} - reads ohv ${bo.max.x.toFixed(4)} vs dohc ${bd.max.x.toFixed(4)}`);
   const P0 = L.panPlanes('dohc');
   assert.ok(near(P0.railZ, B.panRailZ) && near(P0.flangeZ, B.panFlangeZ) && near(P0.panBottomZ, bd.min.z + B.oilPanPlugDropCm, GEOM_EPS),
     `the DOHC pan planes derive wrong: ${P0.railZ}..${P0.flangeZ} bottom ${P0.panBottomZ} vs the drawn casting bottom ${bd.min.z.toFixed(4)} (Float32 attribute resolution ${GEOM_EPS})`);
   assert.ok(near(P.flangeHalfY, L.ohvHousing().skirtHalfY) && near(P.wallHalfY, L.ohvHousing().skirtInboardY),
     `the OHV bolt widths derive wrong: flange ${P.flangeHalfY} wall ${P.wallHalfY}`);
   console.log(`${OHV_CAST} two castings: dohc ${JSON.stringify(cd)} z ${bd.min.z.toFixed(2)}..${bd.max.z.toFixed(2)} drum unrelieved; ohv ${JSON.stringify(co)} z ${bo.min.z.toFixed(2)}..${bo.max.z.toFixed(2)} relieved at ${annulus(drumO)} relief vertices; dohc planes ${P0.railZ}..${P0.flangeZ} bottom ${P0.panBottomZ}, ohv planes ${P.railZ}..${P.flangeZ} bottom ${P.panBottomZ}`);
+});
+
+// ---------------------------------------------------------------------------
+// A1-G7 / issue #8 addendum item 4, slice 8B: the OHV block carries its own cam
+// bearings. The tunnel 8A bored is this variant's LINE BORE; its journals are
+// ground to the cam's own widest outline so every nose passes every bearing bore;
+// its lobes are narrower than the DOHC published width because 16 of them share
+// 44 cm of cylinder span with 5 bearings.
+// ---------------------------------------------------------------------------
+
+const OHV_BRG = 'A1-G7/issue #8 item 4 the OHV block carries its cam bearings';
+const CAM = SPEC.cam;
+const V = SPEC.variants.ohv;
+const rCam = (y, z, Cm) => Math.hypot(y, z + Cm); // radius off this variant's cam axis
+
+test(`${OHV_BRG}: this variant derives its own journals, lobe widths and line bore from the bored tunnel, and its five bearing stations fit the tunnel that bore makes`, async () => {
+  const L = await ohvLayout();
+  const H = L.ohvHousing();
+  const G = L.ohvBearings();
+  assert.ok(near(G.boreR, H.tunnelBoreR), `the OHV line bore ${G.boreR} is not the face 8A already bored this casting to (${H.tunnelBoreR}): the bearing would be machined off a plane that is not there`);
+  assert.ok(near(G.shellIdR, G.boreR - CAM.bearing.shellWall), `shell inside ${G.shellIdR} is not the line bore ${G.boreR} minus the published shell wall ${CAM.bearing.shellWall}`);
+  assert.ok(near(G.journalR, G.shellIdR - CAM.bearing.oilFilm), `journal ${G.journalR} is not the shell inside ${G.shellIdR} minus the published oil film ${CAM.bearing.oilFilm}`);
+  assert.ok(near(G.runningClearance, CAM.bearing.oilFilm), `running clearance ${G.runningClearance} is not the published oil film ${CAM.bearing.oilFilm}`);
+  assert.ok(near(G.insertAirCm, G.shellIdR - H.worstOutlineR), `insert air ${G.insertAirCm} is not bearing bore ${G.shellIdR} minus the widest cam outline ${H.worstOutlineR}`);
+  assert.ok(G.insertAirCm > 0, `a cam outline of ${H.worstOutlineR} cm cannot pass a ${G.shellIdR} cm bearing bore: front insert needs air, reads ${G.insertAirCm}`);
+  assert.ok(G.journalR >= H.worstOutlineR - 1e-9, `the OHV journal ${G.journalR} is ground smaller than the nose ${H.worstOutlineR}: a lobe then cannot turn in its own bearing`);
+  // the published lobe air (0.3) happens to be the shell wall (0.26) plus the
+  // oil film (0.04), so reading inward off the bored face lands this variant's
+  // journal exactly on its own widest outline. That is a fact of this spec, not
+  // an assumption: it is what lets every nose pass every bearing on the way in.
+  assert.ok(near(CAM.bearing.shellWall + CAM.bearing.oilFilm, V.tunnel.lobeAirCm), `the bored tunnel face ${H.tunnelBoreR} is not the journal side of a shell: the published lobe air ${V.tunnel.lobeAirCm} has to be the shell wall ${CAM.bearing.shellWall} plus the oil film ${CAM.bearing.oilFilm} for the cam to ride in shells this casting already fits`);
+  const wExpect = (B.pitch / 2 - CAM.bearingHalf - V.tunnel.lobeAxialAirCm) / 2;
+  assert.ok(near(G.lobeWidthCm, wExpect), `lobe width ${G.lobeWidthCm} is not derived from the ${B.pitch} cm pitch, the ${CAM.bearingHalf} cm bearing half and the published axial air ${V.tunnel.lobeAxialAirCm} (reads ${wExpect})`);
+  assert.ok(G.lobeWidthCm < SPEC.head.camLobeWidth, `this variant's lobe width ${G.lobeWidthCm} is not narrower than the DOHC published ${SPEC.head.camLobeWidth}: 16 lobes and 5 bearings do not fit the ${G.spanCm} cm tunnel`);
+  assert.equal(G.stations.length, 5, `an OHV cam with 4 cylinder stations runs ${G.stations.length} bearing stations, not 5`);
+  assert.deepEqual(G.stations, [G.foreFaceX - CAM.bearingHalf, (B.stations[0] + B.stations[1]) / 2, (B.stations[1] + B.stations[2]) / 2, (B.stations[2] + B.stations[3]) / 2, G.aftFaceX + CAM.bearingHalf], `bearing stations ${JSON.stringify(G.stations)} are not the tunnel-end stations plus the gaps between the published stations ${JSON.stringify(B.stations)}`);
+  for (const [x0, x1] of G.windows) assert.ok(near(x1 - x0, 2 * CAM.bearingHalf), `a bearing window ${x0}..${x1} is not the published bearing width ${2 * CAM.bearingHalf}`);
+  assert.ok(G.minAxialAir >= V.tunnel.lobeAxialAirCm - 1e-9, `the published stack leaves only ${G.minAxialAir} cm between a lobe group and a bearing, less than the ${V.tunnel.lobeAxialAirCm} cm this variant publishes`);
+  assert.ok(G.fillCm <= G.spanCm, `16 lobes at ${G.lobeWidthCm} and 5 bearings take ${G.fillCm} cm of the ${G.spanCm} cm tunnel`);
+  assert.ok(near(G.cradleMidDeg, ((H.arcs.boreFloor[0] + H.arcs.boreFloor[1]) / 2) * 180 / Math.PI), `cradle mid ${G.cradleMidDeg} deg is not the mid of the retained bored arc ${JSON.stringify(H.arcs.boreFloor.map((a) => a * 180 / Math.PI))}`);
+  assert.ok(G.oilBand[0] <= G.cradleMidDeg && G.cradleMidDeg <= G.oilBand[1] && near(G.oilBand[1] - G.oilBand[0], CAM.bearing.oilBandDeg), `oil band ${JSON.stringify(G.oilBand)} is not the published ${CAM.bearing.oilBandDeg} deg centred on the loaded cradle mid ${G.cradleMidDeg}`);
+  // a bearing may only stand where the bored crown still keeps air off the
+  // drawn crank hardware: the x bands crankSwings() publishes say which throws
+  // swing past each window, and the room the bore leaves them must be positive
+  assert.ok(H.swings.every((sw) => sw.length > 2), `crankSwings() publishes entries ${JSON.stringify(H.swings.map((sw) => sw.length))} without x bands: a bearing window cannot be checked against the throw it runs over`);
+  const deep = H.swings.filter((s) => s.slice(2).some(([u, v]) => u < v)).map((s) => s[1]);
+  assert.ok(G.crownAirCm > 0 && near(G.crownAirCm, H.crankRoomR - G.boreR), `the bore crown at ${G.boreR} cm stands ${G.crownAirCm} cm off the crank-side room ${H.crankRoomR} cm reached by the ${deep.length} throw bands that swing past these windows (${Math.max(...deep).toFixed(2)} cm deepest)`);
+  assert.deepEqual(G.swungIn.map((bb) => bb.length), [0, 0, 0, 0, 0], `the five windows read ${JSON.stringify(G.swungIn.map((bb) => bb.length))} crank bands standing in them: a bearing may only stand in a gap no throw sweeps`);
+  assert.ok(near(G.throwAirCm, B.pitch / 2 - SPEC.crank.pinWidth / 2 - CAM.bearingHalf), `the bearing windows keep ${G.throwAirCm} cm off the deepest throw band, not the derived ${B.pitch / 2} - ${SPEC.crank.pinWidth / 2} - ${CAM.bearingHalf}`);
+  assert.ok(G.throwAirCm > 0, `a ${SPEC.crank.pinWidth} cm pin sweeping at ${B.stations.join('/')} would run through a bearing stood ${G.throwAirCm} cm off its station`);
+  console.log(`${OHV_BRG} derivation: bore ${G.boreR.toFixed(4)} = the bored tunnel face; shell ${G.shellIdR.toFixed(4)} on journal ${G.journalR.toFixed(4)} (nose ${H.worstOutlineR.toFixed(4)}, insert air ${G.insertAirCm.toFixed(4)}); lobe width ${G.lobeWidthCm.toFixed(4)} against the DOHC ${SPEC.head.camLobeWidth}; stations ${JSON.stringify(G.stations.map((s) => +s.toFixed(2)))}; stack air ${G.minAxialAir.toFixed(4)}; fill ${G.fillCm.toFixed(2)} of ${G.spanCm.toFixed(2)}; cradle ${G.cradleArc.map((a) => +(a * 180 / Math.PI).toFixed(4)).join('..')} deg, oil band ${JSON.stringify(G.oilBand.map((a) => +a.toFixed(2)))}`);
+});
+
+// The bushings' own oil ways are machined drillings and are drawn with the oil
+// system that feeds them (A1-G4); this row checks the hardware the addendum
+// names for this variant: the front-insert rings and the cap that retains them.
+test(`${OHV_BRG}: the drawn OHV block carries five front-insert bearing rings at those stations and a fore retainer bolted to the tunnel face that retains them`, async () => {
+  const { THREE, block } = await drawnBlock('ohv');
+  const L = await ohvLayout();
+  const H = L.ohvHousing();
+  const G = L.ohvBearings();
+  const C = H.belowCrankCm;
+  const solids = block.children.filter((m) => m.userData.solid);
+  const bushings = solids.filter((m) => /^cam-bushing-/.test(m.userData.part));
+  const plates = solids.filter((m) => m.userData.part === 'cam-retainer');
+  const bolts = solids.filter((m) => /^cam-retainer-bolt-/.test(m.userData.part));
+  assert.equal(bushings.length, 5, `the OHV block draws ${bushings.length} cam bearing shells; a 5-station cam needs 5 (${solids.map((m) => m.userData.part).join(', ')})`);
+  assert.equal(plates.length, 1, `the front-insert tunnel has no fore retainer plate: ${plates.length}`);
+  assert.equal(bolts.length, 2, `the retainer is held by ${bolts.length} bolts, the derived bolt line stands one each side of the loaded cradle`);
+  const tol = H.tunnelBoreR * (1 - Math.cos(H.arcStepRad / 2)); // what a face sampled at the published chord step can miss by
+  const readRing = (m) => {
+    const pos = m.geometry.attributes.position;
+    let minR = Infinity, maxR = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i), z = pos.getZ(i); // bushings are built in the casting's own frame
+      const r = rCam(y, z, C);
+      minR = Math.min(minR, r); maxR = Math.max(maxR, r);
+    }
+    const bb = new THREE.Box3().setFromObject(m);
+    return { minR, maxR, bb };
+  };
+  const want = G.windows.map(([x0, x1]) => ({ x0, x1 }));
+  const seen = [];
+  for (const m of bushings) {
+    assert.notEqual(m.material.name, 'castIronBlock', `cam bushing ${m.userData.part} is drawn in the block's own cast iron: a bearing machined as cast iron is not a replaceable front-insert shell`);
+    assert.equal(m.material.name, 'bearingShell', `cam bushing ${m.userData.part} is drawn in ${m.material.name}, not the tree's shell metal ${'bearingShell'}`);
+    const { minR, maxR, bb } = readRing(m);
+    const hit = want.find((g) => Math.abs(bb.min.x - g.x0) < READ_EPS && Math.abs(bb.max.x - g.x1) < READ_EPS);
+    assert.ok(hit, `bearing shell ${m.userData.part} spans x ${bb.min.x.toFixed(4)}..${bb.max.x.toFixed(4)}: no published station window ${JSON.stringify(want.map((g) => [g.x0, g.x1]))} matches it`);
+    seen.push(hit);
+    assert.ok(Math.abs(maxR - G.boreR) <= tol + GEOM_EPS, `shell ${m.userData.part} outer face reads r ${maxR.toFixed(4)} against the line bore ${G.boreR} (chord allowance ${tol.toFixed(5)})`);
+    assert.ok(Math.abs(minR - G.shellIdR) <= tol + GEOM_EPS, `shell ${m.userData.part} bore reads r ${minR.toFixed(4)} against the derived journal side ${G.shellIdR}`);
+  }
+  assert.equal(new Set(seen.map((w) => w.x0)).size, 5, `only ${new Set(seen.map((w) => w.x0)).size} distinct windows are filled by the 5 bushings: two stood at the same station`);
+  const plate = plates[0];
+  const pbb = new THREE.Box3().setFromObject(plate);
+  assert.ok(pbb.min.x >= G.foreFaceX - GEOM_EPS, `the retainer plate starts at x ${pbb.min.x.toFixed(4)}: it has to stand outboard of the machined tunnel face at ${G.foreFaceX} to push the shells in`);
+  const pr = readRing(plate);
+  assert.ok(Math.abs(pr.minR - G.shellIdR) <= tol + GEOM_EPS, `the retainer opening reads r ${pr.minR.toFixed(4)}: it has to pass the cam nose ${H.worstOutlineR} with the insert air ${G.insertAirCm} (derived ${G.shellIdR})`);
+  assert.ok(Math.abs(pbb.max.y - G.plateHalfY) <= READ_EPS && Math.abs(pbb.min.y + G.plateHalfY) <= READ_EPS,
+    `the retainer spans y ${pbb.min.y.toFixed(4)}..${pbb.max.y.toFixed(4)}: the plate is as wide as its own bolt chain needs (${G.plateHalfY.toFixed(4)} = the mid-wall bolt line ${G.boltLocalY.toFixed(4)} + the head ${G.boltCircumR.toFixed(4)} + the published wrench clearance ${CAM.bearing.wrenchClr})`);
+  assert.ok(Math.abs(pr.maxR - G.plateCornerR) <= tol + GEOM_EPS,
+    `the retainer's widest corner reads r ${pr.maxR.toFixed(4)} off the cam axis against the derived corner ${G.plateCornerR.toFixed(4)}: its half width ${G.plateHalfY.toFixed(4)} stands on the rail plane ${G.plateBottomZ.toFixed(4)}, ${(-C - G.plateBottomZ).toFixed(4)} cm below the axis`);
+  assert.ok(Math.abs(pbb.min.z - G.plateBottomZ) <= READ_EPS && Math.abs(pbb.max.z - G.plateTopZ) <= READ_EPS,
+    `the retainer spans z ${pbb.min.z.toFixed(4)}..${pbb.max.z.toFixed(4)}: it has to stand from the published rail plane ${G.plateBottomZ.toFixed(4)} up to the cam axis ${G.plateTopZ.toFixed(4)}, the split plane every bearing cap of this tree splits at`);
+  for (const b of bolts) {
+    const bb = new THREE.Box3().setFromObject(b);
+    const ax = (bb.min.x + bb.max.x) / 2, ay = (bb.min.y + bb.max.y) / 2, az = (bb.min.z + bb.max.z) / 2 + C;
+    assert.ok(Math.abs(rCam(ay, az - C, C) - G.boltOutRel) <= READ_EPS, `retainer bolt ${b.userData.part} stands at r ${rCam(ay, az - C, C).toFixed(4)} off the cam axis, not on the derived bolt line ${G.boltOutRel}`);
+    const want = G.boltAzDeg[b.userData.part.endsWith('+') ? 1 : 0];
+    let got = Math.atan2(az, ay) * 180 / Math.PI;
+    if (got < 0) got += 360;
+    assert.ok(Math.abs(got - want) <= 0.6, `retainer bolt ${b.userData.part} stands at az ${got.toFixed(2)} deg off the cam axis, not on the derived bolt line ${want.toFixed(2)} deg (${JSON.stringify(G.boltAzDeg.map((a) => +a.toFixed(2)))}: the mid of the loaded cradle ${G.cradleMidDeg.toFixed(2)} plus/minus ${G.boltSpreadDeg.toFixed(2)} deg, where the skirt's wall stands ${G.boltLocalY.toFixed(4)} cm outboard and ${G.boltDropCm.toFixed(4)} cm below the axis`);
+    assert.ok(Math.max(bb.max.y - bb.min.y, bb.max.z - bb.min.z) / 2 + 1e-6 >= CAM.bearing.boltAcrossR / 2, `bolt ${b.userData.part} head is smaller than the published ${CAM.bearing.boltAcrossR} cm across flats`);
+  }
+  const named = new Set(solids.map((m) => m.userData.part));
+  console.log(`${OHV_BRG} drawn: ${solids.length} solids, ${named.size} named parts; 5 rings at ${JSON.stringify(G.windows.map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]))} reading OD ${Math.max(...bushings.map((m) => readRing(m).maxR)).toFixed(4)} (the line bore ${G.boreR.toFixed(4)}) over ID ${Math.min(...bushings.map((m) => readRing(m).minR)).toFixed(4)} (shell inside ${G.shellIdR.toFixed(4)} on journal ${G.journalR.toFixed(4)}); retainer x ${pbb.min.x.toFixed(2)}..${pbb.max.x.toFixed(2)} r ${pr.minR.toFixed(4)}..${pr.maxR.toFixed(4)} on 2 bolts at r ${G.boltOutRel.toFixed(4)} / ${JSON.stringify(G.boltAzDeg.map((a) => +a.toFixed(2)))} deg, ${G.boltEngageCm} cm deep into the fore face`);
 });

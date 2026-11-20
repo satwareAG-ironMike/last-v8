@@ -549,6 +549,12 @@ export const SPEC = {
         lobeAirCm: 0.3, // machined bore = swept outline + this air
         crankSideAirCm: 0.4, // least air any crank-side swing keeps off cast iron
         arcStepDeg: 0.5, // sampling step of every bored/relief arc this casting machines
+        // issue #8 item 4 / slice 8B: one central cam runs 16 lobes AND five
+        // bearings down one 44 cm cylinder span, so this variant publishes the air
+        // a lobe group keeps off a bearing - the DOHC published lobe width cannot
+        // fit it (16 x 2.6 cm is 41.6 of the 44 cm span with no room for a bearing)
+        // and the lobe width law derives the narrower one from this.
+        lobeAxialAirCm: 1.1,
       },
     },
   },

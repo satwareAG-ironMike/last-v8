@@ -57,7 +57,6 @@ export const oilAz = B.oilAz;
 export function bearingStack() {
   return {
     journalR, oilFilm: B.oilFilm, shellIdR, shellWall: B.shellWall, boreR,
-    journalR, oilFilm: B.oilFilm, shellIdR, shellWall: B.shellWall, boreR,
     castWall: B.castWall, castOdR, tabStand: B.tabStand, tabH: B.tabH,
     tabInset: B.tabInset, tabR, tabHalf,
     boltOutRel, boltHoleR: B.boltHoleR, boltAcrossR: B.boltAcrossR, boltCircumR, boltLen,
