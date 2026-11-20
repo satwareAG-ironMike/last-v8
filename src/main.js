@@ -19,9 +19,15 @@ import { createCameraRig } from './ui/cameraRig.js';
 import { createPanel } from './ui/panel.js';
 import { createViewControls } from './ui/viewControls.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
+import { hudTitle } from './engine/layout.js';
 
 const container = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
+// P1-G5 (issue #8): the engine name printed in the HUD is generated from the
+// build switch (src/engine/layout.js) - the static markup is only the boot
+// placeholder, and switching SPEC.build.variant renames the shell.
+const engineNameEl = document.getElementById('engine-name');
+if (engineNameEl) engineNameEl.textContent = hudTitle();
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);

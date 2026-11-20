@@ -2,6 +2,7 @@
 // no image assets are downloaded or shipped with this project.
 import * as THREE from 'three';
 import { PMREMGenerator } from 'three';
+import { plateLines } from '../engine/layout.js';
 
 // ---- seeded noise --------------------------------------------------------
 
@@ -363,14 +364,7 @@ export function createMaterials() {
   M.idPlate = new THREE.MeshStandardMaterial({
     name: 'idPlate',
     map: tex(
-      labelCanvas(
-        [
-          { text: 'SATWARE TEST CELL', bold: true, size: 44 },
-          { text: 'V8-90 DOHC  4.6 L', size: 34 },
-          { text: 'MULE 01  S/N 0008-V8', size: 24 },
-        ],
-        { w: 1024, h: 384 }
-      ),
+      labelCanvas(plateLines(), { w: 1024, h: 384 }),
       { repeat: 1, srgb: true }
     ),
     metalness: 0.5,
