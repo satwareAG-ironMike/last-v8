@@ -47,6 +47,49 @@ export function worldBox(x0, x1, y0, y1, z0, z1, fillet = 0) {
   return g;
 }
 
+/**
+ * Sample a machined circular arc in its own circle's frame (angle 0 = the +y
+ * radius, running counter-clockwise) into [y, z] points that lie exactly on the
+ * circle. `stepRad` is the MAXIMUM chord the machined face is resolved at.
+ *
+ * The sample grid is anchored on 0 deg instead of being counted off the arc's
+ * start: then every extreme of the round - the +y/+z/-y/-z tangent points a
+ * clearance or a bolt plane is measured from - is a real vertex, and the arc's
+ * own machined endpoints are kept as vertices too. The chord error this leaves
+ * is the arc sagitta at stepRad, which is the tolerance a clearance law has to
+ * name when it compares a sampled face to the ideal circle.
+ */
+export function machinedArc(cy, cz, r, from, to, stepRad) {
+  const span = to - from;
+  if (!(span > 0)) {
+    throw new Error(`machined arc ${from} -> ${to} rad does not run counter-clockwise`);
+  }
+  if (!(stepRad > 0)) throw new Error(`machined arc chord step must be > 0, reads ${stepRad}`);
+  const on = (t) => [cy + r * Math.cos(t), cz + r * Math.sin(t)];
+  const pts = [on(from)]; // the machined endpoint itself, wherever it falls
+  const k0 = Math.ceil(from / stepRad + 1e-9);
+  const k1 = Math.floor(to / stepRad - 1e-9);
+  for (let k = k0; k <= k1; k++) pts.push(on(k * stepRad));
+  pts.push(on(to));
+  return pts;
+}
+
+/**
+ * A whole machined bore: the closed ring of a bored circle at the published
+ * chord step. The step must divide a full turn exactly - the bore is then the
+ * same machined face machinedArc samples an arc of, with no seam vertex.
+ */
+export function machinedCircle(cy, cz, r, stepRad) {
+  const turns = (2 * Math.PI) / stepRad;
+  if (!Number.isInteger(turns)) {
+    throw new Error(`machined circle: chord step ${stepRad} rad does not divide a full turn (${turns} steps)`);
+  }
+  const on = (t) => [cy + r * Math.cos(t), cz + r * Math.sin(t)];
+  const pts = [];
+  for (let k = 0; k < turns; k++) pts.push(on(k * stepRad));
+  return pts;
+}
+
 function latheProfile(pairs) {
   return pairs.map(([r, a]) => new THREE.Vector2(r, a));
 }

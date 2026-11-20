@@ -86,6 +86,12 @@ export const SPEC = {
     panFlangeZ: -11.15,
     panRailZ: -11.6,
     panInset: 0.25, // the pan wall stands this far inboard of the pan-rail edge
+    // A1-G7 / issue #16: the OHV variant casts its pan rails on its own skirt, at
+    // its own depth under its own drum. A sump therefore hangs a DEPTH below the
+    // rail plane it is cast on - never at an absolute z - or the two builds would
+    // share a plane neither of them has.
+    oilPanDepthCm: 3.0, // rail plane down to the pan's bottom face
+    oilPanPlugDropCm: 0.45, // pan bottom down to the drain plug's lowest face
   },
 
   head: {
@@ -534,6 +540,16 @@ export const SPEC = {
       centralCam: true,
       drawn: false,
       belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
+      // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
+      // lobes swing in is BORED - its machined face is the swept outline plus this
+      // much air - and the room between the crank-side swings and the cam is the
+      // air those swings are owed, so no cast wall may stand in it (tmp/ohvdrum.mjs
+      // proves the relieved drum + skirt section that follows from these three).
+      tunnel: {
+        lobeAirCm: 0.3, // machined bore = swept outline + this air
+        crankSideAirCm: 0.4, // least air any crank-side swing keeps off cast iron
+        arcStepDeg: 0.5, // sampling step of every bored/relief arc this casting machines
+      },
     },
   },
 };
