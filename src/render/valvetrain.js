@@ -14,6 +14,8 @@ import {
 import { latheX } from './parts.js';
 import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
 import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
+import { variantEntry, camGroupNames } from '../engine/layout.js';
+import { ohvCamLayout, TURNED_SEGMENTS } from '../engine/ohv.js';
 
 const H = SPEC.head;
 const V = SPEC.valves;
@@ -40,12 +42,13 @@ const disc = (rTop, rBot, h, seg = 32) =>
  * maps through alignX to (y,z) = (v,-u), so the baked nose sits at the index
  * azimuth in the cam group's own frame.
  */
-function lobeShape(valve, idx) {
+function lobeShape(valve, idx, samples = 180) {
   const shape = new THREE.Shape();
   // Sampling runs forward FROM the nose, so vertex 0 is the machined nose tip:
   // the outline's max-radius vertex lands exactly on the index azimuth.
-  for (let i = 0; i < 180; i++) {
-    const alpha = i * 2;
+  const step = 360 / samples;
+  for (let i = 0; i < samples; i++) {
+    const alpha = i * step;
     const az = idx + alpha;
     const r = lobeProfileRadius(valve, signedAngle(alpha));
     const u = -r * Math.cos(az * DEG);
@@ -173,9 +176,71 @@ function buildValve(cyl, valve, materials) {
  * to index - theta/2 = lobeAzimuth(), because camAzimuth = sense * theta/2
  * and SPEC.crank.sense = -1 (same turning direction as the crank, half speed).
  */
-export function createValvetrain(materials) {
+/**
+ * Slice 8C-1 (issue #8 item 2 + item 4, GATES P1-G7 / A1-G7): the one central
+ * 16-lobe cam the OHV variant turns in its own casting. The five journal stubs
+ * are the turned diameters the front-insert rings of src/render/block.js ride on
+ * the published oil film; the 16 lobes are the same machined profile the DOHC
+ * cams are ground from, at this variant's own lobe width and phased onto its own
+ * lifter axis (src/engine/ohv.js); the necks join them at the ground base circle.
+ * No follower hardware: SPEC.variants.ohv.drawn is still false until this variant
+ * machines its lifter bores, and the rings are journalled by their press fit and
+ * by the two faces of the tunnel, not by cam collars (issue #22).
+ */
+function buildOhvCam(name, materials) {
+  const plan = ohvCamLayout();
+  const cam = new THREE.Group();
+  cam.name = name;
+  cam.position.set(0, plan.axis.y, plan.axis.z);
+  const put = (partName, geo, mat, part) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.name = partName;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.part = part;
+    cam.add(m);
+    return m;
+  };
+  // The journals and necks are turned at the same 48 segments the rings they ride
+  // in are bored at (src/render/block.js section 2b), so the pair is a concentric
+  // matched polygon: the published 0.0400 cm oil film is what a measurement off
+  // the drawn surfaces reads. Turned at 40 against a 48-step bore, the facet
+  // phases differ and the film measures 0.0335 - 0.0065 cm of the running
+  // clearance eaten by machining resolution instead of by the design.
+  for (const j of plan.journals) put(j.name, latheX(solidX(j.r, j.x0, j.x1), TURNED_SEGMENTS), materials.camShaft, 'cam journal');
+  for (const n of plan.necks) put(n.name, latheX(solidX(n.r, n.x0, n.x1), TURNED_SEGMENTS), materials.camShaft, 'cam neck');
+  for (const l of plan.lobes) {
+    // bevel: 0 for the same reason the DOHC lobes have none: a chamfered extrude
+    // puts the drawn nose past the machined face plane (A1-G1). A cam is ground.
+    // The contour step is the one ohvCamLayout derives against this tunnel's own
+    // turned-bore facet error, so the drawn outline is no coarser than the bore.
+    const g = extrude(lobeShape(l.valve, l.index, plan.profileSamples), plan.lobeWidthCm, { bevel: 0 });
+    alignX(g);
+    g.computeBoundingBox();
+    const measured = (g.boundingBox.min.x + g.boundingBox.max.x) / 2;
+    g.translate(l.centre - measured, 0, 0);
+    const m = put(l.name, g, materials.camLobe, 'cam lobe');
+    m.userData.cyl = l.cyl.num;
+    m.userData.noseDir = new THREE.Vector3(0, Math.sin(l.index * DEG), Math.cos(l.index * DEG));
+  }
+  return cam;
+}
+
+export function createValvetrain(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'valvetrain';
+  const entry = variantEntry(variantId);
+
+  if (entry.centralCam) {
+    const cam = buildOhvCam(camGroupNames(variantId)[0], materials);
+    group.add(cam);
+    // The same half-crank turn the DOHC cams get; the lobes' baked indices carry
+    // this variant's lifter axes, src/engine/ohv.js publishes them.
+    const update = (theta) => { cam.rotation.x = (theta / CAM.halfSpeedRatio) * DEG; };
+    update(0);
+    group.userData.family = 'valvetrain';
+    return { group, update, cams: [cam] };
+  }
 
   const cams = [];
   const order = [
