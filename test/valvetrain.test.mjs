@@ -1086,3 +1086,206 @@ test('A1-G2 the guide and the tensioner ride the two bows the closure needs', as
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// P1-G7 / A1-G7 OHV clause (issue #8 addendum item 1): THE BUILD SWITCH.
+// A DOHC head and an OHV block are two builds of one engine, and the tree may
+// name either only through src/engine/layout.js, which reads the switch
+// published in SPEC.build.variant. These laws gate the CONTRACT, not a drawing:
+// the counts, the 2:1 drive, the axis placement an OHV cam has to stand at, the
+// outline a clearance law has to read, and the fact that the OHV valvetrain is
+// published but NOT drawn - so no later row can call it built. Placement
+// numbers are the ones issue #16 measures against this casting.
+// ---------------------------------------------------------------------------
+
+const OHV_LAW = 'P1-G7/A1-G7 the OHV build contract';
+
+const ohvLayout = async () => await import('../src/engine/layout.js');
+
+test(`${OHV_LAW}: the switch is published, names exactly two variants, and every valvetrain count derives from it`, async () => {
+  const L = await ohvLayout();
+  assert.equal(SPEC.build.variant, 'dohc', 'the shipped build has to say which variant it is');
+  assert.deepEqual(Object.keys(SPEC.variants).sort(), ['dohc', 'ohv'],
+    `SPEC.variants carries ${Object.keys(SPEC.variants || {}).join(', ')}; the addendum promises a DOHC default beside an OHV small-block`);
+  const banks = Object.keys(SPEC.banks).length;
+  const valves = SPEC.cylinders.length * 2;
+  assert.equal(L.cams('dohc'), banks * 2, `the DOHC build runs one cam line per bank side, so ${banks * 2}`);
+  assert.equal(L.cams('ohv'), 1, 'the OHV build runs ONE central cam, not a pair per bank');
+  assert.equal(L.cams(), L.cams(SPEC.build.variant), 'cams() with no argument has to read the published switch');
+  for (const id of ['dohc', 'ohv']) {
+    assert.equal(L.lobes(id), valves, `${id}: ${valves} valves need ${valves} lobes`);
+    assert.equal(L.lobes(id) % L.cams(id), 0, `${id}: the ${L.lobes(id)} lobes have to divide evenly over ${L.cams(id)} cam(s)`);
+  }
+  assert.equal(L.lobes('ohv'), 16, 'the addendum names a central 16-lobe cam');
+  assert.deepEqual(L.followers('dohc'), { lifters: 0, pushrods: 0, rockers: 0, covers: 0 },
+    'the DOHC build rides lobes and buckets: it casts and draws no lifters, pushrods, rockers or rocker covers');
+  assert.deepEqual(L.followers('ohv'), { lifters: 16, pushrods: 16, rockers: 16, covers: 2 },
+    'the OHV build owes one lifter, one pushrod and one rocker per valve, and one cover per bank');
+  assert.throws(() => L.cams('flathead'), /unknown build variant "flathead"/,
+    'a switch value nobody published has to be refused by name, not answered with a silent default');
+  console.log(`${OHV_LAW} counts: switch ${SPEC.build.variant}; dohc ${L.cams('dohc')} cams / ${L.lobes('dohc')} lobes / `
+    + `${JSON.stringify(L.followers('dohc'))}; ohv ${L.cams('ohv')} cam / ${L.lobes('ohv')} lobes / ${JSON.stringify(L.followers('ohv'))}`);
+});
+
+test(`${OHV_LAW}: the OHV variant drives its single central cam 2:1 from the crank on the two published pitch circles and the shared chain pitch`, async () => {
+  const L = await ohvLayout();
+  const { chainPitch } = await import('../src/engine/drive.js');
+  const d = L.drive('ohv');
+  assert.equal(d.crankTeeth, CS.teeth, 'the crank end of the OHV drive is the published crank sprocket');
+  assert.equal(d.crankPitchR, CS.pitchR, 'the crank end of the OHV drive is the published crank pitch circle');
+  assert.equal(d.camTeeth, CS.teeth * SPEC.cam.halfSpeedRatio,
+    `the cam end has to carry twice the crank's ${CS.teeth} teeth for the published ${SPEC.cam.halfSpeedRatio}:1`);
+  assert.equal(d.camPitchR, CS.pitchR * SPEC.cam.halfSpeedRatio,
+    `and twice the crank's ${CS.pitchR} cm pitch circle, or the two ends stop sharing one chain pitch`);
+  assert.equal(d.camTeeth, KS.teeth, 'the OHV cam sprocket is the published cam sprocket, not a second one');
+  assert.equal(d.camPitchR, KS.pitchR, 'the OHV cam sprocket runs on the published cam pitch circle');
+  assert.equal(d.camBore, KS.bore, 'and it is bored on the cam journal the published sprocket hub presses onto');
+  const pitch = chainPitch();
+  assert.ok(Math.abs(d.pitch - pitch) < 1e-12,
+    `the OHV drive has to ride the same ${pitch.toFixed(13)} cm pitch the DOHC chains ride, measured ${d.pitch}`);
+  const Cc = L.ohvCam().belowCrankCm;
+  assert.ok(Cc > d.camPitchR + 0.5, `a cam stood ${Cc} cm from the crank cannot carry a ${d.camPitchR} cm pitch circle`);
+  const alpha = Math.asin((d.camPitchR - d.crankPitchR) / Cc);
+  const span = Math.hypot(Cc, 0) * Math.cos(alpha);
+  const loop = 2 * span
+    + ((Math.PI - 2 * alpha) / (2 * Math.PI)) * 2 * Math.PI * d.crankPitchR
+    + ((Math.PI + 2 * alpha) / (2 * Math.PI)) * 2 * Math.PI * d.camPitchR;
+  const links = loop / pitch;
+  const whole = Math.round(links);
+  assert.ok(Math.abs(links - whole) * pitch <= CH.tensionerTravel + 1e-9,
+    `the loop the published pitch circles and ${Cc} cm of centre distance describe is ${links.toFixed(3)} links, `
+    + `${(Math.abs(links - whole) * pitch).toFixed(3)} cm off a whole ${whole} links - more take-up than the published ${CH.tensionerTravel} cm tensioner travel gives`);
+  console.log(`${OHV_LAW} drive: ${d.crankTeeth}T/${d.camTeeth}T at ${d.crankPitchR}/${d.camPitchR} cm pitch circles `
+    + `on ${pitch.toFixed(13)} cm pitch, span ${span.toFixed(4)} cm at ${Cc} cm centre distance, `
+    + `wrap ${(((Math.PI - 2 * alpha) / (2 * Math.PI)) * CS.teeth).toFixed(2)}/${(((Math.PI + 2 * alpha) / (2 * Math.PI)) * KS.teeth).toFixed(2)} whole teeth, `
+    + `loop ${links.toFixed(3)} links against ${whole} with ${CH.tensionerTravel} cm of take-up`);
+});
+
+test(`${OHV_LAW}: the published OHV cam axis clears everything that swings past it in the crankcase, read against the widest outline the cam has`, async () => {
+  const L = await ohvLayout();
+  const { bankUp } = await import('../src/engine/spec.js');
+  const { pistonAlong } = await import('../src/engine/timing.js');
+  const cam = L.ohvCam();
+  const Cc = cam.belowCrankCm;
+  const tunnel = L.camTunnel('ohv');
+  const worst = L.worstOutlineR();
+  const K = SPEC.crank;
+  const swings = [
+    ['connecting-rod big end', K.radius + SPEC.rod.bigEndRadius],
+    ['counterweight lobe tip', K.counterRadius],
+    ['crank pin sweep', K.radius + K.pinRadius],
+  ];
+  const margins = [];
+  for (const [name, sweep] of swings) {
+    const air = Cc - sweep - worst;
+    assert.ok(air >= 0.4,
+      `a cam stood ${Cc} cm below the crank centre leaves the ${name} (sweeps ${sweep.toFixed(2)} cm) only `
+      + `${air.toFixed(3)} cm past its widest outline ${worst.toFixed(4)} cm - the OHV placement needs 0.4 cm`);
+    const columnAir = Cc - sweep - tunnel.faceR;
+    assert.ok(columnAir >= 0.4,
+      `at a bearing column bored to ${tunnel.faceR.toFixed(2)} cm the ${name} keeps ${columnAir.toFixed(3)} cm, `
+      + `and the lobes swing in the open valley between the columns`);
+    margins.push(`${name} ${air.toFixed(3)}/${columnAir.toFixed(3)}`);
+  }
+  // The liner is the tunnel this block casts, not the axis it is bored on.
+  const clampSeg = (p, a, b) => {
+    const ab = [b[0] - a[0], b[1] - a[1]];
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1])));
+    return Math.hypot(p[0] - a[0] - t * ab[0], p[1] - a[1] - t * ab[1]);
+  };
+  const axis = [0, -Cc];
+  const linerReadings = [];
+  for (const bank of Object.keys(SPEC.banks)) {
+    const u = bankUp(bank).slice(1);
+    const near = clampSeg(axis, [SPEC.block.boreStartA * u[0], SPEC.block.boreStartA * u[1]],
+      [SPEC.block.deckA * u[0], SPEC.block.deckA * u[1]]);
+    const cast = near - SPEC.block.boreShellRadius;
+    assert.ok(cast - worst >= 0.3,
+      `bank ${bank}: the cam's widest outline stands only ${(cast - worst).toFixed(3)} cm clear of the nearest `
+      + `liner material this block casts (${near.toFixed(3)} cm to the bored tunnel, shell radius ${SPEC.block.boreShellRadius})`);
+    const axisLine = Math.abs(axis[0] * u[1] - axis[1] * u[0]) - SPEC.block.boreShellRadius;
+    assert.ok(axisLine > 0, `bank ${bank}: the cam axis stands inside the bored liner axis line itself (${axisLine.toFixed(3)} cm) - the tunnel would swallow it`);
+    assert.ok(cast > axisLine,
+      `bank ${bank}: the reading that gates is the clamped tunnel (${cast.toFixed(3)} cm), not the infinite bored axis (${axisLine.toFixed(3)} cm)`);
+    linerReadings.push(`${bank} tunnel material ${cast.toFixed(3)} cm / bored-axis line ${axisLine.toFixed(3)} cm`);
+  }
+  // The piston skirt bottom disc, read at its own lowest published pose.
+  let skirtWorst = Infinity;
+  let skirtBank = '';
+  for (const cyl of SPEC.cylinders) {
+    const u = bankUp(cyl.bank).slice(1);
+    let lowest = Infinity;
+    for (let th = 0; th < 720; th += 1) lowest = Math.min(lowest, pistonAlong(cyl, th));
+    const s = lowest - SPEC.piston.skirtLength;
+    const near = Math.hypot(axis[0] - s * u[0], axis[1] - s * u[1]) - SPEC.piston.radius;
+    if (near < skirtWorst) { skirtWorst = near; skirtBank = `cyl ${cyl.num} (${cyl.bank}) at ${lowest.toFixed(3)} cm up its bore`; }
+  }
+  skirtWorst -= worst;
+  assert.ok(skirtWorst >= 0.3,
+    `the cam's widest outline ${worst.toFixed(4)} cm stands ${skirtWorst.toFixed(3)} cm clear of the nearest piston `
+    + `skirt bottom (${skirtBank}, skirt ${SPEC.piston.skirtLength} cm below the pin, radius ${SPEC.piston.radius}) - 0.3 cm needed`);
+  // And the consequence this casting cannot dodge: the bored tunnel breaks below
+  // the face the pan rails and the test stand are built on.
+  const floorZ = cam.tunnelFloorZ;
+  assert.ok(Math.abs(floorZ - (-Cc - tunnel.faceR)) < 1e-9,
+    `the tunnel floor has to be the published centre distance plus the machined face, measured ${floorZ}`);
+  const below = -floorZ - SPEC.block.caseOuterRadius;
+  assert.ok(below > 0, `row A1-G6 has to fix this before the OHV cam can be cast: the bored tunnel floor at ${floorZ} cm `
+    + `stands ${below.toFixed(2)} cm below the crankcase drum this tree casts (caseOuterRadius ${SPEC.block.caseOuterRadius}), `
+    + `and ${(-floorZ - SPEC.block.panRailZ).toFixed(2)} cm below the pan-rail face at ${SPEC.block.panRailZ}`);
+  assert.equal(SPEC.variants.ohv.drawn, false, 'no law may read the OHV cam tunnel as cast while it is not: the variant has to say so');
+  console.log(`${OHV_LAW} placement: C ${Cc} cm on the bisector, tunnel bore ${tunnel.boreR.toFixed(4)} / face ${tunnel.faceR.toFixed(4)} / floor ${floorZ.toFixed(2)} cm, `
+    + `widest outline ${worst.toFixed(4)} cm; swings ${margins.join('; ')} (lobe sweep / bearing column); `
+    + `liners ${linerReadings.join('; ')}; skirt bottom ${skirtWorst.toFixed(3)} cm; tunnel floor ${below.toFixed(2)} cm under caseOuterRadius ${SPEC.block.caseOuterRadius}`);
+});
+
+test(`${OHV_LAW}: a cam clearance law reads the widest outline the cam can present, and a base-circle law reports a clearance the cam does not have`, async () => {
+  const L = await ohvLayout();
+  const { lobeProfileRadius, lobeHalfCamDeg } = await import('../src/engine/timing.js');
+  const { noseR } = await import('../src/engine/bearings.js');
+  const base = SPEC.head.camBaseRadius;
+  assert.ok(Math.abs(L.noseMaxRadius() - noseR) < 1e-9,
+    `the cam's widest outline is the ground nose the bearing stack already publishes (${noseR}), measured ${L.noseMaxRadius()}`);
+  assert.ok(Math.abs(L.worstOutlineR() - Math.max(lobeProfileRadius('intake', 0), lobeProfileRadius('exhaust', 0))) < 1e-9,
+    'the widest outline a 16-lobe cam built from these lobes can present in ANY direction is the ground nose of its own lobes');
+  assert.ok(Math.abs(L.worstOutlineR() - L.noseMaxRadius()) < 1e-9, 'worstOutlineR and noseMaxR are one published number, not two tunable ones');
+  assert.ok(Math.abs(L.bestOutlineR() - base) < 1e-9, 'and the narrowest it can present is the base circle it is ground on');
+  assert.ok(L.worstOutlineR() > L.bestOutlineR(), 'if the two were equal the direction would not matter, and it does');
+  const halfCam = lobeHalfCamDeg('intake');
+  assert.ok(Math.abs(lobeProfileRadius('intake', halfCam) - base) < 1e-6,
+    `a lobe is a base circle with a nose on it: ${halfCam.toFixed(2)} cam degrees off its nose it has to be back on ${base}`);
+  const gap = L.worstOutlineR() - L.bestOutlineR();
+  const baseCircleLaw = SPEC.crank.radius + SPEC.rod.bigEndRadius + L.bestOutlineR();
+  const realLaw = SPEC.crank.radius + SPEC.rod.bigEndRadius + L.worstOutlineR();
+  assert.ok(Math.abs(realLaw - baseCircleLaw - gap) < 1e-9, 'the two readings differ by exactly the nose over the base circle');
+  assert.ok(realLaw > baseCircleLaw,
+    `a law that clears the rod big end against the base circle (${baseCircleLaw.toFixed(3)} cm of centre distance) `
+    + `asks for ${gap.toFixed(3)} cm less than the same law reading the outline the cam actually presents (${realLaw.toFixed(3)} cm)`);
+  console.log(`${OHV_LAW} outline: base circle ${L.bestOutlineR().toFixed(4)} cm, ground nose ${L.worstOutlineR().toFixed(4)} cm, `
+    + `direction worth ${gap.toFixed(4)} cm of centre distance; rod-big-end floor ${baseCircleLaw.toFixed(3)} cm as a base-circle law, `
+    + `${realLaw.toFixed(3)} cm as the law this row gates`);
+});
+
+test(`${OHV_LAW}: the OHV valvetrain is a published contract and not a drawn part - the scene still carries exactly the cams the switch names`, async () => {
+  const L = await ohvLayout();
+  assert.equal(SPEC.variants.ohv.drawn, false, 'the OHV variant has to publish that its geometry is not built yet');
+  const { group } = await buildValvetrain();
+  const want = [...L.camGroupNames()].sort();
+  for (const name of want) assert.ok(group.getObjectByName(name), `the published switch names the camshaft "${name}" and the drawn valve train has no such part`);
+  // read the semantic kind, not a name prefix: 'cam-sprocket-*' shares the
+  // prefix with 'cam-L-intake' and would poison a prefix-only filter
+  const drawn = new Set();
+  group.traverse((o) => { if (o.userData && o.userData.part === 'camshaft' && o.parent) drawn.add(o.parent.name); });
+  assert.deepEqual([...drawn].sort(), want,
+    `the camshafts drawn in the valve train ${[...drawn].sort().join(', ')} have to be exactly the ones the switch names, ${want.join(', ')}`);
+  assert.equal(want.length, L.cams(), 'the switch has to name as many camshafts as it counts');
+  const banned = ['lifter', 'pushrod', 'push-rod', 'rocker', 'cover'];
+  for (const word of banned) {
+    let hits = 0;
+    group.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
+    assert.equal(hits, 0, `the tree draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.drawn is false: `
+      + `either the OHV geometry is drawn - and then the switch has to flip in the same step as the block that houses the cam - or it is not`);
+  }
+  console.log(`${OHV_LAW} drawn: switch ${SPEC.build.variant} -> ${want.join(', ')}; 0 lifters, pushrods, rockers or rocker covers in the valve train; `
+    + `the ohv contract ${JSON.stringify(L.followers('ohv'))} is still owed`);
+});
