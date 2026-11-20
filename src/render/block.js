@@ -1,12 +1,18 @@
 // The cross-plane V8 block casting as a union of primitives. Overlapping
 // solids in the same material render as one casting; every junction is
-// computed from src/engine/spec.js and pinned by test/block.test.mjs.
+// computed from src/engine/spec.js plus the build switch (src/engine/layout.js)
+// and pinned by test/block.test.mjs.
 //
 // Solids: crankcase drum shell, fore/aft end discs (with main bearing
 // holes + bushes + shells), outboard deck support columns, inboard bridge
 // webs, bore liners, interior main cap towers, pan rails, oil pan.
 // Rule: crank counterweights swing only inside |x| < SPEC.block.counterBayHalfX
 // at r <= SPEC.crank.counterRadius, so they clear the towers and end discs.
+//
+// The build switch changes ONE solid here plus the planes the sump bolts on:
+// the DOHC drum is a plain OD/ID lathe, the OHV drum is the same drum with the
+// wall its bored cam tunnel cuts through machined away, cast in one piece with
+// the skirt that carries the machined tunnel floor (A1-G7 / issue #16).
 import * as THREE from 'three';
 import {
   SPEC,
@@ -15,10 +21,12 @@ import {
   supportColumn,
   mainCapLug,
   MAIN_CAPS_X,
-  panFlangeHalfWidth,
   idHalfDepth,
+  endDiscFaceX,
 } from '../engine/spec.js';
-import { boxInBank, worldBox, latheX, latheBank } from './parts.js';
+import { ohvHousing, panPlanes, variantEntry } from '../engine/layout.js';
+import { boxInBank, worldBox, latheX, latheBank, machinedArc, machinedCircle } from './parts.js';
+import { alignX, extrude } from './primitives.js';
 
 const B = SPEC.block;
 const CR = SPEC.crank;
@@ -27,8 +35,7 @@ const X_FRONT = B.stations[0] + B.pitch / 2; // 22
 const X_REAR = B.stations[3] - B.pitch / 2; // -22
 const SHELL_IN = CR.mainRadius + 0.05; // bearing shell inner
 const SHELL_OUT = SHELL_IN + 0.7;
-const FLANGE_Z = B.panFlangeZ; // published: the test stand bolts onto these planes
-const RAIL_Z = B.panRailZ;
+const PLUG_IN = 0.2; // how far a drain plug reaches up into the sump it screws into
 
 /** Closed outer-first lathe profile for a ring about world X. */
 function ringX(rOut, rIn, x0, x1) {
@@ -41,7 +48,79 @@ function ringX(rOut, rIn, x0, x1) {
   ];
 }
 
-export function createBlock(materials) {
+/**
+ * A1-G7 / issue #16: the OHV casting as machined YZ sections, one per x band.
+ * The bored cam tunnel cuts clean through the bottom of the drum wall AND through
+ * the fore and aft end walls, so every one of them gives up the iron the boring
+ * bar takes; the casting is completed by the skirt that carries the machined
+ * tunnel floor - whose own bottom face is this variant's pan-rail plane.
+ *
+ * Section (y, z), every radius, face and arc read from ohvHousing():
+ *   outer contour  - the skirt bottom face, up the skirt sides onto the OD circle
+ *                    at the derived corners, then the retained OD arc the long way
+ *                    over the top;
+ *   the drum void  - the crankcase hole UNION the bored tunnel hole: the retained
+ *                    ID arc the long way over the top plus the bored arc the long
+ *                    way past the tunnel floor;
+ *   the end walls  - the same contour, bored for the cam tunnel and for the main
+ *                    bearing bore they close. The fore one is the opening the cam
+ *                    nose and its drive stand in, the aft one the bore the cam's
+ *                    aft journal turns in - the front-insert tunnel A1-G7 names.
+ * The bore IS a machined face of these solids, so the casting can never stand
+ * closer to the cam than the published lobe air (tmp/ohvdrum.mjs proves the drum
+ * section against the analytic material predicate and as a real signed solid).
+ */
+// alignX maps shape (u, v) onto world (y, z) as u = -z, v = y
+const toShape = ([y, z]) => [-z, y];
+const trace = (Path, pts) => {
+  Path.moveTo(...toShape(pts[0]));
+  for (let i = 1; i < pts.length; i++) Path.lineTo(...toShape(pts[i]));
+  Path.closePath();
+};
+
+/** the outer contour every OHV section of this casting shares */
+function ohvOuter(H) {
+  const A = H.arcs;
+  return [
+    [H.skirtHalfY, H.skirtZ],
+    ...machinedArc(0, 0, OD, A.skirtSide[0], A.skirtSide[1], H.arcStepRad),
+    [-H.skirtHalfY, H.skirtZ],
+  ];
+}
+
+/** one x band of the casting: the shared contour with each closed void bored out */
+function ohvSection(H, holes, x0, x1) {
+  const shape = new THREE.Shape();
+  trace(shape, ohvOuter(H));
+  for (const hole of holes) {
+    const path = new THREE.Path();
+    trace(path, hole);
+    shape.holes.push(path);
+  }
+  const g = alignX(extrude(shape, x1 - x0, { bevel: 0, curveSegments: 1 }));
+  g.translate((x0 + x1) / 2, 0, 0); // the same station-slab span as the DOHC drum
+  g.computeVertexNormals();
+  return g;
+}
+
+function ohvCrankcase(H) {
+  const A = H.arcs;
+  const voidWall = machinedArc(0, 0, ID, A.voidWall[0], A.voidWall[1], H.arcStepRad);
+  const boreFloor = machinedArc(0, -H.belowCrankCm, H.tunnelBoreR, A.boreFloor[0], A.boreFloor[1], H.arcStepRad);
+  return ohvSection(H, [[...voidWall, ...boreFloor].reverse()], X_REAR, X_FRONT);
+}
+
+/** a fore or aft end wall: closed around the bay, bored for main bearing and cam */
+function ohvEndWall(H, x0, x1, mainBoreR) {
+  const cam = machinedCircle(0, -H.belowCrankCm, H.tunnelBoreR, H.arcStepRad);
+  const main = machinedCircle(0, 0, mainBoreR, H.arcStepRad);
+  return ohvSection(H, [cam, main], x0, x1);
+}
+
+export function createBlock(materials, variantId = SPEC.build.variant) {
+  const variant = variantEntry(variantId);
+  const P = panPlanes(variantId); // the bolt planes THIS variant casts
+  const H = variant.centralCam ? ohvHousing() : null;
   const group = new THREE.Group();
   group.name = 'block';
 
@@ -56,18 +135,26 @@ export function createBlock(materials) {
     return m;
   };
 
-  // 1. crankcase drum shell: OD/ID annulus spanning the four station slabs
-  put('crankcase', latheX(ringX(OD, ID, X_REAR, X_FRONT), 72), materials.castIronBlock);
+  // 1. crankcase drum shell: OD/ID annulus spanning the four station slabs.
+  //    The OHV variant machines the wall band its bored cam tunnel cuts through
+  //    out of that annulus and casts its skirt onto the same solid.
+  put('crankcase', H ? ohvCrankcase(H) : latheX(ringX(OD, ID, X_REAR, X_FRONT), 72), materials.castIronBlock);
 
-  // 2. fore + aft end discs with main bearing holes, bushes and shells
+  // 2. fore + aft end discs with main bearing holes, bushes and shells. The OHV
+  //    build bores its cam tunnel through these walls too: the bar runs straight
+  //    through the casting, so the wall it meets gives up that iron as well.
   put(
     'end-disc-fore',
-    latheX(ringX(OD, B.mainBossR, X_FRONT, X_FRONT + B.slabFront), 64),
+    H
+      ? ohvEndWall(H, X_FRONT, X_FRONT + B.slabFront, B.mainBossR)
+      : latheX(ringX(OD, B.mainBossR, X_FRONT, X_FRONT + B.slabFront), 64),
     materials.castIronBlock
   );
   put(
     'end-disc-aft',
-    latheX(ringX(OD, B.aftMainBossR, X_REAR - B.slabRear, X_REAR), 64),
+    H
+      ? ohvEndWall(H, X_REAR - B.slabRear, X_REAR, B.aftMainBossR)
+      : latheX(ringX(OD, B.aftMainBossR, X_REAR - B.slabRear, X_REAR), 64),
     materials.castIronBlock
   );
   const foreBush = B.mainBossR + 0.1;
@@ -111,27 +198,59 @@ export function createBlock(materials) {
   //    Interior mains (x 11, 0, -11): two cap lugs hugging the void wall plus a
   //    neck tower rising to the bearing shell, all outside the counterweight
   //    sweep (neck top stays at r >= SHELL_OUT, lugs stay at r > counterRadius).
+  //    OHV (A1-G7 / issue #16): the bored cam tunnel takes the drum's whole lower
+  //    wall band out of this casting at |y| <= the bored radius, so the central
+  //    neck tower of the DOHC build cannot stand here. The same main bearing is
+  //    carried the way an OHV small-block carries it: a cap straddling the cast
+  //    crown of the tunnel - the published wall outside the bore - and tied down
+  //    on the housing walls the tunnel was bored through, with its bolts in the
+  //    wrench-clearance band outside them. Every plane below is a published wall.
   const lug = mainCapLug();
+  const BEAR = SPEC.cam.bearing;
+  const shellTopZ = -SHELL_OUT + 0.1; // 0.1 into the shell ring, as the neck does
+  const crownZ = H ? -(H.belowCrankCm - H.tunnelWallR) : null; // top of the cast tunnel wall
+  const band = (sgn, a, b) => (sgn > 0 ? [a, b] : [-b, -a]); // the same wall on either side
   for (const c of MAIN_CAPS_X) {
     const x0 = c - 0.9;
     const x1 = c + 0.9;
     put(`main-shell-x${c}`, latheX(ringX(SHELL_OUT, SHELL_IN, x0 + 0.05, x1 - 0.05), 40), materials.bearingShell);
-    if (c !== MAIN_CAPS_X[0] && c !== MAIN_CAPS_X[4]) {
-      // neck stays inside the web gap (|x-c| <= 0.8 < 0.95) and never enters
-      // the shell bore (top at r 3.35 > main radius 2.7) but overlaps the shell ring
-      put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, -3.1, 3.1, lug.zBottom, -SHELL_OUT + 0.1, 0.2), materials.castIronBlock);
-      put(`main-cap-${c}+`, worldBox(c - 2.3, c + 2.3, lug.y0, lug.y1, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
-      put(`main-cap-${c}-`, worldBox(c - 2.3, c + 2.3, -lug.y1, -lug.y0, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
-      put(`main-bolt-${c}+`, worldBox(c - 0.55, c + 0.55, lug.y1 - 0.1, lug.y1 + 0.75, lug.zBottom - 0.55, lug.zBottom + 0.1, 0.15), materials.fastenerDark);
-      put(`main-bolt-${c}-`, worldBox(c - 0.55, c + 0.55, -lug.y1 - 0.75, -lug.y1 + 0.1, lug.zBottom - 0.55, lug.zBottom + 0.1, 0.15), materials.fastenerDark);
+    if (c === MAIN_CAPS_X[0] || c === MAIN_CAPS_X[4]) continue; // fore/aft mains ride the end discs
+    if (H) {
+      for (const sgn of [1, -1]) {
+        // boot legs standing on the housing wall beside the bored tunnel, from
+        // the skirt's tie-in on the OD circle up to the bearing shell flank
+        const [ly0, ly1] = band(sgn, H.skirtInboardY, H.skirtHalfY);
+        put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, ly0, ly1, H.skirtCornerZ, shellTopZ, 0.2), materials.castIronBlock);
+        // the cap bar: bottom face on the cast crown of the bored tunnel, top
+        // face press-fit into the shell ring - it reaches the full lug width
+        const [cy0, cy1] = band(sgn, 0, lug.y1);
+        put(`main-cap-${c}${sgn > 0 ? '+' : '-'}`, worldBox(c - 2.3, c + 2.3, cy0, cy1, crownZ, shellTopZ, 0.25), materials.castIronBlock);
+        // cap bolt standing in the wrench-clearance band outside that boot wall,
+        // same fastener family and proportions as the DOHC main bolts it replaces
+        const [by0, by1] = band(sgn, H.skirtHalfY - 0.1, H.skirtHalfY + 0.75);
+        put(`main-bolt-${c}${sgn > 0 ? '+' : '-'}`, worldBox(c - 0.55, c + 0.55, by0, by1, crownZ - 0.55, crownZ + 0.1, 0.15), materials.fastenerDark);
+      }
+      continue;
     }
+    // neck stays inside the web gap (|x-c| <= 0.8 < 0.95) and never enters
+    // the shell bore (top at r 3.35 > main radius 2.7) but overlaps the shell ring
+    put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, -3.1, 3.1, lug.zBottom, shellTopZ, 0.2), materials.castIronBlock);
+    put(`main-cap-${c}+`, worldBox(c - 2.3, c + 2.3, lug.y0, lug.y1, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
+    put(`main-cap-${c}-`, worldBox(c - 2.3, c + 2.3, -lug.y1, -lug.y0, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
+    put(`main-bolt-${c}+`, worldBox(c - 0.55, c + 0.55, lug.y1 - 0.1, lug.y1 + 0.75, lug.zBottom - 0.55, lug.zBottom + 0.1, 0.15), materials.fastenerDark);
+    put(`main-bolt-${c}-`, worldBox(c - 0.55, c + 0.55, -lug.y1 - 0.75, -lug.y1 + 0.1, lug.zBottom - 0.55, lug.zBottom + 0.1, 0.15), materials.fastenerDark);
   }
 
-  // 6. pan rails: flat bolt pads cast across the drum bottom, then the pan
-  const wRail = panFlangeHalfWidth(FLANGE_Z);
-  put('pan-rails', worldBox(X_REAR, X_FRONT, -wRail, wRail, RAIL_Z, FLANGE_Z, 0.1), materials.castIronBlock);
-  put('oil-pan', worldBox(X_REAR + 1, X_FRONT - 1, -(wRail - 0.25), wRail - 0.25, -14.6, RAIL_Z, 0.6), materials.paintedGraphite);
-  put('pan-plug', worldBox(-18.5, -17.5, -0.5, 0.5, -15.05, -14.4, 0.2), materials.brass);
+  // 6. pan rails: flat bolt pads cast across the bottom face of THIS variant's
+  //    casting, then the sump hanging B below the plane it is cast on, plus its
+  //    drain plug. The DOHC build casts them on the drum's chord at the published
+  //    planes over the station slabs; the OHV build casts them on its skirt bottom,
+  //    which runs the whole length of the casting, so its pad and sump do too.
+  const wRail = P.flangeHalfY;
+  const railX = H ? endDiscFaceX() : X_FRONT;
+  put('pan-rails', worldBox(-railX, railX, -wRail, wRail, P.railZ, P.flangeZ, 0.1), materials.castIronBlock);
+  put('oil-pan', worldBox(-railX + 1, railX - 1, -P.wallHalfY, P.wallHalfY, P.panBottomZ, P.railZ, 0.6), materials.paintedGraphite);
+  put('pan-plug', worldBox(-18.5, -17.5, -0.5, 0.5, P.panBottomZ - B.oilPanPlugDropCm, P.panBottomZ + PLUG_IN, 0.2), materials.brass);
 
   group.userData.family = 'block';
   return group;
