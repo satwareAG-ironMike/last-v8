@@ -171,6 +171,22 @@ const OHV_CAST = 'A1-G7/issue #16 the OHV casting houses its cam';
 // only be held to the resolution of that attribute (measured 1.9e-7 on the
 // DOHC casting bottom); a named eps, not a silent widening of the math asserts
 const GEOM_EPS = 1e-6;
+// The DOHC casting as the tree drew it BEFORE any OHV geometry existed: read off
+// the tree at d102c63 (the four OHV laws committed, none of the src changes),
+// with tmp/baseline-census.mjs running that tree's own src/render/block.js. This
+// is what "the shipped casting stayed exactly the same" is measured against, so
+// the claim below is a reading and not a restatement of the drawing.
+// READ_EPS: a Box3 read of a Float32 attribute off a rounded-box fillet, held to
+// 1e-3 cm - a millimetre, two orders below every wall this file derives.
+const DOHC_BASELINE = {
+  solids: 52,
+  distinctParts: 52,
+  crankcaseVerts: 365, // the plain OD/ID lathe at 72 segments
+  box: [-26.5, 26.5, -21.846, 21.846, -15.05, 21.846],
+  panRails: [-22, 22, -3.1996, 3.1996, -11.6, -11.15],
+  oilPan: [-21, 21, -2.9496, 2.9496, -14.6, -11.6],
+};
+const READ_EPS = 1e-3;
 const ohvLayout = async () => await import('../src/engine/layout.js');
 const CAST_MATS = ['castIronBlock', 'boreWall', 'bearingShell', 'fastenerDark', 'paintedGraphite', 'brass'];
 const castMats = async (THREE) => {
@@ -358,6 +374,24 @@ test(`${OHV_CAST}: the switch casts two different blocks, and the DOHC casting t
   const cd = census(dohc), co = census(ohv);
   assert.deepEqual(Object.keys(cd).sort(), Object.keys(co).sort(),
     `the two builds must cast the same named solids; DOHC ${Object.keys(cd).sort().join(', ')} vs OHV ${Object.keys(co).sort().join(', ')}`);
+  // the DOHC casting measured against the pre-OHV record above, not against itself
+  const readBox = (o) => {
+    const b = new THREE.Box3().setFromObject(o);
+    return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+  };
+  const same = (label, got, want) => {
+    const bad = got.map((v, i) => (Math.abs(v - want[i]) > READ_EPS ? `${v.toFixed(6)} != ${want[i]}` : null)).filter(Boolean);
+    assert.equal(bad.length, 0, `${label} moved off the pre-OHV record: ${bad.join(', ')} (reading eps ${READ_EPS} cm)`);
+  };
+  const solidsD = dohc.children.filter((m) => m.userData.solid);
+  const drumD0 = dohc.children.find((m) => m.userData.part === 'crankcase');
+  assert.equal(solidsD.length, DOHC_BASELINE.solids, `the DOHC build now draws ${solidsD.length} solids, the pre-OHV record is ${DOHC_BASELINE.solids}`);
+  assert.equal(Object.keys(cd).length, DOHC_BASELINE.distinctParts, `the DOHC part census now names ${Object.keys(cd).length} solids, the pre-OHV record is ${DOHC_BASELINE.distinctParts}`);
+  assert.equal(drumD0.geometry.attributes.position.count, DOHC_BASELINE.crankcaseVerts,
+    `the DOHC drum now draws ${drumD0.geometry.attributes.position.count} vertices, the pre-OHV lathe drew ${DOHC_BASELINE.crankcaseVerts}`);
+  same('DOHC casting envelope', readBox(dohc), DOHC_BASELINE.box);
+  same('DOHC pan rails', readBox(dohc.children.find((m) => m.userData.part === 'pan-rails')), DOHC_BASELINE.panRails);
+  same('DOHC oil pan', readBox(dohc.children.find((m) => m.userData.part === 'oil-pan')), DOHC_BASELINE.oilPan);
   // no typed envelope here: the DOHC casting is held by the two readings this file
   // already runs green on (its own design-envelope law above, and the closed rows),
   // and by the fact that the shipped default call still reads the switch
