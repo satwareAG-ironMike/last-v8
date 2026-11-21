@@ -87,6 +87,27 @@ export const bandIndexOf = (bank, valve) => ['L', 'R'].indexOf(bank) * 2 + (valv
  */
 export const ohvLaneIndex = 0;
 
+/** The central-cam variant's cam axis: on the V bisector, straight under the crank. */
+export function ohvCamAxis() {
+  const d = SPEC.variants.ohv.belowCrankCm;
+  return { y: 0, z: -d, d };
+}
+
+/**
+ * Tip radius the OHV cam sprocket is machined down to, over the arc that faces
+ * the crank. The two published tip circles alone do not fit this centre distance:
+ * tipRadius(6.9) + tipRadius(3.45) = 7.202139 + 3.752139 = 10.954277 cm against
+ * the published 10.8000 cm, so 0.154277 cm of tooth would interpenetrate - the
+ * exact defect issue #8 item 3 rejects and GATES row A1-G2 already measures for
+ * the gear alternative. Turning the cam side back to
+ * 10.8000 - 3.752139 - 0.1000 = 6.947861 cm leaves exactly the published
+ * SPEC.chain.gapClr off the crank's own tip circle, stays 0.447861 cm above this
+ * sprocket's machined gap floor 6.5000, and still stands 0.039094 cm past the
+ * 6.908766 cm wrap polygon the chain seats on - so the 22 teeth the chain clad
+ * keep driving it while the 14 teeth it never reaches are turned down.
+ */
+export const ohvSprocketTipR = () => SPEC.variants.ohv.belowCrankCm - tipRadius(CRANK_SP.pitchR) - C.gapClr;
+
 /**
  * The volume this variant's 2:1 drive reserves for itself, as a world box: the
  * lane band it runs in, and the outline its sprockets and chain sweep across
@@ -267,7 +288,11 @@ const layouts = new Map();
 function frameOf(bank, valve) {
   const key = `${bank}-${valve}`;
   if (layouts.has(key)) return layouts.get(key);
-  const cam = camPlane(bank, valve);
+  // bank "V" is the central-cam variant: one chain, its cam on the V bisector,
+  // its lane the first published band. Everything below is the same math the
+  // four DOHC chains use - only the axis and the band differ.
+  const central = bank === 'V';
+  const cam = central ? ohvCamAxis() : camPlane(bank, valve);
   const pitch = chainPitch();
   const t1 = CRANK_SP.teeth, t2 = CAM_SP.teeth;
   const step1 = 360 / t1, step2 = 360 / t2;
@@ -276,7 +301,7 @@ function frameOf(bank, valve) {
   // Open-belt arrangement: the crank wrap is centred on the direction away from
   // the cam, the cam wrap on the direction away from the crank.
   const wrapCentre = { crank: phi + 180, cam: phi };
-  const idx = bandIndexOf(bank, valve);
+  const idx = central ? ohvLaneIndex : bandIndexOf(bank, valve);
   // Gap 0 of each lane / sprocket is its chain's wrap entry seat: the crank nose
   // carries four bored 18-tooth lanes, each keyed to its own chain (see the
   // measurement in engagement() above), and each cam carries its own 36-tooth
@@ -294,6 +319,17 @@ function frameOf(bank, valve) {
     wrap, phase, step: { crank: step1, cam: step2 },
     bandIndex: idx,
   };
+  if (central) {
+    // The arc the machinist turns down: the teeth the chain never clads, i.e. the
+    // complementary arc of the wrap, centred on the direction this cam faces its
+    // crank. Derived from the wrap this frame solves - not typed in twice.
+    frame.relief = {
+      tipR: ohvSprocketTipR(),
+      atDeg: wrapCentre.cam + 180,
+      arcDeg: (t2 - wrap.cam) * step2,
+      teeth: t2 - wrap.cam,
+    };
+  }
   // The design (crank 0) straight runs decide how many whole links each span
   // carries; every later frame re-bows those same counts.
   const dA = len(sub(seatAt(frame, 'cam', 0, 0, 0), seatAt(frame, 'crank', wrap.crank, 0, 0)));
@@ -390,12 +426,31 @@ export function chainLayout(bank, valve) {
   };
 }
 
-/** Every chain on this engine: one per DOHC camshaft, in its published band. */
-export function driveContract() {
-  const runs = ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => chainLayout(bank, valve)));
+/**
+ * The OHV variant's one crank-to-cam chain, in the same shape chainLayout gives a
+ * DOHC chain: frame plus the pose at crank angle 0, plus the machined relief arc
+ * this sprocket has to be turned to. Same frameOf, same chainPose, same engagement
+ * walk - issue #8 item 3's 18/36 chain is the same contract as the four DOHC ones.
+ */
+export function ohvChainLayout() {
+  return chainLayout('V', 'central');
+}
+
+/**
+ * Every chain this build drives: one per DOHC camshaft in its published band, or
+ * the single crank-to-cam chain of the central-cam variant. The renderer builds
+ * its chain groups AND its crank nose lanes off this list, so a variant-blind
+ * contract is what made an OHV crank draw four lanes beside its one cam.
+ */
+export function driveContract(variantId = SPEC.build.variant) {
+  const central = variantId === 'ohv';
+  const runs = central
+    ? [ohvChainLayout()]
+    : ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => chainLayout(bank, valve)));
   const one = runs[0];
   return {
     pitch: one.pitch,
+    variant: variantId,
     chainCount: runs.length,
     bands: SPEC.cam.sprocket.bands,
     runs,

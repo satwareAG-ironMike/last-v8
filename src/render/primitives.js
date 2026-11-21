@@ -199,16 +199,32 @@ export function instancedBolts(specs, geo, material, group = null) {
  * world (y, z), so the machined gaps sit exactly where src/engine/drive.js puts
  * the chain's seats. No bevel: the measured bbox is then exactly the thickness.
  */
-export function chainSprocketGeometry(teeth, pitchR, tipR, cutterR, thickness, boreR, gapPhaseDeg = 0) {
+export function chainSprocketGeometry(teeth, pitchR, tipR, cutterR, thickness, boreR, gapPhaseDeg = 0, relief = null) {
   const step = 360 / teeth;
   const rad = (d) => d * (Math.PI / 180);
-  // Half-angle at the axis where a cutter disc crosses the tip circle: the
-  // triangle axis-centre / cutter-centre / crossing point, by the cosine rule.
-  const cosPsi = (pitchR * pitchR + tipR * tipR - cutterR * cutterR) / (2 * pitchR * tipR);
-  const psi = Math.acos(Math.min(1, Math.max(-1, cosPsi)));
-  // The gap's own sweep on the cutter circle, sampled evenly along that circle
-  // so the machined flank is resolved the way it is cut, not just at its floor.
-  const sMax = Math.asin(Math.min(1, (pitchR * Math.sin(psi)) / cutterR));
+  const angDelta = (a, b) => ((a - b + 540) % 360) - 180;
+  // Half-angle at the axis where a cutter disc crosses a tip circle, by the
+  // cosine rule on the triangle axis-centre / cutter-centre / crossing point -
+  // and the gap's own sweep on that cutter circle, sampled evenly along the
+  // circle so the machined flank is resolved the way it is cut, not just at its
+  // floor. A turned tooth lowers its own tip circle, so its two flanks have to
+  // be cut to the tip circles of the teeth they actually rise to.
+  const sMaxOf = (r) => {
+    const cosPsi = (pitchR * pitchR + r * r - cutterR * cutterR) / (2 * pitchR * r);
+    const psi = Math.acos(Math.min(1, Math.max(-1, cosPsi)));
+    return Math.asin(Math.min(1, (pitchR * Math.sin(psi)) / cutterR));
+  };
+  const sCommon = sMaxOf(tipR);
+  // A relief arc names the machined teeth the chain never clads: the relief.teeth
+  // land centres nearest relief.atDeg, turned down to relief.tipR. Land k sits
+  // between gap k and gap k+1, at gap k's azimuth plus half a tooth.
+  const landAz = (k) => gapPhaseDeg + k * step + step / 2;
+  const turned = new Set(relief
+    ? Array.from({ length: teeth }, (_, k) => k)
+      .sort((a, b) => Math.abs(angDelta(landAz(a), relief.atDeg)) - Math.abs(angDelta(landAz(b), relief.atDeg)))
+      .slice(0, relief.teeth)
+    : []);
+  const tipOf = (k) => (turned.has(((k % teeth) + teeth) % teeth) ? relief.tipR : tipR);
   const SAMPLES = 12;
   const shape = new THREE.Shape();
   let first = true;
@@ -218,17 +234,23 @@ export function chainSprocketGeometry(teeth, pitchR, tipR, cutterR, thickness, b
       first = false;
     } else shape.lineTo(-z, y);
   };
-  const onRim = (azDeg) => put(tipR * Math.sin(rad(azDeg)), tipR * Math.cos(rad(azDeg)));
+  const onRim = (r, azDeg) => put(r * Math.sin(rad(azDeg)), r * Math.cos(rad(azDeg)));
   for (let k = 0; k < teeth; k++) {
     const gapAz = gapPhaseDeg + k * step;
     const u = { y: Math.sin(rad(gapAz)), z: Math.cos(rad(gapAz)) }; // axis -> gap centre
     const v = { y: Math.sin(rad(gapAz + 90)), z: Math.cos(rad(gapAz + 90)) }; // azimuth-increasing
     const cy = pitchR * u.y, cz = pitchR * u.z;
-    for (let i = 0; i <= SAMPLES; i++) {
-      const s = -sMax + (2 * sMax * i) / SAMPLES;
-      put(cy + cutterR * (-Math.cos(s) * u.y + Math.sin(s) * v.y), cz + cutterR * (-Math.cos(s) * u.z + Math.sin(s) * v.z));
+    const flank = (s) => put(cy + cutterR * (-Math.cos(s) * u.y + Math.sin(s) * v.y), cz + cutterR * (-Math.cos(s) * u.z + Math.sin(s) * v.z));
+    const rPrev = tipOf(k - 1), rCur = tipOf(k);
+    if (rPrev === rCur) {
+      const sMax = rCur === tipR ? sCommon : sMaxOf(rCur);
+      for (let i = 0; i <= SAMPLES; i++) flank(-sMax + (2 * sMax * i) / SAMPLES);
+    } else {
+      const sA = sMaxOf(rPrev), sB = sMaxOf(rCur);
+      for (let i = 0; i <= SAMPLES; i++) flank(-sA + (sA * i) / SAMPLES);
+      for (let i = 1; i <= SAMPLES; i++) flank((sB * i) / SAMPLES);
     }
-    onRim(gapAz + step / 2); // tooth tip, machined at the rim circle
+    onRim(rCur, gapAz + step / 2); // tooth tip, machined at its own rim circle
   }
   shape.closePath();
   if (boreR > 0) shape.holes.push(circleHole(0, 0, boreR));

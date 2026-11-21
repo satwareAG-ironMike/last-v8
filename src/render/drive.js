@@ -12,12 +12,23 @@
 // Pinned by test/valvetrain.test.mjs (A1-G1 / A1-G2 laws).
 import * as THREE from 'three';
 import { SPEC } from '../engine/spec.js';
-import { bandIndexOf, chainLayout, chainPitch, chainPose } from '../engine/drive.js';
+import { ohvBearings } from '../engine/layout.js';
+import { bandIndexOf, chainLayout, chainPitch, chainPose, gapCutR, hubRadius, ohvChainLayout, ohvLaneIndex, tipRadius } from '../engine/drive.js';
+import { latheX } from './parts.js';
+import { chainSprocketGeometry } from './primitives.js';
 
 const CH = SPEC.chain;
 const CAM_SP = SPEC.cam.sprocket;
 const KS = CAM_SP;
 const DEG = Math.PI / 180;
+
+/**
+ * Closed solid / annular lathe profiles about world X - the same profiles
+ * src/render/cranktrain.js and src/render/valvetrain.js use for their own
+ * turned faces: the cam-side drive stack is machined the same way.
+ */
+const solidX = (r, x0, x1) => [[r, x0], [r, x1], [0, x1], [0, x0], [r, x0]];
+const ringX = (rOut, rIn, x0, x1) => [[rOut, x0], [rOut, x1], [rIn, x1], [rIn, x0], [rOut, x0]];
 
 /** x of the middle of one chain's band: its rollers, plates and shoes all share it. */
 const bandMid = (i) => KS.bands[i] + KS.width / 2;
@@ -62,10 +73,7 @@ function padGeometry(thick, run, faceGap) {
  */
 const aimZ = (w) => Math.atan2(-w.y, w.z);
 
-function buildChain(bank, valve, materials) {
-  const lay = chainLayout(bank, valve);
-  const name = `cam-chain-${bank}-${valve}`;
-  const i = bandIndexOf(bank, valve);
+function buildChain(lay, name, i, materials) {
   const x = bandMid(i);
   const group = new THREE.Group();
   group.name = name;
@@ -189,20 +197,82 @@ function buildChain(bank, valve, materials) {
 }
 
 /**
- * The whole drive: four chains plus update(theta), which re-poses each chain at
- * the engagement the measured chain has at that crank angle. The sprockets
- * themselves turn with their groups (cranktrain: +theta, valvetrain: +theta/2),
- * and the chain follows the gaps they present.
+ * The cam end of the OHV chain: a bored 36-tooth sprocket in the one published
+ * band, trapped against its own flanks by a locating shoulder and a retaining
+ * collar, both standing on a turned pilot that continues the cam's published
+ * nose through the casting's retainer opening at the published nose air.
+ *
+ * This is its own rotating assembly, not a child of the cam group: the cam group
+ * is what test/ohv-cam.test.mjs measures (insertability through the retainer
+ * opening, the bushing windows, the lobe/tunnel clearances), and a 6.35 cm hub
+ * standing in a journal's x band would land inside those laws instead of beside
+ * them. It therefore turns at its own half crank - the same rate the cam itself
+ * is posed at - which is also what makes the 2:1 measurable on the drawn metal.
  */
-export function createDrive(materials) {
+function buildCamDrive(lay, materials) {
+  const B = ohvBearings();
+  const hubR = hubRadius(KS.pitchR); // the hub the 36 teeth hang on: locating faces turn to it
+  const pilotR = B.noseR; // the published nose, which is the published journal
+  const mid = bandMid(ohvLaneIndex);
+  const half = CH.toothW / 2;
+  const capT = CH.plate + CH.plateClr; // as deep as the chain's own plate layer
+  const pilotX1 = mid + half + CH.bandClr + capT; // flush with the collar's fore face
+  const group = new THREE.Group();
+  group.name = 'cam-V-drive';
+  group.userData.part = 'OHV cam chain drive';
+  group.position.set(0, lay.cam.y, lay.cam.z); // its origin IS the cam axis
+  const put = (name, geo, mat, part) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.name = name;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.part = part;
+    group.add(m);
+    return m;
+  };
+  put('cam-V-pilot', latheX(solidX(pilotR, B.foreFaceX, pilotX1), 48), materials.camShaft, 'cam drive pilot');
+  put('cam-V-shoulder',
+    latheX(ringX(hubR, pilotR, mid - half - CH.bandClr - capT, mid - half - CH.bandClr), 48),
+    materials.camShaft, 'cam sprocket locating shoulder');
+  put('cam-V-collar',
+    latheX(ringX(hubR, pilotR, mid + half + CH.bandClr, pilotX1), 48),
+    materials.camShaft, 'cam sprocket retaining collar');
+  const sp = put('cam-V-sprocket',
+    chainSprocketGeometry(KS.teeth, KS.pitchR, tipRadius(KS.pitchR), gapCutR(), CH.toothW, pilotR,
+      lay.phase.cam, lay.relief),
+    materials.chainSteel, 'cam drive sprocket');
+  sp.position.x = mid;
+  sp.userData.band = KS.bands[ohvLaneIndex];
+  sp.userData.chain = 'cam-chain-V-central';
+  sp.userData.tipRun = { turned: lay.relief.teeth, rimmed: KS.teeth - lay.relief.teeth };
+  return { group, set: (theta) => { group.rotation.x = (theta / SPEC.cam.halfSpeedRatio) * DEG; } };
+}
+
+/**
+ * The whole drive of one variant: the chains it drives plus update(theta), which
+ * re-poses each chain at the engagement the measured chain has at that crank
+ * angle and turns the cam-end hardware at half crank. DOHC: four chains, four
+ * cam sprockets drawn by src/render/valvetrain.js. OHV: one crank-to-cam chain
+ * plus the cam-side stack above (GATES row A1-G2, issue #8 item 3).
+ */
+export function createDrive(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'cam-drive';
   group.userData.part = 'cam chain drive';
-  const chains = ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => buildChain(bank, valve, materials)));
+  const central = variantId === 'ohv';
+  const chains = central
+    ? [buildChain(ohvChainLayout(), 'cam-chain-V-central', ohvLaneIndex, materials)]
+    : ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => {
+      const lay = chainLayout(bank, valve);
+      return buildChain(lay, `cam-chain-${bank}-${valve}`, bandIndexOf(bank, valve), materials);
+    }));
   for (const ch of chains) group.add(ch.group);
+  const camDrive = central ? buildCamDrive(ohvChainLayout(), materials) : null;
+  if (camDrive) group.add(camDrive.group);
   const update = (theta) => {
     for (const ch of chains) ch.set(theta);
+    if (camDrive) camDrive.set(theta);
   };
   update(0);
-  return { group, update, chains };
+  return { group, update, chains, camDrive };
 }
