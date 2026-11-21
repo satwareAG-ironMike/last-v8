@@ -264,11 +264,20 @@ export function ohvBearings() {
   const C = H.belowCrankCm;
   const BH = CAM.bearingHalf;
 
-  // the stack, off the face the casting already has
+  // the stack, off the face the casting already has. The journal is ground to the
+  // cam's own widest outline (front insert: the nose has to pass every ring on the
+  // way in), so it is derived FROM the published nose, not back-computed off the
+  // bore - the subtractions boreR - shellWall - oilFilm land on 3.0999999999999996
+  // and the identity journalR === noseR then fails on float noise instead of on
+  // geometry. The stack still has to close: shell inside minus journal IS film.
+  const noseR = H.worstOutlineR;
   const boreR = H.tunnelBoreR;
   const shellIdR = boreR - P.shellWall;
-  const journalR = shellIdR - P.oilFilm;
-  const noseR = H.worstOutlineR;
+  const journalR = noseR;
+  const runningClearance = shellIdR - journalR;
+  if (Math.abs(runningClearance - P.oilFilm) > 1e-9) {
+    throw new Error(`the OHV journal ${journalR} inside the shell bore ${shellIdR} leaves ${runningClearance} cm of running clearance, not the published oil film ${P.oilFilm} cm (${boreR} bore less ${P.shellWall} shell wall less ${P.oilFilm} film)`);
+  }
   const insertAirCm = shellIdR - noseR;
 
   // five stations: the two machined tunnel faces plus the three gaps between the
