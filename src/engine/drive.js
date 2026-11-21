@@ -80,6 +80,42 @@ export function camPlane(bank, valve) {
 /** Band index a cam's chain rides, in the published band order. */
 export const bandIndexOf = (bank, valve) => ['L', 'R'].indexOf(bank) * 2 + (valve === 'intake' ? 0 : 1);
 
+/**
+ * The band the central-cam variant's one crank-to-cam chain rides: the first of
+ * the published stack, on the turned-down crank spigot whose shoulder and collar
+ * already stand in that band (issue #8 slice 8C-2, GATES row A1-G2 OHV half).
+ */
+export const ohvLaneIndex = 0;
+
+/**
+ * The volume this variant's 2:1 drive reserves for itself, as a world box: the
+ * lane band it runs in, and the outline its sprockets and chain sweep across
+ * the (y, z) plane. The sweep is derived, not typed - on each side of the two
+ * axes the chain reaches the greater of the machined tip circle and the wrap
+ * polygon plus one roller, because a rigid-link chain seats on the polygon and
+ * its roller surface stands `rollerR` past that.
+ *
+ * This is why the stand cannot read one frame for both builds: the cam axis sits
+ * `SPEC.variants.ohv.belowCrankCm` under the crank, so the 36-tooth wrap reaches
+ * below the frame beam lane this variant's casting puts the stand in (issue #24
+ * symptom 3). src/render/stand.js stops its centre skid rails `SPEC.stand.minAir`
+ * short of this box, and test/stand.test.mjs measures every frame member against
+ * it. Slice 8C-2 draws the chain itself and re-measures it solid for solid.
+ */
+export function ohvDriveCorridor() {
+  const reach = (teeth, pitchR) => Math.max(tipRadius(pitchR), wrapRadius(teeth) + C.rollerR);
+  const yHalf = reach(CAM_SP.teeth, CAM_SP.pitchR);
+  const band = CAM_SP.bands[ohvLaneIndex];
+  return {
+    laneIndex: ohvLaneIndex,
+    x0: band,
+    x1: band + CAM_SP.width,
+    yHalf,
+    zLo: -SPEC.variants.ohv.belowCrankCm - yHalf,
+    zHi: reach(CRANK_SP.teeth, CRANK_SP.pitchR),
+  };
+}
+
 const add = (a, b) => ({ y: a.y + b.y, z: a.z + b.z });
 const sub = (a, b) => ({ y: a.y - b.y, z: a.z - b.z });
 const scale = (a, s) => ({ y: a.y * s, z: a.z * s });
