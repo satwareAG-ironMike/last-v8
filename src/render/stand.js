@@ -221,9 +221,9 @@ export function createStand(materials, variantId = SPEC.build.variant) {
     mesh.userData.kind = m.kind;
     group.add(mesh);
   }
-  const I = standInterfaces();
+  const I = standInterfaces(variantId);
   const bolts = instancedBolts(
-    standBolts(),
+    standBolts(variantId),
     boltGeometry(S.boltAcross, S.boltHeadH, S.boltShaftR, I.shaftL),
     materials.fastenerSteel,
     null
