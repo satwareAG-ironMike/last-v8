@@ -23,12 +23,31 @@ export const REACH = SCAN * BUCKET; // 4 cm: every gap under this is measured ex
 /** A pipework/part name belongs to the bank named in it: `plenum-L`, `primary-L-5.5`. */
 export const BANK_RE = /-(L|R)\b/;
 
+/**
+ * The world matrices one mesh actually draws at: one for an ordinary mesh, and
+ * one per instance for an InstancedMesh. The tree draws its repeat hardware -
+ * chain rollers and side plates, stand bolts, head bolts - as instances, whose
+ * metal lives only in instanceMatrix: reading the prototype at the group origin
+ * measures a part that is not drawn there at all.
+ */
+function worldMatrices(o) {
+  if (!o.isInstancedMesh) return [o.matrixWorld];
+  const out = new Array(o.count);
+  const local = new THREE.Matrix4();
+  for (let i = 0; i < o.count; i++) {
+    o.getMatrixAt(i, local);
+    out[i] = local.premultiply(o.matrixWorld);
+  }
+  return out;
+}
+
 /** World triangles of one mesh into a {tris, hash} shell readable by nearestInShell. */
 export function shellAdd(shell, o) {
   o.updateWorldMatrix(true, false);
   const pos = o.geometry.attributes.position, idx = o.geometry.index;
   const n = idx ? idx.count : pos.count;
-  const at = (k) => new THREE.Vector3().fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(o.matrixWorld);
+  const mats = worldMatrices(o);
+  const at = (k, m) => new THREE.Vector3().fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(m);
   shell.box ??= new THREE.Box3();
   const push = (a, b, c) => {
     const ab = b.clone().sub(a), ac = c.clone().sub(a);
@@ -52,7 +71,7 @@ export function shellAdd(shell, o) {
           if (list) list.push(i); else shell.hash.set(k, [i]);
         }
   };
-  for (let j = 0; j < n; j += 3) push(at(j), at(j + 1), at(j + 2));
+  for (const m of mats) for (let j = 0; j < n; j += 3) push(at(j, m), at(j + 1, m), at(j + 2, m));
   // shell.box is the union of everything in the shell, so a caller can skip a
   // solid whose own box cannot reach it. setFromObject replaces, so the union is
   // built by hand: an empty Box3 unioned would poison the bounds with infinities.
@@ -76,10 +95,11 @@ export function surfaceOf(o) {
   o.updateWorldMatrix(true, false);
   const pos = o.geometry.attributes.position, idx = o.geometry.index;
   const n = idx ? idx.count : pos.count;
-  const at = (k) => new THREE.Vector3().fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(o.matrixWorld);
+  const mats = worldMatrices(o);
+  const at = (k, m) => new THREE.Vector3().fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(m);
   const out = [];
-  for (let j = 0; j < n; j += 3) {
-    const a = at(j), b = at(j + 1), c = at(j + 2);
+  for (const m of mats) for (let j = 0; j < n; j += 3) {
+    const a = at(j, m), b = at(j + 1, m), c = at(j + 2, m);
     out.push(a, b, c,
       a.clone().add(b).multiplyScalar(0.5), b.clone().add(c).multiplyScalar(0.5), c.clone().add(a).multiplyScalar(0.5));
   }
@@ -131,7 +151,7 @@ export function closestToShell(o, shell, opts = {}) {
     if (r.d < best) { best = r.d; into = r.who; at = p; }
   };
   if (points) for (const p of points) test(p);
-  else { o.updateWorldMatrix(true, false); o.traverse((m) => { if (!m.isMesh) return; const pos = m.geometry.attributes.position; m.updateWorldMatrix(true, false); for (let i = 0; i < pos.count; i++) test(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld)); }); }
+  else { o.updateWorldMatrix(true, false); o.traverse((m) => { if (!m.isMesh) return; const pos = m.geometry.attributes.position; m.updateWorldMatrix(true, false); for (const mat of worldMatrices(m)) for (let i = 0; i < pos.count; i++) test(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(mat)); }); }
   return { d: best, into, at };
 }
 

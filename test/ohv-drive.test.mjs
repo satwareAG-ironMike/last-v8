@@ -22,8 +22,10 @@ import { createValvetrain } from '../src/render/valvetrain.js';
 import { newShell, shellAdd, closestToShell, surfaceOf } from './support/surface-clearance.mjs';
 
 // Imported inside each law, not at module scope: a top-level import of a name the
-// tree does not export yet reds the whole file instead of the law.
+// tree does not export yet reds the whole file instead of the law. D is the
+// measured chain law, R is the assembly it draws.
 const D = () => import('../src/engine/drive.js');
+const R = () => import('../src/render/drive.js');
 
 const C = SPEC.chain;
 const CS = SPEC.crank.sprocket;
@@ -52,14 +54,14 @@ function meshes(root, pick) {
 
 /** The drive assembly of this variant: chains plus the cam-side drive hardware. */
 async function ohvDrive() {
-  const d = await D();
+  const d = await R();
   const built = d.createDrive(mats(), 'ohv');
   return { ...built, group: posed(built.group) };
 }
 
 /** The DOHC drive, for the half of the laws that must prove this variant did not move it. */
 async function dohcDrive() {
-  const d = await D();
+  const d = await R();
   const built = d.createDrive(mats(), 'dohc');
   return { ...built, group: posed(built.group) };
 }
@@ -291,7 +293,9 @@ test(`${LAW}: the OHV cam carries its drive on a turned pilot standing in its ow
     `the drive pilot stands ${pilotR.toFixed(4)} cm off the cam axis; this cam's machined nose - the widest thing it presents, and the diameter its own rings are bored around - is ${B.noseR.toFixed(4)} cm (test/ohv-cam.test.mjs: the cam is insertable through its own retainer opening)`);
   assert.ok(Math.abs(B.plateInR - pilotR - B.noseAirCm) <= FACET,
     `the pilot of ${pilotR.toFixed(4)} in the retainer opening of ${B.plateInR.toFixed(4)} leaves ${(B.plateInR - pilotR).toFixed(4)} cm; this tree publishes the nose air as ${B.noseAirCm.toFixed(4)}`);
-  const plate = pick(createBlock(mats(), 'ohv'), /cam-retainer/);
+  // The plate only: this casting bolts that plate down with two named fasteners,
+  // and a fastener is not the plate the pilot stands in.
+  const plate = pick(createBlock(mats(), 'ohv'), /^cam-retainer$/);
   assert.equal(plate.length, 1, `the OHV casting draws ${plate.length} cam retainer plates for the pilot to stand in`);
   const pBox = box3(pilots[0]);
   assert.ok(pBox.max.x >= B.plateForeX - EPS, `the pilot ends at x ${pBox.max.x.toFixed(4)}, short of the retainer plate's fore face at ${B.plateForeX.toFixed(4)}: nothing stands outboard of the plate to locate the sprocket`);
@@ -345,12 +349,28 @@ function radiusBins(mesh, axis, bins = 720) {
   return out;
 }
 
-/** How many teeth a drawn sprocket really has: rise crossings of the tip/root midpoint. */
-function drawnTeeth(mesh, axis, tipR, rootR) {
-  const b = radiusBins(mesh, axis);
-  const mid = (tipR + rootR) / 2;
+/**
+ * How many teeth a drawn sprocket really carries: the number of machined gap
+ * floors. src/engine/drive.js rootRadius() IS the innermost point of the cutter
+ * arc that machines a gap, so every drawn gap presents an azimuth arc sitting ON
+ * that radius circle and nothing else on the part does. The earlier instrument -
+ * rise crossings of the tip/root midline - counted false lows (a cap-triangulation
+ * chord stretched across a gap, or a bin that only caught the turned bore) and read
+ * 54 crossings on a real 18-tooth lane; the gap floor is the machined fact.
+ */
+function drawnTeeth(mesh, axis, rootR, bins = 720) {
+  const b = radiusBins(mesh, axis, bins);
+  const on = (i) => {
+    const v = b[((i % bins) + bins) % bins];
+    return Number.isFinite(v) && Math.abs(v - rootR) <= FACET;
+  };
   let n = 0;
-  for (let i = 0; i < b.length; i++) if (b[i] < mid && b[(i + 1) % b.length] >= mid) n += 1;
+  for (let i = 0; i < bins; i++) {
+    if (!on(i) || on(i - 1)) continue;
+    let width = 1;
+    while (width < bins && on(i + width)) width += 1;
+    if (width >= 2) n += 1; // a machined gap floor is an arc, not one stray sample
+  }
   return n;
 }
 
@@ -396,11 +416,11 @@ const angDelta = (a, b) => ((a - b + 540) % 360) - 180;
 test(`${LAW}: the OHV build draws exactly one chain in exactly one published band, one 18-tooth lane on its crank, and keeps the DOHC build's four chains and four lanes untouched`, async () => {
   const d = await D();
   const ohv = await ohvDrive();
-  const ohvCrank = ohvCrank();
+  const crank = ohvCrank();
   const dohcBuilt = await dohcDrive();
   const dohcCrank = posed(createCranktrain(mats(), 'dohc').group);
   const laneOf = (root) => meshes(root, (o) => /^sprocket-lane-/.test(o.name));
-  const ohvLanes = laneOf(ohvCrank), dohcLanes = laneOf(dohcCrank);
+  const ohvLanes = laneOf(crank), dohcLanes = laneOf(dohcCrank);
   assert.equal(ohvLanes.length, 1, `the OHV crank carries ${ohvLanes.length} chain lanes; this variant has one cam to drive and issue #8 item 3 wants exactly one crank-to-cam chain, on one 18-tooth lane`);
   assert.equal(dohcLanes.length, 4, `the DOHC build now draws ${dohcLanes.length} crank lanes instead of its four driven cam sprockets - variant-aware rendering moved the DOHC drive`);
   const band = KS.bands[0], bandEnd = band + KS.width;
@@ -413,12 +433,12 @@ test(`${LAW}: the OHV build draws exactly one chain in exactly one published ban
     const bb = box3(o);
     assert.ok(bb.min.x >= band - EPS && bb.max.x <= bandEnd + EPS, `${o.name} spans x ${bb.min.x.toFixed(4)}..${bb.max.x.toFixed(4)}; this variant's single chain runs in the band ${band.toFixed(4)}..${bandEnd.toFixed(4)} and in no other (${KS.bands.length} bands are published for the DOHC build)`);
   }
-  const teeth = drawnTeeth(ohvLanes[0], new THREE.Vector3(0, 0, 0), d.tipRadius(CS.pitchR), d.rootRadius(CS.pitchR));
+  const teeth = drawnTeeth(ohvLanes[0], new THREE.Vector3(0, 0, 0), d.rootRadius(CS.pitchR));
   assert.equal(teeth, CS.teeth, `the OHV crank lane ${ohvLanes[0].name} carries ${teeth} drawn teeth, not the published ${CS.teeth} of SPEC.crank.sprocket.teeth: a chain wrapped on the wrong tooth count is not a 2:1 drive`);
   const camSprocket = meshes((await ohvDrive()).group, (o) => /cam-V-sprocket/.test(o.name))[0]
     ?? meshes(ohvCam(), (o) => /cam-V-sprocket/.test(o.name))[0];
   assert.ok(camSprocket, 'no 36-tooth cam sprocket is drawn for this variant');
-  const camTeeth = drawnTeeth(camSprocket, camAxis(), d.tipRadius(KS.pitchR), d.rootRadius(KS.pitchR));
+  const camTeeth = drawnTeeth(camSprocket, camAxis(), d.rootRadius(KS.pitchR));
   assert.equal(camTeeth, KS.teeth, `the drawn cam sprocket carries ${camTeeth} teeth, not the published ${KS.teeth}: the 2:1 half-speed law is machined in tooth counts, not asserted`);
   const dohcChains = meshes(dohcBuilt.group, (o) => /-roller-/.test(o.name));
   const dohcParents = new Set(dohcChains.map((o) => o.parent?.name));
