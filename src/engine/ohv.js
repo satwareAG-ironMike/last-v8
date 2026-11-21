@@ -144,7 +144,7 @@ export function ohvLift(cyl, valve, theta) {
  * 3.1400, so this variant's cam carries no collars. Its end play is taken where
  * the casting already stops it - the fore ring abuts the retainer plate, the aft
  * ring abuts the aft machined face - and the three mid rings stay where their
- * press fit holds them, the way this tree's cylinder liners do. Issue #22.
+ * press fit holds them, the way this tree's cylinder liners do. Issue #23.
  */
 export function ohvCamLayout(B = ohvBearings()) {
   const lines = camGroupNames('dohc').map((n) => ({ bank: n.split('-')[1], valve: n.split('-')[2] }));

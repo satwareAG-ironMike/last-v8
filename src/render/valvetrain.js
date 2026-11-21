@@ -185,7 +185,7 @@ function buildValve(cyl, valve, materials) {
  * lifter axis (src/engine/ohv.js); the necks join them at the ground base circle.
  * No follower hardware: SPEC.variants.ohv.drawn is still false until this variant
  * machines its lifter bores, and the rings are journalled by their press fit and
- * by the two faces of the tunnel, not by cam collars (issue #22).
+ * by the two faces of the tunnel, not by cam collars (issue #23).
  */
 function buildOhvCam(name, materials) {
   const plan = ohvCamLayout();
