@@ -436,12 +436,21 @@ export function ohvChainLayout() {
   return chainLayout('V', 'central');
 }
 
-/** Every chain on this engine: one per DOHC camshaft, in its published band. */
-export function driveContract() {
-  const runs = ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => chainLayout(bank, valve)));
+/**
+ * Every chain this build drives: one per DOHC camshaft in its published band, or
+ * the single crank-to-cam chain of the central-cam variant. The renderer builds
+ * its chain groups AND its crank nose lanes off this list, so a variant-blind
+ * contract is what made an OHV crank draw four lanes beside its one cam.
+ */
+export function driveContract(variantId = SPEC.build.variant) {
+  const central = variantId === 'ohv';
+  const runs = central
+    ? [ohvChainLayout()]
+    : ['L', 'R'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => chainLayout(bank, valve)));
   const one = runs[0];
   return {
     pitch: one.pitch,
+    variant: variantId,
     chainCount: runs.length,
     bands: SPEC.cam.sprocket.bands,
     runs,

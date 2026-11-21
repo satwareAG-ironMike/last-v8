@@ -79,7 +79,7 @@ function pinOffset(s) {
   return { y: C.radius * Math.sin(az), z: C.radius * Math.cos(az) };
 }
 
-function buildCrank(materials) {
+function buildCrank(materials, variantId) {
   const crank = new THREE.Group();
   crank.name = 'crank';
   const put = (name, geo, mat) => {
@@ -145,9 +145,10 @@ function buildCrank(materials) {
   }
   crank.add(flywheel);
 
-  // Nose sprocket stack for the cam drive: four bored 18-tooth lanes, one per
-  // DOHC chain, machined on the turned-down 2.4 cm spigot and located by a
-  // shoulder fore and a retaining collar aft (GATES row A1-G2, issue #4).
+  // Nose sprocket stack for the cam drive: one bored 18-tooth lane per chain
+  // this build drives - four for the DOHC camshafts, one for the OHV cam -
+  // machined on the turned-down 2.4 cm spigot and located by a shoulder fore
+  // and a retaining collar aft (GATES row A1-G2, issue #4, issue #8 item 3).
   // Each lane carries its own gap lattice clocked to its own chain: src/engine/
   // drive.js measured that ONE common 18-gap tooth set for all four chains
   // leaves 72-108 of 360 sampled crank positions impossible for a rigid
@@ -167,11 +168,12 @@ function buildCrank(materials) {
     sprocket.add(m);
     return m;
   };
+  const dc = driveContract(variantId);
+  const lastBand = Math.max(...dc.runs.map((r) => r.bandIndex));
   put2('sprocket-shoulder', latheX(solidX(hubR, C.sprocket.x0, KS.bands[0] + laneHalf - CH.bandClr), 40),
     materials.crankShaft, 'sprocket locating shoulder');
-  put2('sprocket-collar', latheX(solidX(hubR, KS.bands[3] + KS.width / 2 + laneHalf + CH.bandClr, C.sprocket.x1), 40),
+  put2('sprocket-collar', latheX(solidX(hubR, KS.bands[lastBand] + KS.width / 2 + laneHalf + CH.bandClr, C.sprocket.x1), 40),
     materials.crankShaft, 'sprocket retaining collar');
-  const dc = driveContract();
   const tipR = tipRadius(C.sprocket.pitchR);
   for (const run of dc.runs) {
     const i = run.bandIndex;
@@ -273,11 +275,11 @@ function buildPiston(cyl, materials) {
  * Build the whole rotating assembly. Returns { group, update(theta) }.
  * The group transform is identity; parts pose themselves from timing math.
  */
-export function createCranktrain(materials) {
+export function createCranktrain(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'cranktrain';
 
-  const crank = buildCrank(materials);
+  const crank = buildCrank(materials, variantId);
   group.add(crank);
 
   const rods = [];
