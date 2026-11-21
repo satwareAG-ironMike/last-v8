@@ -229,7 +229,39 @@ test(`${LAW}: the 36-tooth cam sprocket is turned down over the arc that faces t
   const wrapArc = { teeth: lay.wrap.cam, deg: lay.wrap.cam * (360 / KS.teeth) };
   assert.equal(wrapArc.deg + nonWrapDeg, 360, 'the wrapped and unclad arcs of the cam sprocket must account for the whole circle');
   assert.equal(nonWrapDeg, (KS.teeth - lay.wrap.cam) * (360 / KS.teeth), 'the unclad arc is the teeth the chain does not engage');
-  console.log(`${LAW} relief: tip circles ${fullTip.toFixed(4)}+${crankTip.toFixed(4)} = ${(fullTip + crankTip).toFixed(4)} cm crowd the ${VAR.belowCrankCm} cm centre distance by ${crowding.toFixed(4)} cm; the cam sprocket is turned to ${relief.toFixed(6)} cm tip over its unclad ${nonWrapDeg.toFixed(0)} deg arc (${KS.teeth - lay.wrap.cam} teeth) and keeps the full ${fullTip.toFixed(4)} cm tip over the wrapped ${wrapArc.deg.toFixed(0)} deg (${wrapArc.teeth} teeth)`);
+  // The turn-down is metal on this sprocket, not a number in a spec sheet: the
+  // 14 teeth the chain does not clad read the relieved tip, the 22 it clads read
+  // the published rim, and the relieved run faces the crank it must clear.
+  const built = await ohvDrive();
+  const drawn = meshes(built.group, (o) => /cam-V-sprocket/.test(o.name))[0]
+    ?? meshes(ohvCam(), (o) => /cam-V-sprocket/.test(o.name))[0];
+  assert.ok(drawn, 'no drawn 36-tooth cam sprocket to measure the turn-down on');
+  const tips = landTips(drawn, camAxis(), lay.phase.cam, KS.teeth);
+  const turned = tips.filter((t) => Math.abs(t.tipR - relief) <= FACET);
+  const rimmed = tips.filter((t) => Math.abs(t.tipR - fullTip) <= FACET);
+  const step = 360 / KS.teeth;
+  const facing = (lay.phi + 180) % 360; // the azimuth the crank stands at, seen from this cam
+  assert.equal(tips.length, KS.teeth, `this sprocket presents ${tips.length} machined teeth, not ${KS.teeth}`);
+  assert.equal(turned.length, KS.teeth - lay.wrap.cam,
+    `${turned.length} of ${KS.teeth} teeth read the relieved tip ${relief.toFixed(4)} cm; the chain clads ${lay.wrap.cam} teeth (${wrapArc.deg.toFixed(0)} deg), so exactly ${KS.teeth - lay.wrap.cam} teeth over the ${nonWrapDeg.toFixed(0)} deg unclad arc may be turned down and no more`);
+  assert.equal(rimmed.length, lay.wrap.cam,
+    `${rimmed.length} teeth still read the full rim ${fullTip.toFixed(4)} cm against the ${lay.wrap.cam} teeth the chain runs on: a sprocket turned down where the chain seats cannot drive that chain`);
+  assert.equal(turned.length + rimmed.length, KS.teeth,
+    `${turned.length} turned + ${rimmed.length} rimmed of ${KS.teeth} teeth leaves ${KS.teeth - turned.length - rimmed.length} teeth at some other radius: a machined sprocket presents its relief circle or its rim circle, nothing between`);
+  for (const t of turned) {
+    const off = Math.abs(angDelta(t.az, facing));
+    assert.ok(off <= nonWrapDeg / 2 - step / 2 + 0.5,
+      `tooth ${t.k} at azimuth ${t.az.toFixed(2)} deg is turned down ${off.toFixed(2)} deg round from the crank-facing azimuth ${facing.toFixed(0)} deg, outside the ${nonWrapDeg.toFixed(0)} deg arc the chain leaves unclad (the widest tooth centre that arc holds is ${nonWrapDeg / 2 - step / 2} deg off it): the relief is where the ${fullTip.toFixed(4)} cm tip circle crowds the ${crankTip.toFixed(4)} cm crank tip, and nowhere else`);
+  }
+  for (const t of rimmed) {
+    const off = Math.abs(angDelta(t.az, facing));
+    assert.ok(off >= nonWrapDeg / 2 + step / 2 - 0.5,
+      `tooth ${t.k} keeps the full ${fullTip.toFixed(4)} cm rim at ${off.toFixed(2)} deg from the crank-facing azimuth ${facing.toFixed(0)} deg; the unclad arc reaches ${nonWrapDeg / 2} deg, so this tooth stands in the room the two tip circles do not have (${(fullTip + crankTip).toFixed(4)} cm of tip against ${VAR.belowCrankCm} cm of centre distance)`);
+  }
+  const run = turned.map((t) => t.k).sort((a, b) => a - b);
+  const spanned = (run[run.length - 1] - run[0] + 1);
+  assert.equal(spanned, turned.length, `the turned-down teeth ${run.join(',')} are not one contiguous arc (${spanned} positions for ${turned.length} teeth): a machined relief is a run, not a scatter`);
+  console.log(`${LAW} relief: tip circles ${fullTip.toFixed(4)}+${crankTip.toFixed(4)} = ${(fullTip + crankTip).toFixed(4)} cm crowd the ${VAR.belowCrankCm} cm centre distance by ${crowding.toFixed(4)} cm; ${turned.length} teeth turned to ${relief.toFixed(6)} cm over the unclad ${nonWrapDeg.toFixed(0)} deg arc facing azimuth ${facing.toFixed(0)}, ${rimmed.length} teeth kept at ${fullTip.toFixed(4)} cm over the clad ${wrapArc.deg.toFixed(0)} deg`);
 });
 
 // ---------------------------------------------------------------------------
@@ -278,9 +310,16 @@ test(`${LAW}: the OHV cam carries its drive on a turned pilot standing in its ow
     assert.ok(near.d >= S.minAir - EPS, `${o.name} stands ${near.d.toFixed(4)} cm of air off ${near.into}; the published air a part keeps off this stand is ${S.minAir} cm (SPEC.stand.minAir), and the corridor slice 8C-2a published is ${d.ohvDriveCorridor().x0.toFixed(4)}..${d.ohvDriveCorridor().x1.toFixed(4)} with that much air off the frame`);
   }
   // The sprocket is trapped between its shoulder and its collar along the pilot.
-  const aft = capture.filter((o) => box3(o).max.x <= band + EPS);
-  const fore = capture.filter((o) => box3(o).min.x >= bandEnd - EPS);
-  assert.ok(aft.length === 1 && fore.length === 1, `the sprocket band ${band.toFixed(4)}..${bandEnd.toFixed(4)} is bounded by ${aft.length} machined shoulder(s) aft and ${fore.length} collar(s) fore; the sprocket has to stand between two located faces`);
+  const aft = capture.filter((o) => box3(o).max.x <= sBox.min.x + EPS);
+  const fore = capture.filter((o) => box3(o).min.x >= sBox.max.x - EPS);
+  assert.ok(aft.length === 1 && fore.length === 1, `the sprocket's own faces x ${sBox.min.x.toFixed(4)} / ${sBox.max.x.toFixed(4)} are bounded by ${aft.length} machined shoulder(s) aft and ${fore.length} collar(s) fore (band ${band.toFixed(4)}..${bandEnd.toFixed(4)}); a sprocket has to stand between two located faces or it walks out of its band under chain load`);
+  for (const o of aft.concat(fore)) {
+    const bb = box3(o);
+    const land = aft.includes(o) ? sBox.min.x - bb.max.x : bb.min.x - sBox.max.x;
+    assert.ok(Math.abs(land - C.bandClr) <= EPS, `${o.name} stands ${land.toFixed(4)} cm off the sprocket flank; the published clearance a locating face keeps off a machined tooth flank is ${C.bandClr} cm (SPEC.chain.bandClr), the same clearance the shoulder and collar on the crank nose are machined with`);
+    const rr = Math.max(...surfaceOf(o).map((q) => Math.hypot(q.y - axis.y, q.z - axis.z)));
+    assert.ok(Math.abs(rr - d.hubRadius(KS.pitchR)) <= FACET, `${o.name} is turned to ${rr.toFixed(4)} cm; the hub the ${KS.teeth}-tooth teeth hang on is ${d.hubRadius(KS.pitchR).toFixed(4)} cm (the gap floor ${d.rootRadius(KS.pitchR).toFixed(4)} less the published hub air ${C.hubClr}), so a locating face has to be turned to the hub it stands against`);
+  }
   // The capture must actually stand against something machined: at least one part
   // sits aft of the corridor's fore x0, i.e. on the cam, not out in the chain band.
   const onTheCam = [pilots[0], ...capture, sprockets[0]].filter((o) => box3(o).min.x < d.ohvDriveCorridor().x0);
@@ -294,7 +333,7 @@ function radiusBins(mesh, axis, bins = 720) {
   const out = new Array(bins).fill(-Infinity);
   for (const p of surfaceOf(mesh)) {
     const r = Math.hypot(p.y - axis.y, p.z - axis.z);
-    const az = (Math.atan2(p.z - axis.z, p.y - axis.y) / DEG + 360) % 360;
+    const az = (Math.atan2(p.y - axis.y, p.z - axis.z) / DEG + 360) % 360; // src/engine/drive.js azimuth(y, z)
     const i = Math.floor((az * bins) / 360) % bins;
     if (r > out[i]) out[i] = r;
   }
@@ -310,19 +349,41 @@ function drawnTeeth(mesh, axis, tipR, rootR) {
   return n;
 }
 
-/** The arc a relieved sprocket was turned down over: centre azimuth and width. */
-function relievedArc(mesh, axis, fullTipR) {
-  const b = radiusBins(mesh, axis);
-  const cls = b.map((r) => r < fullTipR - 0.02);
-  const edges = [];
-  for (let i = 0; i < cls.length; i++) if (cls[i] !== cls[(i + 1) % cls.length]) edges.push(i + 1);
-  assert.equal(edges.length, 2, `this sprocket presents ${edges.length} turn-down boundaries, not the two edges of one machined arc`);
-  const [e1, e2] = edges;
-  const forward = (e2 - e1 + cls.length) % cls.length;
-  const run = forward <= cls.length / 2 ? { from: e1, to: e2 } : { from: e2, to: e1 };
-  const width = ((run.to - run.from + cls.length) % cls.length) * (360 / cls.length);
-  const centre = (((run.from + run.to) / 2) % cls.length) * (360 / cls.length);
-  return { width, centre };
+/**
+ * The tip radius each machined tooth actually presents: the maximum distance off
+ * the axis over a window half a tooth wide centred on that tooth. A tooth's own
+ * tip point is inside its window, and the flanks of the two gaps beside it rise
+ * to that same tooth's tip - so a turned-down tooth reads its relief and its
+ * neighbour reads the full rim, with no ambiguity.
+ */
+function landTips(mesh, axis, gapPhaseDeg, teeth, bins = 720) {
+  const b = radiusBins(mesh, axis, bins);
+  const step = 360 / teeth, half = step / 2;
+  const per = bins / 360;
+  return Array.from({ length: teeth }, (_, k) => {
+    const centre = (gapPhaseDeg + k * step + half + 360) % 360;
+    const span = Math.round(half * per) - 1;
+    let max = -Infinity;
+    for (let i = -span; i <= span; i++) max = Math.max(max, b[Math.round(centre * per) + i >= bins ? (Math.round(centre * per) + i) % bins : Math.round(centre * per) + i]);
+    return { k, az: centre, tipR: max };
+  });
+}
+
+/**
+ * One rigid direction written by a machined pattern: the vector sum of every
+ * surface point of this part that stands in a chosen radius band off its own
+ * axis. A rotation about that axis preserves every point's radius, so the same
+ * material points are selected at every pose and the sum turns with the part -
+ * an angle that can be tracked continuously, with no tooth-grid quantization.
+ */
+function patternAngle(mesh, axis, lo, hi) {
+  let sy = 0, sz = 0, n = 0;
+  for (const p of surfaceOf(mesh)) {
+    const y = p.y - axis.y, z = p.z - axis.z, r = Math.hypot(y, z);
+    if (r < lo || r > hi) continue;
+    sy += y; sz += z; n += 1;
+  }
+  return { az: (Math.atan2(sy, sz) / DEG + 360) % 360, mag: Math.hypot(sy, sz), n };
 }
 
 const angDelta = (a, b) => ((a - b + 540) % 360) - 180;
@@ -415,52 +476,68 @@ test(`${LAW}: the OHV chain keeps the published air off the casting and the fram
 });
 
 // ---------------------------------------------------------------------------
-test(`${LAW}: the OHV cam drive turns at exactly half crank speed - its machined pattern advances one cam tooth per two crank teeth, in the same sense the chain re-seats, over the whole 720 deg cycle`, async () => {
+test(`${LAW}: the OHV cam drive turns at exactly half crank speed - a machined gap of the cam sprocket sweeps half the angle a crank gap sweeps over the same 20 deg of crank, and the drawn drive follows it over the whole 720 deg cycle`, async () => {
   const d = await D();
   const lay = d.ohvChainLayout();
   const built = await ohvDrive();
   assert.equal(typeof built.update, 'function', 'createDrive(mats,"ohv") returns no update(theta): this variant would have a drive that never turns');
-  const camSprocket = meshes(built.group, (o) => /cam-V-sprocket/.test(o.name))[0]
+  const sprocket = meshes(built.group, (o) => /cam-V-sprocket/.test(o.name))[0]
     ?? meshes(ohvCam(), (o) => /cam-V-sprocket/.test(o.name))[0];
-  assert.ok(camSprocket, 'no drawn 36-tooth cam sprocket to measure a rotation on');
-  // Which way the chain walks round the crank: the engaged gap run advances one gap
-  // per 20 crank degrees; that sense is what the cam must follow at half the rate.
-  const runStart = (theta) => {
-    const used = new Set(d.chainPose(lay, theta).rollers.filter((r) => r.on === 'crank').map((r) => r.gap));
-    for (let g = 0; g < CS.teeth; g++) {
-      let len = 0;
-      while (used.has((g + len) % CS.teeth) && len < CS.teeth) len += 1;
-      if (len === lay.wrap.crank + 1) return g;
-    }
-    return -1;
+  assert.ok(sprocket, 'no drawn 36-tooth cam sprocket to measure a rotation on');
+
+  // The engine side first: a machined gap of each sprocket, tracked by its own
+  // gap number, sweeps one tooth per 20 crank degrees on the crank and half that
+  // on the cam. That is what no slip through 18 and 36 teeth means.
+  const seatMap = (theta, which) => new Map(
+    d.chainPose(lay, theta).rollers.filter((r) => r.on === which).map((r) => [r.gap, r.at]));
+  const swept = (which, deg) => {
+    const a = seatMap(0, which), b = seatMap(20, which);
+    const out = [...a.keys()].filter((g) => b.has(g)).map((g) => ({ g, delta: angDelta(b.get(g), a.get(g)) }));
+    assert.ok(out.length >= 2, `only ${out.length} machined ${which} gaps carried a roller at both crank 0 deg and crank 20 deg, so this chain slips instead of walking the sprocket`);
+    return out;
   };
-  const step = (runStart(20) - runStart(0) + CS.teeth) % CS.teeth;
-  assert.ok(step === 1 || step === CS.teeth - 1, `the chain's crank seating run moved ${step} gaps over 20 crank degrees; one gap per crank tooth is what a driven chain does`);
-  const sense = step === 1 ? 1 : -1;
-  const fullTip = d.tipRadius(KS.pitchR);
-  const nonWrapDeg = 360 - lay.wrap.cam * (360 / KS.teeth);
-  const atZero = relievedArc(camSprocket, camAxis(), fullTip);
-  const towardsCrank = (Math.atan2(0 - camAxis().z, 0 - camAxis().y) / DEG + 360) % 360;
-  assert.ok(Math.abs(angDelta(atZero.centre, towardsCrank)) <= nonWrapDeg / 2,
-    `the turned-down arc of this sprocket faces azimuth ${atZero.centre.toFixed(2)} deg; the ${nonWrapDeg.toFixed(0)} deg of turn-down exists because the crank sits at azimuth ${towardsCrank.toFixed(2)} deg from this cam, so the relief must face it`);
-  assert.ok(Math.abs(atZero.width - nonWrapDeg) <= 1.5, `the turn-down covers ${atZero.width.toFixed(2)} deg; the chain clads ${lay.wrap.cam} of ${KS.teeth} teeth = ${(lay.wrap.cam * (360 / KS.teeth)).toFixed(0)} deg, so only ${nonWrapDeg.toFixed(0)} deg may be turned down`);
-  const centreAt = (theta) => {
+  for (const c of swept('crank', 20)) {
+    assert.ok(Math.abs(angDelta(c.delta, -360 / CS.teeth)) <= 1e-9,
+      `crank gap ${c.g} swept ${c.delta.toFixed(6)} deg over 20 crank degrees; the 18-tooth lane turns with the crank, presenting ${(-360 / CS.teeth).toFixed(2)} deg per 20 deg`);
+  }
+  const camSweeps = swept('cam', 20);
+  for (const c of camSweeps) {
+    assert.ok(Math.abs(angDelta(c.delta, -360 / KS.teeth)) <= 1e-9,
+      `cam gap ${c.g} swept ${c.delta.toFixed(6)} deg over 20 crank degrees; a 2:1 drive on ${KS.teeth} teeth presents ${(-360 / KS.teeth).toFixed(2)} deg in that time - the cam turns once while the crank turns twice`);
+  }
+  const rate = angDelta(camSweeps[0].delta, 0) / 20; // degrees of cam turn per degree of crank
+  assert.ok(Math.abs(rate + 1 / 2) <= 1e-9, `this drive turns the cam at ${rate.toFixed(6)} crank degrees: 18 driving 36 teeth is one half, and issue #8 item 3 is the drive that has to prove it`);
+
+  // The drawn part has to follow that lattice. Its own machined band of turned
+  // teeth is a rigid feature: a rotation about the cam axis leaves every point's
+  // radius off that axis alone, so the same metal is selected at every pose and
+  // the sum of those points is an angle that turns with the part, measured
+  // continuously instead of on a 10 deg tooth grid.
+  const reliefTip = d.ohvSprocketTipR();
+  const band = [reliefTip - 0.01, reliefTip + 0.01];
+  const first = patternAngle(sprocket, camAxis(), band[0], band[1]);
+  assert.ok(first.n > 3, `only ${first.n} drawn vertices stand in the turned band ${band[0].toFixed(4)}..${band[1].toFixed(4)} cm: nothing here records a machined relief`);
+  assert.ok(first.mag > 1e-3, `the drawn turn-down writes no direction (vector sum ${first.mag.toFixed(6)} cm over ${first.n} points): the relief is symmetric, so it cannot be tracked at all`);
+  built.update(0);
+  const start = d.chainPose(lay, 0).rollers.filter((r) => r.on === 'crank').map((r) => r.gap);
+  let worst = 0, worstAt = 0;
+  for (let theta = 10; theta <= 720; theta += 10) {
     built.update(theta);
     posed(built.group);
-    const arc = relievedArc(camSprocket, camAxis(), fullTip);
-    assert.ok(Math.abs(arc.width - nonWrapDeg) <= 1.5, `at crank ${theta} deg the turned-down arc is ${arc.width.toFixed(2)} deg wide, not ${nonWrapDeg.toFixed(0)} deg: a machined sprocket does not change its own arc as it turns`);
-    return arc.centre;
-  };
-  built.update(0); posed(built.group);
-  let base = relievedArc(camSprocket, camAxis(), fullTip).centre, worst = 0, worstAt = 0;
-  for (let theta = 10; theta <= 710; theta += 10) {
-    const got = centreAt(theta);
-    const want = (base + sense * (theta / 2) + 720) % 360;
-    const err = Math.abs(angDelta(got, want));
+    const got = patternAngle(sprocket, camAxis(), band[0], band[1]);
+    assert.equal(got.n, first.n, `at crank ${theta} deg the sprocket presents ${got.n} vertices in its own turned band, not ${first.n}: the part changed its own machined profile as it turned`);
+    assert.ok(Math.abs(got.mag - first.mag) <= 1e-4 * first.mag,
+      `the drawn drive's pattern magnitude is ${got.mag.toFixed(6)} cm at crank ${theta} deg against ${first.mag.toFixed(6)} at crank 0: a rigid machined pattern keeps its size as it turns`);
+    const want = (first.az + rate * theta + 720) % 360;
+    const err = Math.abs(angDelta(got.az, want));
     if (err > worst) { worst = err; worstAt = theta; }
-    assert.ok(err <= 1.0, `at crank ${theta} deg the cam drive's machined pattern sits ${got.toFixed(2)} deg round, where half-crank timing puts it at ${want.toFixed(2)} deg (off by ${err.toFixed(2)}): the issue #8 item 3 drive is 2:1 - one cam tooth per two crank teeth`);
+    assert.ok(err <= 0.25, `at crank ${theta} deg the drawn cam drive has turned ${(got.az - first.az).toFixed(3)} deg, where the machined lattice puts it at ${(want - first.az).toFixed(3)} deg (${rate.toFixed(3)} deg of cam per crank degree, off by ${err.toFixed(3)}): issue #8 item 3 wants 2:1 - one cam tooth per two crank teeth`);
   }
-  assert.ok(Math.abs(angDelta(centreAt(720), base)) <= 1.0, `after 720 crank degrees the cam pattern has moved ${angDelta(centreAt(720), base).toFixed(2)} deg from where it started: a 2:1 drive returns to its own start after one cam turn per two crank turns`);
-  built.update(0); posed(built.group);
-  console.log(`${LAW} half speed: turn-down arc ${atZero.width.toFixed(1)} deg centred on azimuth ${atZero.centre.toFixed(1)} (crank at ${towardsCrank.toFixed(0)}), pattern tracked half crank over 72 poses, worst error ${worst.toFixed(3)} deg at crank ${worstAt}`);
+  const walked = d.chainPose(lay, 20).rollers.filter((r) => r.on === 'crank').map((r) => r.gap);
+  assert.notDeepEqual(walked, start, 'the chain sat on the same 18 machined crank gaps at crank 0 deg and crank 20 deg: a driven chain walks one gap per tooth it drives');
+  built.update(0);
+  posed(built.group);
+  const back = patternAngle(sprocket, camAxis(), band[0], band[1]);
+  assert.ok(Math.abs(angDelta(back.az, first.az)) <= 0.25, `after 720 crank degrees the drawn cam drive sits ${angDelta(back.az, first.az).toFixed(3)} deg from where it started: two crank turns must land this cam back on its own start`);
+  console.log(`${LAW} half speed: crank gaps sweep ${(-360 / CS.teeth).toFixed(2)} deg and cam gaps ${(-360 / KS.teeth).toFixed(2)} deg per 20 crank degrees (rate ${rate.toFixed(4)}); the drawn pattern tracked that over 72 poses, worst error ${worst.toFixed(3)} deg at crank ${worstAt} deg, back on its start after 720`);
 });
