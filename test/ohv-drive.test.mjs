@@ -189,10 +189,16 @@ test(`${LAW}: the OHV chain seats a roller in every machined tooth space it enga
       const inGap = cutR - Math.abs(at - pitchR[which]) - C.rollerR;
       assert.ok(inGap > 0, `at crank ${theta} deg the ${which} roller in gap ${r.gap} is ${(-inGap).toFixed(6)} cm PAST the flank of the ${cutR.toFixed(4)} cm cutter arc that gap was machined with`);
       if (inGap < leastInGap) { leastInGap = inGap; inGapAt = { theta, which, gap: r.gap }; }
-      // And it must stay under the machined rim: a roller riding a tooth tip is
-      // the flat-band drive issue #4 rejected.
-      const underTip = d.tipRadius(pitchR[which]) - (at + C.rollerR);
-      if (underTip < leastTip) { leastTip = underTip; tipAt = { theta, which, gap: r.gap }; }
+      // And the machined rim has to cross this roller's own disc: outboard of its
+      // centre, so the gap flanks carry the load, and not past its crown, so the
+      // link drops into the gap instead of standing on the tooth tip. Both bounds
+      // are the pair test/valvetrain.test.mjs already pins for the four DOHC chains.
+      const rimAir = d.tipRadius(pitchR[which]) - at;
+      assert.ok(rimAir > 0,
+        `at crank ${theta} deg the ${which} roller in gap ${r.gap} stands at radius ${at.toFixed(6)} cm, outside the machined rim circle ${d.tipRadius(pitchR[which]).toFixed(4)}: that roller rides over the teeth, which is the flat-band drive issue #4 rejected`);
+      assert.ok(rimAir < C.rollerR,
+        `at crank ${theta} deg the ${which} tip circle stands ${rimAir.toFixed(6)} cm outboard of the roller centre it drives, past the ${C.rollerR} cm roller radius: a tooth that overshoots its roller keeps the link from dropping into the gap ${r.gap} machined for it`);
+      if (rimAir < leastTip) { leastTip = rimAir; tipAt = { theta, which, gap: r.gap }; }
       const floorAir = (at - C.rollerR) - d.rootRadius(pitchR[which]);
       assert.ok(floorAir >= C.gapClr - EPS,
         `at crank ${theta} deg the roller in the ${which} gap ${r.gap} leaves ${floorAir.toFixed(6)} cm to the gap floor; the published gap air is ${C.gapClr} cm`);
@@ -204,8 +210,7 @@ test(`${LAW}: the OHV chain seats a roller in every machined tooth space it enga
     }
   }
   assert.equal(shared, 0, `${shared} poses put two rollers of this chain into one machined tooth gap`);
-  assert.ok(leastTip > 0, `at crank ${tipAt.theta} deg the ${tipAt.which} roller in gap ${tipAt.gap} stands ${(-leastTip).toFixed(6)} cm past the machined rim circle ${d.tipRadius(pitchR[tipAt.which]).toFixed(4)}: it rides a tooth tip, which is the flat band this review rejected`);
-  console.log(`${LAW} seats: worst flank air ${leastInGap.toFixed(6)} cm (${inGapAt.which} gap ${inGapAt.gap} at crank ${inGapAt.theta}), worst air under the rim ${leastTip.toFixed(6)} cm (${tipAt.which} gap ${tipAt.gap} at crank ${tipAt.theta}), cutter arc ${cutR.toFixed(4)}, wrap polygons ${lay.wrapR.crank.toFixed(4)}/${lay.wrapR.cam.toFixed(4)}`);
+  console.log(`${LAW} seats: worst flank air ${leastInGap.toFixed(6)} cm (${inGapAt.which} gap ${inGapAt.gap} at crank ${inGapAt.theta}), least rim air past the roller centre ${leastTip.toFixed(6)} cm (${tipAt.which} gap ${tipAt.gap} at crank ${tipAt.theta}), cutter arc ${cutR.toFixed(4)}, wrap polygons ${lay.wrapR.crank.toFixed(4)}/${lay.wrapR.cam.toFixed(4)}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -439,15 +444,27 @@ test(`${LAW}: the OHV chain keeps the published air off the casting and the fram
   meshes(stand, (o) => !/^(mount|pad)-/.test(o.name)).forEach((o) => shellAdd(iron, o));
 
   const chainParts = meshes(built.group, (o) => /-(roller|plates-in|plates-out|guide|tensioner)/.test(o.name));
-  const driveParts = meshes(built.group, (o) => /cam-V-(pilot|shoulder|collar|sprocket)/.test(o.name))
-    .concat(meshes(ohvCam(), (o) => /cam-V-(pilot|shoulder|collar|sprocket)/.test(o.name)));
-  assert.ok(driveParts.length >= 3, `only ${driveParts.length} cam-side drive parts are drawn`);
+  const drawnIn = (re) => meshes(built.group, (o) => re.test(o.name)).concat(meshes(ohvCam(), (o) => re.test(o.name)));
+  const pilot = drawnIn(/cam-V-pilot/);
+  const capture = drawnIn(/cam-V-(shoulder|collar|sprocket)/);
+  assert.equal(pilot.length, 1, `${pilot.length} cam-side pilots are drawn for this variant's one drive`);
+  assert.equal(capture.length, 3, `${capture.length} cam-side sprocket/capture parts are drawn ([${capture.map((o) => o.name).join(', ')}]): a 36-tooth sprocket, its locating shoulder and its retaining collar`);
 
+  // Free-running parts keep the frame/casting air the stand publishes. The pilot
+  // is not one of them: it runs in the retainer bore this tree machines for it,
+  // and the air it keeps there is the published nose air, not frame air.
   let worstIron = Infinity, ironWho = null;
-  for (const o of chainParts.concat(driveParts)) {
+  for (const o of chainParts.concat(capture)) {
     const near = closestToShell(o, iron);
     if (near.d < worstIron) { worstIron = near.d; ironWho = `${o.name} -> ${near.into}`; }
     assert.ok(near.d >= S.minAir - EPS, `${o.name} is ${near.d.toFixed(4)} cm from ${near.into}: a drive that runs through the casting or through the clamped frame is not a drive; the published clearance air is ${S.minAir} cm (SPEC.stand.minAir) and the free corridor slice 8C-2a published is ${d.ohvDriveCorridor().x0.toFixed(4)}..${d.ohvDriveCorridor().x1.toFixed(4)}`);
+  }
+  const noseAir = B.noseAirCm;
+  let pilotAir = Infinity, pilotWho = null;
+  for (const o of pilot) {
+    const near = closestToShell(o, iron);
+    if (near.d < pilotAir) { pilotAir = near.d; pilotWho = `${o.name} -> ${near.into}`; }
+    assert.ok(near.d >= noseAir - EPS, `${o.name} is ${near.d.toFixed(4)} cm from ${near.into}: the pilot of a cam drive runs in the bore this casting machines for it, and the published running fit there is the ${noseAir.toFixed(4)} cm nose air (ohvBearings().noseAirCm) - closer than that and the pilot is inside the metal, not in its bore`);
   }
   // The crank it hangs from: the chain wraps the sprocket and the lane presses on
   // the nose, so the bar there is the published chain/tooth air, not frame air.
@@ -464,15 +481,23 @@ test(`${LAW}: the OHV chain keeps the published air off the casting and the fram
     const near = closestToShell(o, crankShell);
     assert.equal(near.d, 0, `${o.name} is not mounted on the crank nose it is turned onto: ${near.d.toFixed(4)} cm of air to ${near.into}`);
   }
+  // The cam-side hardware shares the crank's envelope two axes away: nothing of it
+  // may come nearer to the drawn crank than the air the machined teeth run with.
+  let worstDriveCrank = Infinity, driveCrankWho = null;
+  for (const o of capture.concat(pilot)) {
+    const near = closestToShell(o, crankShell);
+    if (near.d < worstDriveCrank) { worstDriveCrank = near.d; driveCrankWho = `${o.name} -> ${near.into}`; }
+    assert.ok(near.d >= C.gapClr - EPS, `${o.name} stands ${near.d.toFixed(4)} cm off ${near.into}: the ${KS.teeth}-tooth cam drive turns ${VAR.belowCrankCm} cm under this crank, and ${C.gapClr} cm (SPEC.chain.gapClr) is the least air anything in that envelope may keep off it`);
+  }
   // The two sprockets: this is issue #8 item 3's "no interpenetrating teeth",
   // measured on the drawn rims rather than asserted from tip circles.
-  const camSprocket = driveParts.find((o) => /cam-V-sprocket/.test(o.name));
+  const camSprocket = capture.find((o) => /cam-V-sprocket/.test(o.name));
   const crankSprocket = lanes[0];
   const s1 = newShell(); shellAdd(s1, crankSprocket);
   const rim = closestToShell(camSprocket, s1);
   const fullTipSum = d.tipRadius(KS.pitchR) + d.tipRadius(CS.pitchR);
   assert.ok(rim.d >= C.gapClr - EPS, `the drawn cam sprocket rim stands ${rim.d.toFixed(4)} cm off the drawn 18-tooth lane (${rim.into}): issue #8 item 3 rejects a drive with interpenetrating teeth, and the published tooth air is ${C.gapClr} cm; the unrelieved tip circles alone would sum to ${fullTipSum.toFixed(4)} cm against a ${VAR.belowCrankCm} cm centre distance`);
-  console.log(`${LAW} air: least chain-or-drive air off casting+frame ${worstIron.toFixed(4)} cm (${ironWho}), least chain air off the crank ${worstCrank.toFixed(4)} cm (${crankWho}), lanes press the nose at 0.0000, drawn tip-to-tip ${rim.d.toFixed(4)} cm against ${C.gapClr} published`);
+  console.log(`${LAW} air: least chain-or-capture air off casting+frame ${worstIron.toFixed(4)} cm (${ironWho}), pilot air in its bore ${pilotAir.toFixed(4)} cm against ${noseAir.toFixed(4)} published (${pilotWho}), least chain air off the crank ${worstCrank.toFixed(4)} cm (${crankWho}), least cam-drive air off the crank ${worstDriveCrank.toFixed(4)} cm (${driveCrankWho}), lanes press the nose at 0.0000, drawn tip-to-tip ${rim.d.toFixed(4)} cm against ${C.gapClr} published`);
 });
 
 // ---------------------------------------------------------------------------
