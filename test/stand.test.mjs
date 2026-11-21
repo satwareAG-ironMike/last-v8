@@ -17,10 +17,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SPEC, panWallHalfWidth, panRailPlane, endDiscFaceX } from '../src/engine/spec.js';
+import { panPlanes, standDatums, variantEntry } from '../src/engine/layout.js';
+import { tipRadius, wrapRadius } from '../src/engine/drive.js';
 import { createBlock } from '../src/render/block.js';
 import { createCranktrain } from '../src/render/cranktrain.js';
 import { createManifolds } from '../src/render/manifolds.js';
-import { createStand, standSpecs, standBolts } from '../src/render/stand.js';
+import { createStand, standInterfaces, standSpecs, standBolts } from '../src/render/stand.js';
 import {
   boxTriangleWorst, engineTriangles, strutTriangleWorst, triDistance,
 } from './support/engine-triangles.mjs';
@@ -578,4 +580,241 @@ test('the frame stays in the measured free lanes: it never reaches up beside the
     assert.ok(depthToBox(bed.bb, br.a) >= 0.1, `${br.name} foot is not buried in the bed rail`);
     assert.ok(depthToBox(post.bb, br.b) >= 0.1, `${br.name} head is not buried in the mount post`);
   }
+});
+
+// ===========================================================================
+// The OHV build's frame (issue #24, issue #8 slice 8C-2a).
+//
+// The stand is one object defined by its offsets from the casting it carries.
+// layout.js `standDatums(id)` publishes what those offsets become for a variant
+// whose skirt reaches deeper, and src/engine/drive.js `ohvDriveCorridor()`
+// publishes the volume the 2:1 chain drive reserves for itself. Both readings
+// here are the same exact instruments the closed rows above use: triangle
+// distance against the engine that is really rendered, for THIS build.
+// ===========================================================================
+
+const OHV = 'ohv';
+const OHV_UNITS = ['block', 'cranktrain', 'valvetrain', 'manifolds'];
+let ohvShellCache = null;
+function ohvShell() {
+  if (!ohvShellCache) ohvShellCache = engineTriangles(materials, { units: OHV_UNITS, variant: OHV });
+  return ohvShellCache;
+}
+const ohvDatums = () => standDatums(OHV);
+const delta = () => panPlanes(OHV).panBottomZ - panPlanes('dohc').panBottomZ;
+
+test("the OHV frame is derived from this variant's own cast planes, one datum shift, and the DOHC frame is untouched", () => {
+  assert.ok(variantEntry(OHV).centralCam, 'the OHV variant is the central-cam build these laws are written for');
+  const D = ohvDatums();
+  const P = panPlanes(OHV);
+  const d = delta();
+  assert.ok(Math.abs(D.delta - d) < 1e-9, `standDatums delta ${D.delta} is not the sump-depth difference ${d} this variant's panPlanes produce`);
+  // the shift is ONE number applied to every pinned plane of the frame
+  for (const [name, pinned] of [
+    ['frameZ1', S.frameZ1], ['floorZ', S.floorZ], ['padZ0', S.padZ0], ['colZ1', S.colZ1],
+    ['jawZ0', S.jawZ[0]], ['jawZ1', S.jawZ[1]], ['braceFootZ', S.braceFootZ],
+    ['braceHeadZ', S.braceHeadZ], ['boltZ', S.boltZ],
+  ]) {
+    assert.ok(Math.abs(D[name] - (pinned + d)) < 1e-9,
+      `standDatums('ohv').${name} ${D[name]} is not the pinned SPEC.stand.${name} ${pinned} shifted by ${d}`);
+  }
+  // the mounting planes are the ones this variant actually casts
+  const I = standInterfaces(OHV);
+  for (const [name, want] of [['railZ', P.railZ], ['flangeZ', P.flangeZ], ['wallHalfY', P.wallHalfY], ['flangeHalfY', P.flangeHalfY], ['faceX', endDiscFaceX()]]) {
+    assert.ok(Math.abs(I[name] - want) < 1e-9, `standInterfaces('ohv').${name} ${I[name]} != this variant's cast plane ${want}`);
+  }
+  assert.ok(Math.abs(I.padZ1 - (P.railZ + S.bite)) < 1e-9, `mount plate bite plane ${I.padZ1} != ${P.railZ} + ${S.bite}`);
+  assert.ok(Math.abs(I.padInY - (P.wallHalfY - S.bite)) < 1e-9, `mount plate inboard edge ${I.padInY} != wall ${P.wallHalfY} - ${S.bite}`);
+  assert.ok(Math.abs(I.jawInX - (endDiscFaceX() - S.jawBite)) < 1e-9, `locator jaw face ${I.jawInX} != end disc ${endDiscFaceX()} - ${S.jawBite}`);
+  // the published members carry those planes, not the DOHC ones
+  const ohv = standSpecs(OHV);
+  assert.equal(ohv.length, standSpecs().length, 'the OHV frame is the same load path, re-read for this casting');
+  for (const m of ohv) {
+    if (m.kind === 'brace') {
+      assert.ok(Math.abs(m.a[2] - (S.braceFootZ + d)) < 1e-9 && Math.abs(m.b[2] - (S.braceHeadZ + d)) < 1e-9,
+        `${m.name} gusset stands at z ${m.a[2]}..${m.b[2]}, not this variant's shifted bracing`);
+      continue;
+    }
+    if (m.kind === 'pad') {
+      assert.ok(Math.abs(m.bb[5] - (P.railZ + S.bite)) < 1e-9,
+        `${m.name} top face z ${m.bb[5].toFixed(4)} is not this variant's rail plane ${P.railZ} + bite ${S.bite}: the DOHC plane ${panPlanes('dohc').railZ} belongs to the DOHC casting`);
+      assert.ok(Math.abs(Math.min(Math.abs(m.bb[2]), Math.abs(m.bb[3])) - (P.wallHalfY - S.bite)) < 1e-9,
+        `${m.name} inboard edge is not clamped to this variant's pan wall ${P.wallHalfY} - bite`);
+    }
+    if (m.kind === 'jaw') {
+      assert.ok(Math.abs(Math.min(Math.abs(m.bb[0]), Math.abs(m.bb[1])) - (D.faceX - S.jawBite)) < 1e-9, `${m.name} jaw face`);
+    }
+    if (m.kind === 'post' || m.kind === 'column') {
+      assert.ok(Math.abs(m.bb[4] - (S.frameZ1 + d)) < 1e-9 && Math.abs(m.bb[5] - ((m.kind === 'post' ? S.padZ0 : S.colZ1) + d)) < 1e-9,
+        `${m.name} (${m.kind}) stands z ${m.bb[4]}..${m.bb[5]}, not the shifted frame`);
+    }
+    if (m.kind === 'arm') {
+      assert.ok(Math.abs(m.bb[4] - (S.colZ1 + d)) < 1e-9 && Math.abs(m.bb[5] - (S.jawZ[0] + d)) < 1e-9,
+        `${m.name} cross arm carries the jaws at z ${m.bb[5]}, not at ${S.jawZ[0]}`);
+    }
+  }
+  for (const b of standBolts(OHV)) {
+    assert.ok(Math.abs(b.p[2] - (S.boltZ + d)) < 1e-9, `clamp bolt ${b.name} stands z ${b.p[2]}, not this variant's bolt plane ${S.boltZ + d}`);
+  }
+  // the DOHC frame is untouched by the plumbing: member for member, identical
+  const same = standSpecs().map((m, i) => {
+    const q = standSpecs('dohc')[i];
+    if (!q || q.name !== m.name || q.kind !== m.kind) return `${m.name} != ${q && q.name}`;
+    if (m.kind === 'brace') {
+      return m.a.concat(m.b, m.r).every((v, k) => v === q.a.concat(q.b, q.r)[k]) ? null : `${m.name} brace moved`;
+    }
+    return m.bb.every((v, k) => v === q.bb[k]) ? null : `${m.name} box ${fmt(m.bb)} != ${fmt(q.bb)}`;
+  }).filter(Boolean);
+  assert.deepEqual(same, [], 'the DOHC frame must come out exactly as the closed rows record it');
+});
+
+test('the OHV frame keeps minAir real air from the engine it carries, measured against the OHV triangles', async () => {
+  const shell = ohvShell();
+  const members = standSpecs(OHV);
+  const arms = members.filter((m) => m.kind === 'arm');
+  assert.ok(arms.length >= 2, `the OHV frame publishes ${arms.length} cross arms: the probe is blind`);
+  const order = [...arms, ...members.filter((m) => m.kind !== 'arm')];
+  for (const m of order) {
+    if (MOUNT_KINDS.has(m.kind)) continue;
+    const r = m.kind === 'brace' ? strutTriangleWorst(shell, m) : boxTriangleWorst(shell, m.bb);
+    assert.ok(r.worst >= S.minAir,
+      `${m.name} (${m.kind}) comes within ${r.worst.toFixed(4)} cm of the OHV engine part ${r.who} at ${JSON.stringify(r.at && r.at.map((n) => +n.toFixed(2)))}; the design minimum is ${S.minAir}. The frame was read off the DOHC casting and the ${OHV} build has hardware there instead`);
+  }
+});
+
+test("the OHV mount plates bite this variant's own rail plane and its jaws bite this variant's end discs", async () => {
+  const P = panPlanes(OHV);
+  const D = ohvDatums();
+  const shell = ohvShell();
+  const pads = standSpecs(OHV).filter((m) => m.kind === 'pad');
+  const jaws = standSpecs(OHV).filter((m) => m.kind === 'jaw');
+  assert.equal(pads.length, KINDS.pad, 'the OHV build keeps the four engine mounts');
+  assert.equal(jaws.length, KINDS.jaw, 'the OHV build keeps the four locator jaws');
+  for (const m of pads) {
+    assert.ok(Math.abs(m.bb[5] - (P.railZ + S.bite)) < 1e-9,
+      `${m.name} top face z ${m.bb[5].toFixed(4)} is not the ${OHV} rail plane ${P.railZ} + bite ${S.bite}`);
+    const r = boxTriangleWorst(shell, m.bb);
+    assert.ok(r.worst <= S.bite + 0.05, `${m.name} sits ${r.worst.toFixed(4)} cm off the casting; it is meant to bite ${S.bite} into the ${OHV} rail plane`);
+    // the ${OHV} rail plane is machined into the skirt this variant casts (layout.js
+    // panPlanes reads ohvHousing), so the skirt's own face is a mounting face here
+    assert.ok(/oil-pan|pan-rails|crankcase|end-disc/.test(String(r.who)),
+      `${m.name} presses on ${r.who} at ${JSON.stringify(r.at && r.at.map((n) => +n.toFixed(2)))}, not on this variant's sump or skirt`);
+  }
+  for (const m of jaws) {
+    const r = boxTriangleWorst(shell, m.bb);
+    assert.ok(r.worst <= S.jawBite + 0.05, `${m.name} sits ${r.worst.toFixed(4)} cm off the end disc; it is meant to press ${S.jawBite}`);
+    assert.ok(/end-disc/.test(String(r.who)), `${m.name} presses on ${r.who}, not on an end disc of this casting`);
+    assert.ok(Math.abs(m.bb[4] - (S.jawZ[0] + D.delta)) < 1e-9,
+      `${m.name} jaw base z ${m.bb[4].toFixed(4)} is not the shifted cross arm soffit ${S.jawZ[0] + D.delta}`);
+  }
+});
+
+test("the OHV mount posts stand minAir outboard of the flange this variant machines", () => {
+  // issue #24 symptom 2: a frame read off the DOHC casting puts every mount post
+  // 0.1246 cm outboard of a flange the OHV skirt machines out to flangeHalfY,
+  // where the design owes SPEC.stand.minAir of real air between a frame member
+  // and the casting. The clamp bolt that runs along the flange needs that plan
+  // view clearance; measured triangle air alone is blind to it (the pinned edge
+  // still reads 0.7246 cm to the pan wall, tmp/ohvstandmeas.mjs), so this law
+  // gates the flare around the flange edge instead.
+  const D = ohvDatums();
+  const pinnedAir = S.postY[0] - D.flangeHalfY;
+  assert.ok(pinnedAir < S.minAir,
+    `the pinned SPEC.stand.postY[0] ${S.postY[0]} already stands ${pinnedAir.toFixed(4)} cm outboard of this variant's flange reach ${D.flangeHalfY.toFixed(4)}: with more slack here this law would gate nothing`);
+  const posts = standSpecs(OHV).filter((m) => m.kind === 'post');
+  assert.equal(posts.length, KINDS.post, 'the OHV build keeps the four mount posts');
+  for (const m of posts) {
+    const inboard = Math.min(Math.abs(m.bb[2]), Math.abs(m.bb[3]));
+    assert.ok(inboard >= D.flangeHalfY + S.minAir - 1e-9,
+      `${m.name} inboard edge |y| ${inboard.toFixed(4)} stands only ${(inboard - D.flangeHalfY).toFixed(4)} cm outboard of the flange this variant machines at ${D.flangeHalfY.toFixed(4)}: the frame owes ${S.minAir} cm of real air to the casting`);
+  }
+  // the closed DOHC rows read the same rule with their pinned edge, so the
+  // derivation may satisfy it without moving a plane those rows record
+  const Dd = standDatums('dohc');
+  const dohcPost = standInterfaces('dohc').postInY;
+  assert.ok(dohcPost >= Dd.flangeHalfY + S.minAir,
+    `the DOHC mount post edge ${dohcPost} dropped below its own flange ${Dd.flangeHalfY} + ${S.minAir}`);
+});
+
+test('the OHV frame lane reserves the volume the published 2:1 chain drive sweeps', async () => {
+  // the drive owes the frame its corridor; stand.js may only build what that
+  // contract leaves free (issue #24 symptom 3: this variant hangs its 36-tooth
+  // wrap down into the frame beam lane)
+  const { ohvDriveCorridor } = await import('../src/engine/drive.js');
+  const K = ohvDriveCorridor();
+  const SP = SPEC.crank.sprocket;
+  const CP = SPEC.cam.sprocket;
+  const band = CP.bands[0];
+  assert.ok(K.x0 === band && K.x1 === band + CP.width,
+    `the drive corridor x ${K.x0}..${K.x1} is not the published sprocket band ${band}..${band + CP.width}`);
+  const reachCam = Math.max(tipRadius(CP.pitchR), wrapRadius(CP.teeth) + SPEC.chain.rollerR);
+  const reachCrank = Math.max(tipRadius(SP.pitchR), wrapRadius(SP.teeth) + SPEC.chain.rollerR);
+  assert.ok(Math.abs(K.yHalf - reachCam) < 1e-9, `corridor half width ${K.yHalf} != the ${CP.teeth}-tooth wrap reach ${reachCam.toFixed(4)} off the cam axis`);
+  assert.ok(Math.abs(K.zLo - (-SPEC.variants.ohv.belowCrankCm - reachCam)) < 1e-9,
+    `corridor floor z ${K.zLo} != the cam axis ${-SPEC.variants.ohv.belowCrankCm} minus the wrap reach ${reachCam.toFixed(4)}`);
+  assert.ok(Math.abs(K.zHi - reachCrank) < 1e-9, `corridor ceiling z ${K.zHi} != the ${SP.teeth}-tooth reach ${reachCrank.toFixed(4)}`);
+  const corr = [K.x0, K.x1, -K.yHalf, K.yHalf, K.zLo, K.zHi];
+  for (const m of standSpecs(OHV)) {
+    const d = aabbDistance(memberBox(m), corr);
+    assert.ok(d >= S.minAir - 1e-9,
+      `${m.name} (${m.kind}) box ${fmt(memberBox(m))} stands ${d.toFixed(4)} cm from the drive corridor ${fmt(corr)}; the frame lane must reserve ${S.minAir} of real air`);
+  }
+  for (const m of standSpecs(OHV).filter((x) => x.kind === 'skid')) {
+    assert.ok(m.bb[1] <= K.x0 - S.minAir + 1e-9,
+      `${m.name} centre skid rail runs to x ${m.bb[1].toFixed(4)}: under this variant's drive it has to stop ${S.minAir} cm aft of the band face ${K.x0}`);
+  }
+});
+
+test('createStand draws the frame of the variant it is asked for, mesh for mesh', async () => {
+  const specs = standSpecs(OHV);
+  const { group } = createStand(materials, OHV);
+  const byKind = kindCounts(group);
+  const want = {};
+  for (const m of specs) want[m.kind] = (want[m.kind] ?? 0) + 1;
+  want.bolt = S.boltsPerMount * KINDS.pad;
+  assert.deepEqual(byKind, want, `the OHV build drew ${JSON.stringify(byKind)}, the OHV spec publishes ${JSON.stringify(want)}`);
+  const moved = [];
+  for (const m of specs) {
+    if (m.kind === 'brace') continue;
+    const o = group.getObjectByName(m.name);
+    if (!o) { moved.push(`${m.name} missing`); continue; }
+    const bb = worldAABB(o);
+    if (!m.bb.every((v, i) => Math.abs(bb[i] - v) < EPS)) moved.push(`${m.name} built at ${fmt(bb)}, spec ${fmt(m.bb)}`);
+  }
+  assert.deepEqual(moved, [], `createStand(materials, '${OHV}') did not build the frame standSpecs('${OHV}') publishes`);
+  const D = ohvDatums();
+  // the frame beams this variant stands on: same offsets, this variant's planes
+  const wantPlane = {
+    bed: [D.floorZ, D.frameZ1], skid: [D.floorZ, D.frameZ1], tie: [D.floorZ, D.frameZ1],
+    sideTie: [D.floorZ, D.frameZ1], post: [D.frameZ1, D.padZ0], column: [D.frameZ1, D.colZ1],
+    arm: [D.colZ1, D.jawZ0],
+  };
+  const off = [];
+  for (const m of specs) {
+    const w = wantPlane[m.kind];
+    if (!w) continue;
+    if (Math.abs(m.bb[4] - w[0]) > EPS || Math.abs(m.bb[5] - w[1]) > EPS) {
+      off.push(`${m.name} (${m.kind}) z ${m.bb[4].toFixed(2)}..${m.bb[5].toFixed(2)} != ${w[0].toFixed(2)}..${w[1].toFixed(2)}`);
+    }
+  }
+  assert.deepEqual(off, [], `the ${OHV} frame does not stand on this variant's shifted planes`);
+  const lowest = Math.min(...standSpecs(OHV).map((m) => memberBox(m)[4]));
+  assert.ok(Math.abs(lowest - D.floorZ) < EPS, `the OHV frame's lowest member stands ${lowest.toFixed(4)}, not on this variant's floor plane ${D.floorZ.toFixed(4)}`);
+  // the drawn clamp bolts have to hang on this variant's bolt plane too: a shaft
+  // length and a plane read off the other variant clamp a plate that is not there
+  const published = standBolts(OHV);
+  const bolts = group.getObjectByName('stand-bolts');
+  assert.ok(bolts?.isInstancedMesh, `the ${OHV} frame rendered no stand-bolts InstancedMesh`);
+  assert.equal(bolts.count, published.length, `the ${OHV} frame drew ${bolts.count} clamp bolts, the ${OHV} spec publishes ${published.length}`);
+  const m4 = new THREE.Matrix4();
+  const offPlane = [];
+  published.forEach((b, i) => {
+    m4.identity();
+    bolts.getMatrixAt(i, m4);
+    const pos = new THREE.Vector3().setFromMatrixColumn(m4, 3);
+    if (pos.distanceTo(new THREE.Vector3(...b.p)) > EPS) {
+      offPlane.push(`${b.name} drawn at [${pos.toArray().map((n) => n.toFixed(4)).join(', ')}], published [${b.p.map((n) => n.toFixed(4)).join(', ')}]`);
+    }
+  });
+  assert.deepEqual(offPlane, [], `the ${OHV} clamp bolts do not stand on this variant's bolt plane z ${D.boltZ.toFixed(4)}: createStand read the interfaces of the other variant`);
 });

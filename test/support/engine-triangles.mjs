@@ -12,6 +12,7 @@ import { createHeads } from '../../src/render/heads.js';
 import { createManifolds } from '../../src/render/manifolds.js';
 import { createPlugs } from '../../src/render/plugs.js';
 import { GLOW_SPECS } from '../../src/render/materials.js';
+import { SPEC } from '../../src/engine/spec.js';
 
 export const TRI_CELL = 4.0;
 const SEARCH = 2; // +/- 2 cells: any triangle within 8 cm of the probe is examined
@@ -31,11 +32,20 @@ export const proxyMaterials = () =>
       : new THREE.MeshStandardMaterial({ name: String(k) })),
   });
 
-export function engineUnits(materials) {
+/**
+ * The engine the laws measure, for the build `variantId` names. Only the creators
+ * that are variant-aware today read it - src/render/block.js `createBlock` and
+ * src/render/valvetrain.js `createValvetrain`; `createCranktrain`, `createHeads`
+ * and `createManifolds` still draw one casting for both builds (issue #8 slice
+ * 8C-2b / 8C-3 make them variant-aware), so an OHV shell is honest about the
+ * units it names: the stand laws ask for block, cranktrain, valvetrain and
+ * manifolds, never for an OHV head the tree does not draw yet.
+ */
+export function engineUnits(materials, variantId = SPEC.build.variant) {
   return {
-    block: createBlock(materials),
+    block: createBlock(materials, variantId),
     cranktrain: createCranktrain(materials).group,
-    valvetrain: createValvetrain(materials).group,
+    valvetrain: createValvetrain(materials, variantId).group,
     heads: createHeads(materials).group,
     manifolds: createManifolds(materials).group,
     // The plug unit keeps its update(): a law that gates a tip flash has to pose
@@ -82,7 +92,9 @@ export function engineTriangles(materials = proxyMaterials(), opts = {}) {
   // that measures a plug bore against the castings it is machined into needs the
   // casting-only shell; a law that measures the same bore against the moving valve
   // heads beside it needs the whole engine. Both readings are the same triangles.
-  const units = engineUnits(materials);
+  // opts.variant names which BUILD those units are: omitted, it is the tree's own
+  // SPEC.build.variant, so every closed row's shell is the shell it already measured.
+  const units = engineUnits(materials, opts.variant);
   const keep = opts.units ?? Object.keys(units);
   for (const k of keep) {
     // A unit is either an Object3D or a renderer unit that hands back one
