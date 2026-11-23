@@ -252,7 +252,7 @@ function boreOffenders(oracle, path, R, allow = {}) {
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
   }
-  return seen.size ? [...seen].map(([k, n]) => `${k} x${n}`) : null;
+  return seen.size ? [...seen].map(([k, n]) => `${k} x${n}`) : [];
 }
 
 // ---------------------------------------------------------------------------

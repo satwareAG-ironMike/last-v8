@@ -707,3 +707,83 @@ export const panRailPlane = () => SPEC.block.panRailZ;
 /** |x| of the fore/aft end-disc flat faces the locator jaws clamp against. */
 export const endDiscFaceX = () =>
   SPEC.block.stations[0] + SPEC.block.pitch / 2 + SPEC.block.slabFront;
+
+/**
+ * The oil system's published contract - issue #8 addendum item 5, slice 8D-1.
+ * src/engine/oil.js derives every route from these values; test/oil.test.mjs gates
+ * each one against the drawn iron through test/support/oil-iron.mjs. Radii and walls
+ * are derived from the geometry above. The corridor waypoints are the heights and
+ * offsets the sampled drills actually ran along (tmp/8d-published.mjs ->
+ * tmp/8d-published5.out: 78 published routes, 78 clean, every one sampled at its own
+ * drilling radius with only its own named terminus part and its own named oil space
+ * allowed). They route the drills; they add no geometry of their own.
+ */
+SPEC.oil = {
+  // the crankcase wall band the main gallery is bored in: at its mid radius, leaving
+  // the published housing wall of iron between the bore and every machined face
+  galleryMidR: (SPEC.block.crankcaseRadius + SPEC.block.caseOuterRadius) / 2,
+  wallMinCm: SPEC.cam.bearing.housingWall,
+  galleryR:
+    (SPEC.block.caseOuterRadius - SPEC.block.crankcaseRadius) / 2 - SPEC.cam.bearing.housingWall,
+  galleryFaceClrCm: 0.5, // the gallery stops this inside the block's own end faces
+  feedDrillR: SPEC.cam.bearing.oilHoleR, // the published radial shell way, every feed
+  pumpDrillR: 0.3, // the pump's own discharge way
+  mainShell: { filmCm: 0.05, wallCm: 0.7 }, // the shell src/render/block.js presses in
+  rodFilmMidCm: 0.025, // a through-crank way ends mid the film over the pin
+  // the head deck rail the block->head legs and the cam galleries share, derived
+  railOut: (SPEC.head.gasketId + SPEC.head.gasketOd) / 2,
+  railBand: (SPEC.block.deckA + SPEC.head.gasketT + SPEC.head.railTopA) / 2,
+  railTopCm: SPEC.head.railTopA,
+  linkFloorCm: 9.25, // where a flank column leaves the wall-band arc, beside its liner
+  deckFaceClrCm: 0.05, // a column breaks into the deck passage this below the deck face
+  deckRiseCm: 0.8, // and stands this above it, into the rail
+  camFeedCrossCm: SPEC.manifold.exFlangeA1 + 0.7, // the crossing over the housing tie rib
+  camFeedOutRunCm: 3.0, // how far past the cam axis it crosses, clear of the riser
+  camFeedStandCm: 4.4, // its approach stands off the line bore, at the cradle azimuth
+  camFeedPsiDeg: SPEC.cam.bearing.oilAz.cradle[0],
+  // the sump each variant bolts on: its pickup screen hangs this above its own floor
+  pickupX: 18,
+  pickupDropCm: 0.8,
+  pump: {
+    // Each variant stands its pump on the iron its own casting offers beside its own
+    // pan wall. Both stands were fixed by classifying the drawn tree at the clearance
+    // law 1 measures (tmp/8d-pumpbody.mjs -> tmp/8d-pumpbody.out).
+    x: 18,
+    r: 0.3,
+    stand: {
+      dohc: { y: 3.8, z: -10.5 }, // on the gallery plane, outboard of the pan wall
+      ohv: { y: 4.05, z: -10.8 }, // on its drum skirt, below the tunnel crown plane
+    },
+  },
+  // the OHV mid-main corridor its cast boot legs leave free (tmp/8d-ohvmain.out),
+  // out of the crown gallery in and down to the journal, y/z off the crank axis
+  ohvMainLeg: [
+    [8.0006, -6.8], [6.75, -6.8], [5.75, -7.8], [5.5, -7.8], [5.0, -8.3], [4.75, -8.3],
+    [4.5, -8.55], [4.25, -8.55], [4.0, -8.3], [4.0, -6.8], [3.75, -6.55], [3.25, -6.55],
+    [0.0, -3.45],
+  ],
+  ohvMainStationsX: [11, 0, -11], // the three the drawn iron reaches (issue #28)
+  ohvCamFeed: { inCm: 6.75, shelfZ: -9.55 }, // the run from the crown gallery to the wall
+  bridgeStationsX: [MAIN_CAPS_X[0], MAIN_CAPS_X[MAIN_CAPS_X.length - 1]],
+  counts: {
+    dohc: {
+      mains: MAIN_CAPS_X.length,
+      rods: SPEC.cylinders.length,
+      cams: Object.keys(SPEC.banks).length * 2 * SPEC.cam.bearings.length,
+    },
+    ohv: {
+      mains: MAIN_CAPS_X.length,
+      rods: SPEC.cylinders.length,
+      // one bushing at each machined tunnel face plus one in each gap between the
+      // published cylinder stations - the same window list src/engine/layout.js bores
+      cams: SPEC.block.stations.length + 1,
+    },
+  },
+  pendingIssues: ['#8', '#16', '#28'],
+  pending: {
+    drawnHoles: '#8', // slice 8D-2: the drilled oil holes in the shells themselves
+    lifterGallery: '#16', // no lifter gallery is cast until 8C-3 picks an option
+    ohvMains: '#28', // the OHV fore/aft mains stand off the wall band with no iron route
+    ohvInboardGallery: '#28', // nothing bridges the banks at its crown plane
+  },
+};
