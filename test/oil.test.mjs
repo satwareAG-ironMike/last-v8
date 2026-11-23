@@ -495,7 +495,9 @@ test('oil: every DOHC cam bearing - 4 camshafts x 7 journals - is fed from a gal
   for (const g of net.camGalleries) {
     const feeders = fillers.filter((l) => l.gallery === g.id);
     assert.equal(feeders.length > 0, true, `cam gallery ${g.id} has no filling route from the pump`);
-    const outboard = Math.sign(g.out) === Math.sign(camAxisBank(g.bank, g.valve)[1]);
+    // the flank the block's wall band can reach is the one bankOut points at, i.e.
+    // bank-frame out > 0; the inboard flank stands in the arc the bore tunnels block
+    const outboard = Math.sign(g.out) === 1;
     const kinds = [...new Set(feeders.map((l) => l.kind))];
     const allowed = outboard ? ['link'] : ['bridge'];
     assert.deepEqual(kinds, allowed, `cam gallery ${g.id} (${outboard ? 'outboard' : 'inboard'}) is filled by ${kinds.join(',')} where the drawn iron allows only ${allowed.join(',')}`);
