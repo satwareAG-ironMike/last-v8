@@ -662,13 +662,43 @@ function posedTree(root) {
   root.updateMatrixWorld(true, true);
   return root;
 }
+// A cylinder part travels along a BANK axis, and the banks stand 45 deg off the
+// crank axis. A world-aligned box around such a mesh therefore claims iron - and
+// air - in the wall band beside the bore it is nowhere near, which is exactly the
+// region a feed drilling has to run in. So every part the cranktrain names after a
+// cylinder is measured from its own vertices in that cylinder's bank frame:
+// (x, along up the bore, out outboard away from the V). Parts that ride the crank
+// axis keep the world box, which is their own natural frame.
+const BANK_OF_CYL = new Map(SPEC.cylinders.map((c) => [c.num, c.bank]));
+
 function cranktrainParts(id) {
   const root = posedTree(createCranktrain(treeMats(), id).group); // {group, update, crank}
   const list = [];
+  const world = (p) => [p[0], p[1], p[2]];
+  const V3 = new THREE.Vector3();
   root.traverse((o) => {
     if (!o.isMesh) return;
-    const b = new THREE.Box3().setFromObject(o);
-    list.push({ name: o.name, min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] });
+    const m = o.name.match(/cyl(\d+)/);
+    const bank = m ? BANK_OF_CYL.get(Number(m[1])) : null;
+    const of = bank ? F[bank].of : world;
+    const q = [];
+    const pos = o.geometry?.attributes?.position;
+    if (bank && pos) {
+      for (let i = 0; i < pos.count; i++) {
+        V3.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+        q.push(of([V3.x, V3.y, V3.z]));
+      }
+    } else {
+      const b = new THREE.Box3().setFromObject(o);
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) q.push(of([x, y, z]));
+    }
+    list.push({
+      name: o.name,
+      of,
+      frame: bank ?? 'world',
+      min: [Math.min(...q.map((c) => c[0])), Math.min(...q.map((c) => c[1])), Math.min(...q.map((c) => c[2]))],
+      max: [Math.max(...q.map((c) => c[0])), Math.max(...q.map((c) => c[1])), Math.max(...q.map((c) => c[2]))],
+    });
   });
   return list;
 }
@@ -689,8 +719,11 @@ export function oilOracle(id = SPEC.build.variant) {
   };
   /** iron | solid | void | oil | rotating | air, in the order a drill cares about. */
   const classify = (p) => {
-    const rot = crank.find((c) => p[0] >= c.min[0] && p[0] <= c.max[0] && p[1] >= c.min[1] && p[1] <= c.max[1]
-      && p[2] >= c.min[2] && p[2] <= c.max[2]);
+    const rot = crank.find((c) => {
+      const q = c.of(p);
+      return q[0] >= c.min[0] && q[0] <= c.max[0] && q[1] >= c.min[1] && q[1] <= c.max[1]
+        && q[2] >= c.min[2] && q[2] <= c.max[2];
+    });
     if (rot) return { state: 'rotating', name: rot.name };
     const s = inAny(solids, p);
     if (s) return { state: 'solid', name: s.name };
