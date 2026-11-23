@@ -11,6 +11,7 @@ import { createValvetrain } from '../../src/render/valvetrain.js';
 import { createHeads } from '../../src/render/heads.js';
 import { createManifolds } from '../../src/render/manifolds.js';
 import { createPlugs } from '../../src/render/plugs.js';
+import { createOil } from '../../src/render/oil.js';
 import { GLOW_SPECS } from '../../src/render/materials.js';
 import { SPEC } from '../../src/engine/spec.js';
 
@@ -34,8 +35,9 @@ export const proxyMaterials = () =>
 
 /**
  * The engine the laws measure, for the build `variantId` names. Only the creators
- * that are variant-aware today read it - src/render/block.js `createBlock` and
- * src/render/valvetrain.js `createValvetrain`; `createCranktrain`, `createHeads`
+ * that are variant-aware today read it - src/render/block.js `createBlock`,
+ * src/render/valvetrain.js `createValvetrain` and src/render/oil.js `createOil`
+ * (each build routes its oil through its own casting); `createCranktrain`, `createHeads`
  * and `createManifolds` still draw one casting for both builds (issue #8 slice
  * 8C-2b / 8C-3 make them variant-aware), so an OHV shell is honest about the
  * units it names: the stand laws ask for block, cranktrain, valvetrain and
@@ -51,6 +53,12 @@ export function engineUnits(materials, variantId = SPEC.build.variant) {
     // The plug unit keeps its update(): a law that gates a tip flash has to pose
     // the flash the way src/main.js does, through the same renderer.
     plugs: createPlugs(materials),
+    // The oil assembly is static: no SPEC models a pump drive or a pressure, so there
+    // is no update() to pose here (slice 8D-2a, src/render/oil.js). A law that wants
+    // the shell WITHOUT the drilled oil ways names its own `opts.units`: an oil way is
+    // metal removed from a casting, so it is measured against that casting, never as
+    // an obstacle standing beside it.
+    oil: createOil(materials, variantId).group,
   };
 }
 

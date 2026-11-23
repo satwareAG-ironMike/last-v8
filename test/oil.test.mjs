@@ -51,10 +51,13 @@
 //     carriers stand 4.70 cm off the wall band and no iron bridges the banks at the
 //     crown plane, so neither can be bored to (issue #28). Law 3 and law 8 name them
 //     as a pending clause on that issue; the published OHV census is 3 fed mains of 5.
-//   - the DRAWN oil parts and the drilled oil holes in the shells: slice 8D-2
-//     (src/render/oil.js, holes in main-shell-* and in the bearing shells) with
-//     its own laws added to this file and to test/block.test.mjs. Law 11 names the
-//     drawn-holes census as that clause while no oil- part is drawn.
+//   - the drilled oil holes INSIDE the iron: the holes in main-shell-*, in the 56 cam
+//     shells and their cradles, in the 5 OHV tunnel bushings and in the rod body. Slice
+//     8D-2a drew src/render/oil.js - every published bore as a mesh of its own, plus the
+//     pump, its pickup and the gauge - and its six "oil 8D-2a" laws are the last laws in
+//     this file. Slice 8D-2b drills the visible holes into the shells themselves and adds
+//     its laws to test/block.test.mjs and test/heads.test.mjs. Law 11 and the 8D-2a census
+//     law both name that clause through SPEC.oil.pending.drawnHoles (issue #8).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -663,4 +666,333 @@ test('oil: the DOHC build, its default variant and its published geometry are un
   assert.equal(o.oilSpec('dohc').pending.drawnHoles, '#8', `the drawn-oil-hole clause is ${JSON.stringify(o.oilSpec('dohc').pending.drawnHoles)}, not issue #8`);
   assert.equal(SPEC.oil.pendingIssues.includes('#8'), true, 'SPEC.oil does not name the drawn-hole clause');
   assert.equal(SPEC.oil.wallMinCm, STACK.housingWall, 'SPEC.oil typed a wall instead of reusing the published bearing wall');
+});
+
+// ---------------------------------------------------------------------------
+// 8D-2a: the DRAWN oil assembly (src/render/oil.js). These laws measure the tree
+// against the published network in src/engine/oil.js: the census is that file's own
+// member list, the radius each bore must hold is the drillR it publishes, and the
+// route each drawn tube takes is the `from` chain it publishes. The drilled holes
+// INSIDE the iron - main-shell-*, the cam cradles, the OHV tunnel bushings, the rod
+// body - are still slice 8D-2b and stay named by SPEC.oil.pending.drawnHoles.
+
+/** The drawn assembly and the network it must match. */
+async function drawnOil(variant) {
+  const r = await import('../src/render/oil.js');
+  const o = await O();
+  return { oil: r.createOil(mats(), variant), net: o.oilNetwork(variant) };
+}
+
+/** Every bore the published network says must be drawn, in route order. */
+function publishedBores(net) {
+  return [net.supply, ...net.galleries, ...net.camGalleries, ...net.links, ...net.bridges, ...net.feeds];
+}
+
+/** Where a world point stands on one published leg: r off its axis, t along it. */
+function onLeg(p, a, b) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const len = Math.hypot(ab[0], ab[1], ab[2]);
+  const d = [ab[0] / len, ab[1] / len, ab[2] / len];
+  const ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+  const t = ap[0] * d[0] + ap[1] * d[1] + ap[2] * d[2];
+  const s = Math.max(0, Math.min(len, t));
+  return {
+    r: Math.hypot(p[0] - (a[0] + d[0] * s), p[1] - (a[1] + d[1] * s), p[2] - (a[2] + d[2] * s)),
+    t,
+    len,
+  };
+}
+
+const ASSEMBLIES = ['oil-pump', 'oil-pan-pickup', 'oil-pressure-gauge'];
+// The band a drawn bore's own vertices must hold to the radius its route publishes.
+// Float32 storage is 1.5e-6 cm here, so a band this loose gates the drilled hole,
+// not the format: 5e-3 cm is 12% of the thinnest published wall SPEC.oil.wallMinCm.
+const OIL_TOL = 5e-3;
+
+test('oil 8D-2a: the tree draws one mesh per published bore, plus the pump, the pickup and the gauge', async () => {
+  const { explodeRuleFor } = await import('../src/engine/view.js');
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil, net } = await drawnOil(variant);
+    assert.equal(oil.group.name, 'oil', `the ${variant} oil assembly is named "${oil.group.name}"`);
+    const bores = publishedBores(net);
+    const ids = bores.map((b) => b.id);
+    assert.equal(new Set(ids).size, ids.length, `the ${variant} census lists one bore twice`);
+    assert.equal(ids.some((n) => ASSEMBLIES.includes(n)), false, 'a bore and an assembly share a name');
+    // the census is the published station and bearing lists, not a hand count
+    const fed = net.feeds.reduce((m, f) => ({ ...m, [f.kind]: (m[f.kind] ?? 0) + 1 }), {});
+    assert.equal(fed.main, variant === 'dohc' ? MAIN_CAPS_X.length : SPEC.oil.ohvMainStationsX.length,
+      `the ${variant} tree feeds ${fed.main} mains, not the stations its drawn iron reaches`);
+    assert.equal(fed.rod, SPEC.cylinders.length, `the ${variant} tree feeds ${fed.rod} rod bearings of ${SPEC.cylinders.length}`);
+    assert.equal(fed.cam, variant === 'dohc'
+      ? net.camGalleries.length * CAM.bearings.length
+      : ohvBearings().stations.length, `the ${variant} tree feeds ${fed.cam} cam bearings, not its published bearing count`);
+
+    for (const bore of bores) {
+      const o = oil.group.getObjectByName(bore.id);
+      assert.ok(o?.isMesh, `the ${variant} tree draws no bore mesh named ${bore.id}`);
+      assert.equal(o.userData.id, bore.id, `the mesh for ${bore.id} is labelled "${o.userData.id}"`);
+      assert.equal(o.userData.part, bore.part, `${bore.id} is bored in "${o.userData.part}", not in ${bore.part}`);
+      assert.equal(o.userData.drillR, bore.drillR, `${bore.id} is drawn at r ${o.userData.drillR}, not its published ${bore.drillR}`);
+      assert.equal(o.userData.from, bore.from ?? bore.gallery ?? null, `${bore.id} is fed by "${o.userData.from}"`);
+    }
+    for (const name of ASSEMBLIES) {
+      const a = oil.group.getObjectByName(name);
+      assert.ok(a?.isGroup, `the ${variant} sump train draws no assembly named ${name}`);
+      let meshes = 0;
+      a.traverse((x) => { if (x.isMesh) meshes += 1; });
+      assert.ok(meshes >= 1, `${name} is an empty assembly`);
+    }
+    // nothing here draws what an open issue still holds
+    for (const p of net.pendingGalleries) {
+      assert.equal(oil.group.getObjectByName(p.id) ?? null, null, `${p.id} is drawn while issue ${p.issue} has not chosen its iron`);
+    }
+    for (const p of net.pendingMains) {
+      assert.equal(oil.group.getObjectByName(`oil-main-x${p.x}`) ?? null, null, `the feed for ${p.part} is drawn while issue ${p.issue} is open`);
+    }
+    assert.equal(oil.group.getObjectByName('oil-gallery-lifter') ?? null, null, 'a lifter gallery is drawn while issue #16 has not chosen the 8C-3 casting');
+    assert.equal(net.spec.pending.drawnHoles, '#8', 'the drilled holes in the shells are claimed as drawn while 8D-2b has not landed');
+    // the drawn member count is measured, not projected: bores + the three assemblies
+    const drawn = oil.group.children.filter((c) => c.isMesh || c.isGroup);
+    assert.equal(drawn.length, ids.length + ASSEMBLIES.length,
+      `the ${variant} oil group holds ${drawn.length} members, not ${ids.length} bores + ${ASSEMBLIES.length} assemblies`);
+    // the sump train is the only oil member a teardown rule may move: the bores are
+    // drilled INTO the castings and travel with them
+    const ruled = [...ids, ...ASSEMBLIES]
+      .filter((n) => explodeRuleFor(n))
+      .map((n) => `${n}=${explodeRuleFor(n).family}/${explodeRuleFor(n).stage}`)
+      .sort();
+    assert.deepEqual(ruled, ['oil-pan-pickup=down/5', 'oil-pump=down/5'],
+      `the drawn oil members carry the explode rules ${JSON.stringify(ruled)}; 8D-2a rules only the pump and its pickup, stage 5 with the pan they unbolt from`);
+  }
+});
+
+test('oil 8D-2a: every drawn bore holds the drill radius its route publishes, along every published leg', async (t) => {
+  const diag = [];
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil, net } = await drawnOil(variant);
+    for (const bore of publishedBores(net)) {
+      const mesh = posed(oil.group.getObjectByName(bore.id));
+      const legs = [];
+      for (let i = 0; i + 1 < bore.path.length; i++) legs.push([bore.path[i], bore.path[i + 1]]);
+      const cover = legs.map(() => 0);
+      const p = mesh.geometry.attributes.position;
+      const m = mesh.matrixWorld;
+      let bulge = 0;
+      let verts = 0;
+      for (let i = 0; i < p.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(m);
+        let best = null; // the nearest published axis: how far the drilling may reach
+        let onWall = false; // it stands on the wall of a leg it is actually within
+        legs.forEach((leg, k) => {
+          const o = onLeg([v.x, v.y, v.z], leg[0], leg[1]);
+          if (!best || o.r < best.o.r) { best = { o, k }; }
+          if (o.t >= -OIL_TOL && o.t <= o.len + OIL_TOL && Math.abs(o.r - bore.drillR) <= OIL_TOL) {
+            onWall = true;
+            cover[k] += 1;
+          }
+        });
+        verts += 1;
+        bulge = Math.max(bulge, best.o.r - bore.drillR);
+        assert.ok(onWall,
+          `${bore.id}: a vertex stands ${best.o.r.toFixed(4)} cm off leg ${best.k}, ${best.o.t.toFixed(2)} cm along it, on no published wall of this ${bore.drillR} cm drilling`);
+      }
+      const bare = legs.map((leg, k) => (cover[k] === 0 ? `leg ${k} (${leg[0]})` : null)).filter(Boolean);
+      assert.deepEqual(bare, [], `${bore.id} is drawn without a measurable wall on: ${bare.join(', ')}`);
+      diag.push(`${variant}/${bore.id} legs ${legs.length} verts ${verts} bulge ${bulge.toFixed(6)}`);
+    }
+  }
+  const worstBulge = Math.max(...diag.map((d) => Number(d.split('bulge ')[1])));
+  const verts = diag.reduce((m, d) => m + Number(d.split('verts ')[1].split(' ')[0]), 0);
+  t.diagnostic(`drawn bores measured: ${diag.length}, ${verts} vertices, worst bulge past any published drill ${worstBulge.toFixed(6)} cm`);
+});
+
+test('oil 8D-2a: the drawn galleries span their published stations and every feed reaches the bearing it names', async () => {
+  /** Off-axis band of a drawn object's vertices about the axis a->b, interior only. */
+  function bandAbout(root, a, b, inset = 0.4) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const len = Math.hypot(...d);
+    const u = d.map((c) => c / len);
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const p = o.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+        const t = (v.x - a[0]) * u[0] + (v.y - a[1]) * u[1] + (v.z - a[2]) * u[2];
+        if (t < inset || t > len - inset) continue;
+        const r = Math.hypot(v.x - (a[0] + u[0] * t), v.y - (a[1] + u[1] * t), v.z - (a[2] + u[2] * t));
+        lo = Math.min(lo, r);
+        hi = Math.max(hi, r);
+      }
+    });
+    return { lo, hi, len };
+  }
+  /** Distance from a published point to the nearest drawn vertex. */
+  function reach(root, point) {
+    let best = Infinity;
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const p = o.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+        best = Math.min(best, v.distanceTo(new THREE.Vector3(...point)));
+      }
+    });
+    return best;
+  }
+  const O_ = await O();
+  const S = O_.oilSpec('dohc');
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil, net } = await drawnOil(variant);
+    const v = O_.oilSpec(variant);
+    for (const g of [...net.galleries, ...net.camGalleries]) {
+      const box = boxOf(posed(oil.group.getObjectByName(g.id)));
+      assert.ok(Math.abs(box.min.x - g.x0) <= OIL_TOL && Math.abs(box.max.x - g.x1) <= OIL_TOL,
+        `${g.id} is drawn from x ${box.min.x.toFixed(3)} to ${box.max.x.toFixed(3)}, not its published ${g.x0} to ${g.x1}`);
+      const a = g.path[0];
+      const b = g.path[1];
+      const bd = bandAbout(oil.group.getObjectByName(g.id), a, b);
+      assert.ok(Math.abs(bd.lo - g.drillR) <= OIL_TOL && Math.abs(bd.hi - g.drillR) <= OIL_TOL,
+        `${g.id} is bored at r ${bd.lo.toFixed(4)}..${bd.hi.toFixed(4)}, not its published ${g.drillR}`);
+    }
+    for (const feed of net.feeds) {
+      const mesh = oil.group.getObjectByName(feed.id);
+      const end = feed.path.at(-1);
+      const r = reach(mesh, end);
+      assert.ok(Math.abs(r - feed.drillR) <= OIL_TOL, `${feed.id} ends ${r.toFixed(4)} cm from the bearing it names at ${end}, not at its ${feed.drillR} cm drill radius`);
+      const start = feed.path[0];
+      const s = reach(mesh, start);
+      assert.ok(Math.abs(s - feed.drillR) <= OIL_TOL, `${feed.id} does not start at its gallery mouth ${start} (nearest vertex ${s.toFixed(4)} cm away)`);
+    }
+    // the sump train, measured against the published pump and pickup numbers. Every
+    // drawn way here is an open-ended tube, so its mouth stands at exactly its own
+    // drill radius off the published point it opens at - each mouth clause names that
+    // radius instead of pretending a tube has a vertex at its axis.
+    const pump = posed(oil.group.getObjectByName('oil-pump'));
+    const ways = pump.getObjectByName('oil-pump-body');
+    assert.ok(ways?.isMesh, 'the pump draws no oil-pump-body way');
+    const pb = bandAbout(posed(ways), net.pump.inlet, net.pump.outlet, 0.1);
+    assert.ok(Math.abs(pb.lo - net.pump.r) <= OIL_TOL && Math.abs(pb.hi - net.pump.r) <= OIL_TOL,
+      `the pump body is drawn at r ${pb.lo.toFixed(4)}..${pb.hi.toFixed(4)}, not the published SPEC.oil.pump.r ${net.pump.r}`);
+    for (const [what, point] of [['discharge', net.pump.outlet], ['suction', net.pump.inlet]]) {
+      const d = reach(posed(ways), point);
+      assert.ok(Math.abs(d - net.pump.r) <= OIL_TOL,
+        `the pump's ${what} mouth stands ${d.toFixed(4)} cm from its published point ${point}, not at its ${net.pump.r} cm way radius`);
+    }
+    const housing = pump.getObjectByName('oil-pump-housing');
+    assert.ok(housing?.isMesh, 'the pump draws no oil-pump-housing iron to stand in');
+    const hb = boxOf(posed(housing));
+    const hc = [(hb.min.x + hb.max.x) / 2, (hb.min.y + hb.max.y) / 2, (hb.min.z + hb.max.z) / 2];
+    const hd = Math.hypot(hc[0] - net.pump.body[0], hc[1] - net.pump.body[1], hc[2] - net.pump.body[2]);
+    assert.ok(hd <= OIL_TOL, `the pump housing stands ${hd.toFixed(4)} cm off its published stand ${net.pump.body}`);
+    const pickup = posed(oil.group.getObjectByName('oil-pan-pickup'));
+    const stem = posed(pickup.getObjectByName('oil-pan-pickup-stem'));
+    assert.ok(stem?.isMesh, 'the pickup draws no oil-pan-pickup-stem');
+    const st = bandAbout(stem, net.pickup.screen, net.pickup.stem, 0.1);
+    assert.ok(Math.abs(st.lo - S.pumpDrillR) <= OIL_TOL && Math.abs(st.hi - S.pumpDrillR) <= OIL_TOL,
+      `the pickup stem is bored at r ${st.lo.toFixed(4)}..${st.hi.toFixed(4)}, not the published pump drill ${S.pumpDrillR}`);
+    const mouth = reach(stem, net.pickup.screen);
+    assert.ok(Math.abs(mouth - S.pumpDrillR) <= OIL_TOL,
+      `the pickup stem opens ${mouth.toFixed(4)} cm from its published screen point ${net.pickup.screen}, not at its ${S.pumpDrillR} cm drill radius`);
+    const screen = posed(pickup.getObjectByName('oil-pan-pickup-screen'));
+    assert.ok(screen?.isMesh, 'the pickup draws no oil-pan-pickup-screen');
+    const sb = boxOf(screen);
+    const sc = [(sb.min.x + sb.max.x) / 2, (sb.min.y + sb.max.y) / 2, (sb.min.z + sb.max.z) / 2];
+    const sd = Math.hypot(sc[0] - net.pickup.screen[0], sc[1] - net.pickup.screen[1], sc[2] - net.pickup.screen[2]);
+    assert.ok(sd <= OIL_TOL, `the pickup screen hangs centred ${sd.toFixed(4)} cm off its published point ${net.pickup.screen}`);
+    assert.ok(Math.min(sb.max.y - sb.min.y, sb.max.z - sb.min.z) / 2 >= S.pumpDrillR,
+      `the pickup screen is ${((sb.max.y - sb.min.y) / 2).toFixed(4)} x ${((sb.max.z - sb.min.z) / 2).toFixed(4)} cm, narrower than the ${S.pumpDrillR} cm stem it strains`);
+    const g = net.gauge;
+    const gauge = posed(oil.group.getObjectByName('oil-pressure-gauge'));
+    const tap = gauge.getObjectByName('oil-pressure-gauge-tap');
+    assert.ok(tap?.isMesh, 'the gauge draws no oil-pressure-gauge-tap into the gallery it reads');
+    const gd = reach(posed(tap), g.at);
+    assert.ok(Math.abs(gd - S.pumpDrillR) <= OIL_TOL,
+      `the gauge tap stands ${gd.toFixed(4)} cm from the gallery point ${g.at} it reads, not at its ${S.pumpDrillR} cm drill radius`);
+    assert.ok(g.at[2] === net.galleries[0].z && g.at[1] === net.galleries[0].y, 'the gauge tap moved off the gallery axis it reads');
+  }
+});
+
+test('oil 8D-2a: every drawn feed traces back through drawn bores to the pump the tree actually draws', async () => {
+  const o = await O();
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil, net } = await drawnOil(variant);
+    for (const feed of net.feeds) {
+      const want = o.provenance(variant, feed.id).map((w) => w.id);
+      const chain = [];
+      let cur = oil.group.getObjectByName(feed.id);
+      assert.ok(cur, `the ${variant} tree draws no feed named ${feed.id}`);
+      while (cur) {
+        chain.unshift(cur.userData.id ?? cur.name);
+        assert.ok(chain.length <= 12, `the drawn route ${feed.id} walks ${chain.length} bores and never closes on the pump`);
+        const src = cur.userData.from;
+        if (src === net.pump.id) { chain.unshift(net.pump.id); break; }
+        cur = src ? oil.group.getObjectByName(src) : null;
+        assert.ok(!src || cur, `${feed.id} is fed by "${src}", which the ${variant} tree does not draw`);
+      }
+      assert.deepEqual(chain, want, `the drawn route to ${feed.id} is ${chain.join(' -> ')}, the published route is ${want.join(' -> ')}`);
+    }
+    // the census is closed: every published member is drawn and every drawn member is published
+    const published = new Set([...publishedBores(net).map((b) => b.id), ...ASSEMBLIES]);
+    const drawn = oil.group.children.filter((c) => c.isMesh || c.isGroup).map((c) => c.name);
+    assert.deepEqual(drawn.filter((n) => !published.has(n)), [], `the ${variant} oil group holds members the network never published: ${drawn.filter((n) => !published.has(n)).join(', ')}`);
+  }
+});
+
+test('oil 8D-2a: every drawn oil member is inspectable by name and only the sump train leaves its casting', async () => {
+  const { explodeRuleFor, partLabel } = await import('../src/engine/view.js');
+  const pan = explodeRuleFor('oil-pan');
+  assert.ok(pan, 'the oil pan itself lost its teardown rule');
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil, net } = await drawnOil(variant);
+    // the iron the feeds are bored in, as the live world draws it: a feed whose
+    // userData.part names nothing in the tree is a provenance claim with no object
+    const iron = posed(createBlock(mats(), variant));
+    iron.add(posed(createCranktrain(mats()).group), posed(createHeads(mats()).group));
+    for (const bore of publishedBores(net)) {
+      assert.equal(explodeRuleFor(bore.id), null, `a teardown rule moves ${bore.id} out of ${bore.part}, which it is drilled into`);
+      assert.notEqual(partLabel(bore.id), bore.id, `${bore.id} has no menu label, so the inspection list drops it`);
+      // a supply or gallery way IS its own part; a feed must name a bearing the tree draws
+      if (bore.part !== bore.id) {
+        assert.ok(iron.getObjectByName(bore.part), `${bore.id} is bored in ${bore.part}, which the ${variant} tree does not draw`);
+      }
+    }
+    for (const name of ASSEMBLIES) {
+      assert.notEqual(partLabel(name), name, `${name} has no menu label, so the inspection list drops it`);
+    }
+    // the pump and its pickup unbolt as one level with the pan they stand on
+    for (const name of ['oil-pump', 'oil-pan-pickup']) {
+      const r = explodeRuleFor(name);
+      assert.ok(r, `${name} has no teardown rule`);
+      assert.equal(r.family, pan.family, `${name} leaves in family ${r.family}, not with the pan (${pan.family})`);
+      assert.equal(r.stage, pan.stage, `${name} leaves at stage ${r.stage}, not the pan's stage ${pan.stage}`);
+    }
+    assert.equal(explodeRuleFor('oil-pressure-gauge'), null, 'the gauge is ruled off the gallery it reads');
+  }
+});
+
+test('oil 8D-2a: the drawn oil system rides the published material families and creates none of its own', async (t) => {
+  // Families src/render/materials.js already publishes; adding one for the oil
+  // system would be a new surface the screenshot PBR law has to re-audit.
+  const ALLOW = ['oilFilm', 'aluTube', 'brass', 'gaugeCase', 'gaugeFace', 'fastenerSteel'];
+  const seen = new Map();
+  const bare = [];
+  for (const variant of ['dohc', 'ohv']) {
+    const { oil } = await drawnOil(variant);
+    oil.group.traverse((o) => {
+      if (!o.isMesh) return;
+      const list = Array.isArray(o.material) ? o.material : [o.material];
+      if (!list.length) { bare.push(`${variant}/${o.name}`); return; }
+      for (const m of list) {
+        assert.equal(m.type, 'MeshStandardMaterial', `${o.name} is drawn with ${m.type}, not a metal/roughness PBR material`);
+        seen.set(m.name, (seen.get(m.name) ?? 0) + 1);
+      }
+    });
+  }
+  assert.deepEqual(bare, [], `drawn oil meshes carry no material at all: ${bare.join(', ')}`);
+  const extra = [...seen.keys()].filter((n) => !ALLOW.includes(n));
+  assert.deepEqual(extra, [], `the oil system invented material families outside the published set: ${extra.join(', ')}`);
+  assert.ok((seen.get('oilFilm') ?? 0) >= 1, 'no drawn bore rides the published oil film family');
+  t.diagnostic(`oil material families: ${[...seen].map(([k, n]) => `${k} x${n}`).join(', ')}`);
 });

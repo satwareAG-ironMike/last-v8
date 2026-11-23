@@ -13,6 +13,7 @@ import { createDrive } from './render/drive.js';
 import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
 import { createPlugs } from './render/plugs.js';
+import { createOil } from './render/oil.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
@@ -106,6 +107,13 @@ engine.add(manifolds.group);
 // is the only thing in the scene that is a light rather than a machined surface.
 const plugs = createPlugs(materials);
 engine.add(plugs.group);
+// The oil system is drawn as the drilling network src/engine/oil.js publishes: one
+// mesh per published bore, plus the pump, its pan pickup and the gauge. It is static
+// - no SPEC models a pump drive or a pressure, so there is nothing to pose in the
+// loop - and it joins before createViewControls, which measures members and extents
+// once at construction.
+const oil = createOil(materials);
+engine.add(oil.group);
 
 // The camera and its rig. The pose is NOT written here: SPEC.view carries the
 // swept boot framing (engine, manifolds and the whole test stand uncropped in a

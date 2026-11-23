@@ -152,6 +152,13 @@ export function explodeRules() {
     rule(/^main-bolt-/, 'down', 4),
     rule(/^oil-pan$/, 'down', 5),
     rule(/^pan-plug$/, 'down', 5),
+    // The pump and its pan pickup come off WITH the pan they stand on (slice 8D-2a):
+    // same family, same stage, because they are bolted to the pan flange and lifted
+    // out of the sump in one pull. The drilled feedings, galleries and links get no
+    // rule on purpose - a drilling is metal removed from a casting, so it travels with
+    // the casting it was bored in, exactly like the pan rails and the liners above.
+    rule(/^oil-pump$/, 'down', 5),
+    rule(/^oil-pan-pickup$/, 'down', 5),
 
     rule(/^rod-cyl\d+$/, (n) => `bank-${partBank(n)}`, 1),
     rule(/^piston-cyl\d+$/, (n) => `bank-${partBank(n)}`, 2),
@@ -378,6 +385,54 @@ export function partLabel(name) {
   if (name === 'crankcase') return 'Crankcase casting (the reference casting)';
   if (name === 'pan-rails') return 'Pan rail flange (cast integral with the block)';
   if (/^flange-bolts-/.test(name)) return `Header flange bolts - ${partBank(name) === 'L' ? 'left' : 'right'} bank`;
+  // The oil system (slice 8D-2a, src/render/oil.js): every member is a drilling the
+  // network in src/engine/oil.js publishes, so each label names the route it is and
+  // the bearing it feeds. The radii quoted are the published drill radii, not numbers
+  // typed here.
+  const oilGallery = /^oil-gallery-cam-([LR])-(intake|exhaust)$/.exec(name);
+  if (oilGallery) {
+    return `Cam feed gallery - ${oilGallery[1] === 'L' ? 'left' : 'right'} bank ${oilGallery[2]} rail, `
+      + `${SPEC.cam.bearings.length} journals bored at ${SPEC.oil.feedDrillR} cm`;
+  }
+  const oilLink = /^oil-link-([LR])-out-x(-?[\d.]+)$/.exec(name);
+  if (oilLink) {
+    return `Block-to-head feed - ${oilLink[1] === 'L' ? 'left' : 'right'} bank outboard flank at station ${oilLink[2]}, `
+      + `wall band up to the deck passage at ${SPEC.oil.feedDrillR} cm`;
+  }
+  const oilBridge = /^oil-bridge-([LR])-(fore|aft)$/.exec(name);
+  if (oilBridge) {
+    return `Head cross feed - ${oilBridge[1] === 'L' ? 'left' : 'right'} bank ${oilBridge[2]}, bored across the head at `
+      + `the machined rail plane ${SPEC.oil.railTopCm} cm, fills this bank's inboard cam gallery`;
+  }
+  const oilMain = /^oil-main-x(-?[\d.]+)$/.exec(name);
+  if (oilMain) {
+    return `Main bearing feed - station ${oilMain[1]}, gallery to main shell at ${SPEC.oil.feedDrillR} cm`;
+  }
+  const oilRod = /^oil-rod-cyl(\d+)$/.exec(name);
+  if (oilRod) {
+    const c = SPEC.cylinders.find((k) => k.num === Number(oilRod[1]));
+    const station = c ? `station ${SPEC.block.stations[c.station]}` : '';
+    return `Rod bearing feed - through-crank drilling, main ${station} to the pin, ends mid the film`;
+  }
+  const oilCam = /^oil-cam-([LR])-(intake|exhaust)-(-?[\d.]+)$/.exec(name);
+  if (oilCam) {
+    return `Cam bearing feed - ${oilCam[1] === 'L' ? 'left' : 'right'} bank ${oilCam[2]} journal at x ${oilCam[3]}`;
+  }
+  const oilCamOhv = /^oil-cam-ohv-(-?[\d.]+)$/.exec(name);
+  if (oilCamOhv) return `Cam bushing feed - OHV tunnel bushing at x ${oilCamOhv[1]}`;
+  if (name === 'oil-supply-main') {
+    return `Oil pump discharge way - pump to the main gallery at ${SPEC.oil.pumpDrillR} cm`;
+  }
+  if (name === 'oil-gallery-main' || name === 'oil-gallery-main-out') {
+    return `Oil main gallery - bored in the crankcase wall band at radius ${SPEC.oil.galleryMidR}, `
+      + `${SPEC.oil.galleryR} cm drill, feeding ${SPEC.oil.counts[SPEC.build.variant].mains} mains and this build's cam feeds`;
+  }
+  if (name === 'oil-pump') {
+    return `Oil pump - stands at the published sump train, feeds the main gallery at ${SPEC.oil.pump.r} cm `
+      + '(its drive is not modelled in this build)';
+  }
+  if (name === 'oil-pan-pickup') return 'Oil pan pickup - screen hanging in the sump, stem to the pump inlet';
+  if (name === 'oil-pressure-gauge') return 'Oil pressure gauge - bored tap reading the main gallery';
   return name;
 }
 
