@@ -65,6 +65,11 @@ function buildWorld() {
   // the world is the world of every other law, and the plug laws fail on their
   // own missing part rather than taking the other twelve down with them.
   if (units.plugs) engine.add(units.plugs.group);
+  // The oil assembly joins the same way: its members are the published bores of
+  // src/engine/oil.js plus the pump, pickup and gauge, so buildMembers sees each of
+  // them and the teardown table can prove a drilling stays in the casting it is
+  // bored in while only the sump train leaves.
+  if (units.oil) engine.add(units.oil);
   engine.updateMatrixWorld(true);
   const scene = new THREE.Scene();
   scene.add(engine);

@@ -65,7 +65,7 @@ HUD top left:
 | `Slow motion` | 1x, 1/4, 1/10, 1/50 - a time factor on the animation, never on the kinematics |
 | `CUTAWAY` | one plane through the crank axis; the camera always stands on the side that gets removed |
 | `EXPLODED` / `ASSEMBLE` | a chain teardown along each family's own build axis, and its exact inverse |
-| `Part inspection` | menu built from the 133 inspectable members the scene itself publishes, plus `INSPECT`, `CLEAR` |
+| `Part inspection` | menu built from the 205 inspectable members the scene itself publishes (`view.inspectables()`, measured live by `node test/controls.smoke.mjs`), plus `INSPECT`, `CLEAR` |
 | `RESET CAMERA` | back to the published home pose (`SPEC.view`) |
 
 Viewport:
@@ -92,8 +92,9 @@ walking under the plate is structurally impossible rather than unlucky.
 | Authority | `src/engine/timing.js` | firing order 1-8-7-3-6-5-4-2 90 degrees apart, the four-stroke sequence per cylinder, cam lobe profiles and valve lift |
 | Authority | `src/engine/animation.js` | `state.theta` (crank angle), `state.rpm` (`RPM_MIN` 0 / `RPM_MAX` 4000), slow-motion factor |
 | Authority | `src/engine/view.js` | the view law as pure math: cutaway plane from the published home pose, explode directions from real assembly axes, part-bank reading - no DOM, no per-part magic number |
-| Plumbing | `src/ui/viewControls.js` | applies that law to the live scene graph: the member table (136 members mapped, 107 moved, 133 inspectable), the mount hardware, and the published `state()` - including `frameRange`, what an inspection asked the rig to stand at |
-| Renderer | `src/render/*.js` | block, heads, cranktrain, valvetrain, manifolds, stand, materials - all procedural |
+| Authority | `src/engine/oil.js` | the published drilling network: 59 DOHC bores over 431 legs, 18 OHV bores over 66 legs (supply way, galleries, flank legs, head crossings, main/rod/cam feeds, pump, pickup, gauge), every bore with its own drilling radius and the bearing it feeds |
+| Plumbing | `src/ui/viewControls.js` | applies that law to the live scene graph: the member table (212 members mapped, 119 moved, 205 inspectable - all three measured live by `node test/controls.smoke.mjs`), the mount hardware, and the published `state()` - including `frameRange`, what an inspection asked the rig to stand at |
+| Renderer | `src/render/*.js` | block, heads, cranktrain, valvetrain, manifolds, stand, spark plugs, the drawn oil drilling network, materials - all procedural |
 | UI | `src/ui/cameraRig.js`, `src/ui/panel.js`, `src/main.js` | camera goal-damping and the control surface |
 
 The renderer is driven from one number: the crank angle. `cranktrain.update(deg)` and
@@ -117,7 +118,7 @@ metalness and roughness laws - see the G7 row in `GATES.md`.
 
 | Command | Gate |
 |---|---|
-| `npm test` | the unit gates: kinematics, timing, heads, manifolds, stand, camera rig, view controls |
+| `npm test` | the unit gates: kinematics, timing, heads, manifolds, stand, camera rig, view controls, oil-path connectivity (`test/oil.test.mjs`) |
 | `npm run smoke` | the page loads in headless Chromium with zero console errors and a rendered WebGL frame |
 | `node test/controls.smoke.mjs` | G6: every control driven through real CDP mouse/key events |
 | `node test/screenshots.mjs` | G7: the rendered assembly measured against the authorities at 8 pinned crank angles; writes `shots/` |

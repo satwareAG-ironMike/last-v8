@@ -229,6 +229,49 @@ try {
       );
     if (start.outlines !== 0) bad.push('the scene starts with a selection outline in it');
 
+    // ---- the oil system is live: the published drilling network is inspectable ----
+    // Every bore src/engine/oil.js publishes has to be a real member of the live scene
+    // with a menu label of its own, and nothing the network still names as pending may
+    // stand there. No node test can import src/main.js, so this is where the wiring is
+    // gated: a bore that exists in the engine module but not in the page is a part no
+    // user can ever inspect.
+    const oil = JSON.parse(
+      await evalJs(
+        `import('/src/engine/oil.js').then((m) => JSON.stringify((() => {
+          const net = m.oilNetwork();
+          const live = window.__v8.inspectables();
+          const by = new Map(live.map((r) => [r.name, r]));
+          const want = [net.supply, ...net.galleries, ...net.camGalleries, ...net.links, ...net.bridges,
+            ...net.feeds, net.pump, net.pickup, net.gauge];
+          const missing = want.filter((b) => !by.has(b.id)).map((b) => b.id);
+          const bare = want.filter((b) => by.has(b.id) && by.get(b.id).label === b.id).map((b) => b.id);
+          const empty = want.filter((b) => by.has(b.id) && (by.get(b.id).meshes ?? 0) < 1).map((b) => b.id);
+          const pending = [
+            ...net.pendingGalleries.map((g) => g.id),
+            ...net.pendingMains.map((p) => 'oil-main-x' + p.x),
+            net.lifterGallery ? net.lifterGallery.id : null,
+          ].filter(Boolean);
+          const drawnPending = pending.filter((id) => by.has(id));
+          const names = live.map((r) => r.name);
+          const extra = names.filter((n) => n.startsWith('oil-') && !want.some((b) => b.id === n));
+          return { variant: net.variant, want: want.length, live: names.filter((n) => n.startsWith('oil-')).length,
+            missing, bare, empty, drawnPending, extra };
+        })()))`
+      )
+    );
+    if (oil.missing.length) bad.push(`the live page has no inspectable member for the published bores ${oil.missing.join(', ')}`);
+    if (oil.bare.length) bad.push(`the live oil members ${oil.bare.join(', ')} carry no menu label, so PART INSPECTION drops them`);
+    if (oil.empty.length) bad.push(`the live oil members ${oil.empty.join(', ')} carry no mesh`);
+    if (oil.drawnPending.length) bad.push(`the live page draws ${oil.drawnPending.join(', ')} while their issues are still open`);
+    if (oil.extra.join(',') !== 'oil-pan')
+      bad.push(
+        `the live oil family holds ${oil.extra.join(', ')}: only the cast oil pan src/render/block.js draws may stand outside the published census`
+      );
+    note(
+      `oil census read live: variant ${oil.variant}, ${oil.want} published bores + pump/pickup/gauge all inspectable, ` +
+        `${oil.live} members named oil-* in the page, the only one outside the published census: ${oil.extra.join(', ')}`
+    );
+
     // ---- START / STOP ---------------------------------------------------------
     await clickControl('#btn-run');
     const stopped = await snap('1 STOP clicked');
