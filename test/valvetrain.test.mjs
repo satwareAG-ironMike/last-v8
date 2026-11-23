@@ -5,6 +5,8 @@
 // valve tip -> spring -> fixed head seat, each link verified in world cm.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { SPEC, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
 import { bearingStack } from '../src/engine/bearings.js';
@@ -1288,4 +1290,64 @@ test(`${OHV_LAW}: the OHV valvetrain is a published contract and not a drawn par
   }
   console.log(`${OHV_LAW} drawn: switch ${SPEC.build.variant} -> ${want.join(', ')}; 0 lifters, pushrods, rockers or rocker covers in the valve train; `
     + `the ohv contract ${JSON.stringify(L.followers('ohv'))} is still owed`);
+});
+
+// ---------------------------------------------------------------------------
+// A1-G2 CLOSURE CLAUSE (issue #24 dialogue, 2026-11-23): this row's own CHECK
+// has to measure BOTH halves of its own wording. The nine laws of the OHV
+// crank-to-cam chain live in test/ohv-drive.test.mjs, so this law runs that
+// file as a child oracle and demands it green, with every one of its laws
+// present and every one of them printing the number it measured.
+//
+// Why a law and not a note: measured before this line existed, breaking the
+// OHV drive contract - src/engine/drive.js `const d = SPEC.variants.ohv.belowCrankCm`
+// -> `+ 0.4` - left THIS file green at 25 pass 25 fail 0
+// (output-sha256 recorded in tmp/v8-a1g2f-blind.out). A row that reads "in
+// DOHC and in OHV" cannot be gated by an oracle that is blind to OHV.
+// ---------------------------------------------------------------------------
+
+test(`${OHV_LAW}: this row's own CHECK measures the OHV drive too - it runs test/ohv-drive.test.mjs and demands every law of it green`, async () => {
+  const file = 'test/ohv-drive.test.mjs';
+  const src = readFileSync(file, 'utf8');
+  const laws = (src.match(/^test\(/gm) || []).length;
+  assert.ok(laws > 0, `${file} declares ${laws} test() laws, so the drive half of this row has nothing to gate`);
+  // node's own recursion guard: a test file that spawns `node --test` inherits
+  // NODE_TEST_CONTEXT and the child then prints "node:test run() is being called
+  // recursively within a test file. skipping running files." and exits 0 with an
+  // empty report - a gate that passes by measuring nothing. Measured with
+  // tmp/spawnprobe.test.mjs. The child runs in an environment without that key.
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_TEST_WORKER_ID;
+  // and NODE_OPTIONS must not carry a second --test-reporter: run under
+  // scripts/ledger-run.sh (or npm test) it does, and node then refuses the child with
+  // `ERR_INVALID_ARG_VALUE: The argument '--test-reporter' must match the number of
+  // specified '--test-reporter-destination'` - measured in tmp/v8-a1g2f-green.out.
+  // The child's reporter is pinned here, once, the same single token
+  // scripts/ledger-run.sh would have pinned.
+  const opts = (process.env.NODE_OPTIONS || '').split(/\s+/)
+    .filter((t) => t && !t.startsWith('--test-reporter')).join(' ');
+  if (opts) env.NODE_OPTIONS = opts; else delete env.NODE_OPTIONS;
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=spec', file], {
+    encoding: 'utf8',
+    env,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const out = `${r.stdout}\n${r.stderr}`;
+  // the same two reporter spellings scripts/ledger-run.sh accepts: node 24's
+  // spec reporter (`ℹ pass 9`) and node 22 on a CI runner (`# pass 9`)
+  const counts = (label) => Number(((out.match(new RegExp(`^(?:ℹ|#) ${label} (\\d+)$`, 'm')) || [])[1]));
+  const tests = counts('tests');
+  const pass = counts('pass');
+  const fail = counts('fail');
+  const printed = (out.match(/^OHV-DRIVE /gm) || []).length;
+  assert.equal(r.status, 0, `the row's drive oracle ${file} exited ${r.status}:\n${out.slice(-3000)}`);
+  assert.equal(tests, laws, `${file} declares ${laws} test() laws and the run reported ${tests} - a drive law was removed or renamed out of this row`);
+  assert.equal(fail, 0, `${file} reads ${fail} failing drive law(s), and this row's wording names the OHV drive:\n${out.slice(-3000)}`);
+  assert.equal(pass, laws, `${file} passed ${pass} of the ${laws} drive laws it declares`);
+  assert.ok(printed >= laws, `${file} printed ${printed} measurement lines for ${laws} laws - a drive law that prints nothing measures nothing`);
+  const contract = (out.match(/^OHV-DRIVE contract:.*$/m) || [''])[0];
+  assert.ok(contract, `${file} printed no contract line, so the tooth counts and pitch radii this row is about are not in its output`);
+  console.log(`A1-G2 closure: ${file} -> exit 0, ${tests} laws declared, ${pass} pass, ${fail} fail, ${printed} measurement lines`);
+  console.log(`A1-G2 closure, the drive numbers as that oracle prints them: ${contract}`);
 });
