@@ -140,14 +140,16 @@ function radialBand(root, name, centre = [0, 0]) {
   return { lo, hi, x: new THREE.Box3().setFromObject(o) };
 }
 
-/** Every drawn cam bearing the heads machine, as `group@station`. */
+/** Every drawn cam bearing the heads machine, as `camGroup@station` in the names
+ * camGroupNames() publishes: the heads draw `shell-R-intake--27.5-cradle`, the
+ * engine calls that group `cam-R-intake`. */
 function drawnCamBearings() {
   const out = new Map();
   posed(createHeads(mats()).group).traverse((o) => {
     if (!o.isMesh) return;
-    const m = /^shell-([A-Za-z-]+?)-(?:cam-)?(-?[\d.]+)-(cap|cradle)$/.exec(o.name);
+    const m = /^shell-([A-Za-z]+-[A-Za-z]+)-(-?[\d.]+)-(cap|cradle)$/.exec(o.name);
     if (!m) return;
-    out.set(`${m[1]}@${m[2]}`, o);
+    out.set(`cam-${m[1]}@${m[2]}`, o);
   });
   return out;
 }
@@ -395,16 +397,19 @@ test('oil: every rod bearing is fed through the crank from the main journal its 
 
       const pin = boxOf(partOf(ct, `pin-s${s}`));
       const centre = pin.getCenter(new THREE.Vector3());
+      // the pin's own AXIS stands at the crank throw: a through-crank way is bored
+      // in that throw, which is what the rod feed follows
       const off = Math.hypot(centre.y, centre.z);
-      assert.ok(Math.abs(off - CR.pinRadius) < 0.05 + EPS, `pin-s${s} is at radius ${off.toFixed(4)} off the crank axis`);
+      assert.ok(Math.abs(off - CR.radius) < EPS, `pin-s${s} axis is at radius ${off.toFixed(4)} off the crank axis, not the ${CR.radius} cm throw`);
 
       const start = feed.path[0];
       const last = feed.path.at(-1);
       // out of a main journal on the crank axis, at a published main station
       assert.ok(Math.hypot(start[1], start[2]) < EPS, `rod ${cyl.num}: the feed does not start on the crank axis`);
       assert.ok(MAIN_CAPS_X.includes(start[0]), `rod ${cyl.num}: the feed starts at x ${start[0]}, which is not a main station`);
-      assert.ok(Math.abs(start[0] - s) <= (MAIN_CAPS_X[1] - MAIN_CAPS_X[0]) / 2 + EPS,
-        `rod ${cyl.num}: main ${start[0]} does not carry its big end at station ${s}`);
+      // the main that carries it is the published one a half cylinder pitch away
+      assert.ok(Math.abs(start[0] - s) <= B.pitch / 2 + EPS,
+        `rod ${cyl.num}: main ${start[0]} stands more than half the ${B.pitch} cm cylinder pitch from its big end at station ${s}`);
       // and ends in the rod bore, in the film over the pin
       const d = Math.hypot(last[0] - centre.x, last[1] - centre.y, last[2] - centre.z);
       assert.ok(d >= CR.pinRadius - EPS && d <= ROD_BORE_IN + EPS,
