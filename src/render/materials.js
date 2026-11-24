@@ -356,6 +356,9 @@ export function createMaterials() {
   mk('brass', { color: 0xb99a52, metalness: 1, roughness: 0.28, envMapIntensity: 1.4 });
   mk('ceramic', { color: 0xd8d2c4, metalness: 0.05, roughness: 0.55, envMapIntensity: 0.6 });
   mk('oilFilm', { color: 0x2a2418, metalness: 0.2, roughness: 0.35, envMapIntensity: 0.7 });
+  // the water a jacket holds: the cavity the casting does not have, so it reads as a
+  // volume of its own rather than as iron or as an oil film (row A1-G6 slice 8E)
+  mk('coolant', { color: 0x1f6f7a, metalness: 0.1, roughness: 0.22, envMapIntensity: 0.9, transparent: true, opacity: 0.62 });
 
   // decals / dials (colour maps)
   const hazard = M.paintedYellow;

@@ -70,6 +70,10 @@ function buildWorld() {
   // them and the teardown table can prove a drilling stays in the casting it is
   // bored in while only the sump train leaves.
   if (units.oil) engine.add(units.oil);
+  // The coolant assembly joins the same way (slice 8E): its members are the published
+  // legs of src/engine/coolant.js, cavities the castings do not have, so the teardown
+  // table can prove each one stays in the casting it is bored in.
+  if (units.coolant) engine.add(units.coolant);
   engine.updateMatrixWorld(true);
   const scene = new THREE.Scene();
   scene.add(engine);

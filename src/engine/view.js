@@ -433,6 +433,41 @@ export function partLabel(name) {
   }
   if (name === 'oil-pan-pickup') return 'Oil pan pickup - screen hanging in the sump, stem to the pump inlet';
   if (name === 'oil-pressure-gauge') return 'Oil pressure gauge - bored tap reading the main gallery';
+  // The cooling (slice 8E, src/render/coolant.js): every member is one published leg
+  // of the network src/engine/coolant.js publishes, so each label names the casting it
+  // is bored in, the wall band it waters and the passage it hands its water to. The
+  // thicknesses quoted are SPEC.coolant's published walls, not numbers typed here.
+  const C = SPEC.coolant;
+  const bandName = (id) => (id === 'in' ? 'valley side of the wall band'
+    : id === 'out-in' ? 'outboard flank, inboard of the cast feed boss'
+      : 'outboard flank, outboard of the cast feed boss');
+  const coolantJacket = /^coolant-jacket-([LR])-(in|out-in|out-out)$/.exec(name);
+  if (coolantJacket) {
+    return `Water jacket - ${partBank(coolantJacket[1]) === 'L' ? 'left' : 'right'} bank ${bandName(coolantJacket[2])}, `
+      + `|o| ${C.waterInCm}..${C.waterOutCm} off the bore line, a ${C.jacketFloorA}..${C.jacketCrownA} band closed by `
+      + `${C.landCm} cm of cast land on the liner and ${C.skinCm} cm under the casting skin`;
+  }
+  const coolantRiser = /^coolant-port-([LR])-(in|out-in|out-out)-(s\d+|endfore|endaft)-(block|head)$/.exec(name);
+  if (coolantRiser) {
+    const bank = coolantRiser[1] === 'L' ? 'left' : 'right';
+    const where = /^s\d+$/.test(coolantRiser[3])
+      ? `cylinder station ${SPEC.block.stations[Number(coolantRiser[3].slice(1))]}`
+      : `the ${coolantRiser[3] === 'endfore' ? 'fore' : 'aft'} end of the jacket`;
+    const cast = coolantRiser[4];
+    const span = cast === 'block' ? `${C.jacketCrownA}..${C.deckA}` : `${C.headFloorA}..${C.headCrownA}`;
+    return `Deck riser - ${bank} bank ${bandName(coolantRiser[2])} at ${where}, bored ${cast === 'block' ? 'up out of the jacket crown to the machined deck' : 'on through the head deck'} at a ${span}`;
+  }
+  const coolantLink = /^coolant-headlink-([LR])-(in|out-in|out-out)-(fore|aft)$/.exec(name);
+  if (coolantLink) {
+    return `Coolant link - ${coolantLink[1] === 'L' ? 'left' : 'right'} bank ${bandName(coolantLink[2])}, `
+      + `${coolantLink[3]} end riser to that end's head cross gallery, bored in the head at a ${C.headFloorA}..${C.headCrownA}`;
+  }
+  const coolantGallery = /^coolant-headgallery-([LR])-(fore|aft)$/.exec(name);
+  if (coolantGallery) {
+    return `Head cross gallery - ${coolantGallery[1] === 'L' ? 'left' : 'right'} bank ${coolantGallery[3]} end wall, `
+      + `one passage bridging the valley side and both outboard flanks out to |o| ${C.waterOutCm}, standing `
+      + `${C.crossFloorClrCm} cm of cast floor above the head deck face`;
+  }
   return name;
 }
 
