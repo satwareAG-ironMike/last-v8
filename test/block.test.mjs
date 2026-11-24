@@ -578,7 +578,9 @@ const OIL_WAY = 'A1-G4/issue #8 item 5 slice 8D-2b: the bearing iron carries its
 const DEG = Math.PI / 180;
 const SHELL_IN = SPEC.crank.mainRadius + 0.05; // 2.75 main shell bore: journal + published film
 const SHELL_OUT = SHELL_IN + 0.7; // 3.45 its outside face, the band main-shell-* is bored at
-const REACH_DEG = 10; // past this azimuth a void in the band is not a drilled hole
+const REACH_DEG = 20; // past this azimuth a void in the band is not a drilled hole:
+// it stands outside the footprint of the machined cuts, so a ring with a piece
+// missing rather than a hole bored in it is caught here
 
 /**
  * Radial-way probe over one drawn carrier: `rays` walks the carrier's own
