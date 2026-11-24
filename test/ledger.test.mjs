@@ -1034,9 +1034,12 @@ test('the audit prints a claim census, so a line with no label is counted and no
   const m = r.out.match(/claim census: claim lines read (\d+) \(labelled (\d+), unlabelled (\d+)\)/);
   assert.ok(m, `the audit reported a citation census but never said how many claim lines it read at all, which ` +
     `is what made 219 of this ledger's 535 lines invisible in total silence:\n${r.out.slice(0, 700)}`);
-  assert.equal(Number(m[1]), 2, `this synthetic row carries 2 indented claim lines and the census read ${m[1]}:\n${r.out.slice(0, 400)}`);
-  assert.equal(Number(m[2]), 1, `one of those lines carries a label and the census calls ${m[2]} labelled:\n${r.out.slice(0, 400)}`);
+  // The tree's ledger is the anchor row (CHECK, EXPECT, EVIDENCE = 3 labelled lines) plus the
+  // row under test (1 labelled, 1 wrapped half): 5 lines, 4 labelled, 1 unlabelled.
+  assert.equal(Number(m[1]), 5, `this synthetic ledger carries 5 indented claim lines and the census read ${m[1]}:\n${r.out.slice(0, 400)}`);
+  assert.equal(Number(m[2]), 4, `4 of those lines carry a label and the census calls ${m[2]} labelled:\n${r.out.slice(0, 400)}`);
   assert.equal(Number(m[3]), 1, `the wrapped half must be counted as unlabelled rather than absent:\n${r.out.slice(0, 400)}`);
+  assert.equal(Number(m[1]), Number(m[2]) + Number(m[3]), `the census does not add up:\n${r.out.slice(0, 400)}`);
 });
 
 test('the widening does not widen the oracle grammar: a parenthetical CHECK cannot move a recorded gate-sig (issue #12 guard)', () => {
