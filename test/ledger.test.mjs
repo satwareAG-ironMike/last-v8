@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -736,6 +736,50 @@ test('scripts/procedural-audit.mjs prints only what it measures: the live mesh/m
   assert.match(out, /test\/screenshots\.mjs/,
     'the tool has to name which committed gate owns the live census instead of quoting numbers ' +
     `it cannot re-derive:\n${out.slice(-400)}`);
+});
+
+// issue #34: the same tool's last line is the only thing separating "the procedural claim
+// holds" from "it does not", and the tool never sets an exit code, so BOTH states report
+// success. Measured at d6949ef: one poke putting `fetch("https://example.com/a.png")` into a
+// committed product file printed `PROBLEM: 3 forbidden hits` at exit 0 - three hits for one
+// line, because the scan counts the same line under the network, the URL-literal and the
+// asset-reference pattern - then reverted with git checkout. Row G7 carries
+// `CHECK: node scripts/procedural-audit.mjs` / `EXPECT: PROCEDURAL ONLY`, so a forbidden hit
+// cannot fail that gate; it can only be read off a transcript. The tool is not unable to exit
+// non-zero (it does, on a missing file), only the verdict never uses the exit path.
+const auditIn = (dir) => spawnSync(process.execPath, [resolve('scripts/procedural-audit.mjs')], { cwd: dir, encoding: 'utf8', env: runnerEnv() });
+
+/** A scratch tree holding exactly what the audit reads (src/, public/, package.json,
+ *  src/render/materials.js) and nothing forbidden, plus one forbidden line on request. */
+const auditScratch = (forbidden) => {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-exit-'));
+  mkdirSync(join(dir, 'src', 'render'), { recursive: true });
+  mkdirSync(join(dir, 'public'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch', version: '0.0.0', dependencies: { three: '^0.187.0' } }));
+  writeFileSync(join(dir, 'src', 'render', 'materials.js'), "const c = document.createElement('canvas');\nconst x = c.getContext('2d');\n");
+  writeFileSync(join(dir, 'public', 'index.html'), '<html><body><script type="module" src="/src/main.js"></script></body></html>\n');
+  if (forbidden) writeFileSync(join(dir, 'src', 'poke.js'), forbidden);
+  return dir;
+};
+
+test('scripts/procedural-audit.mjs: its verdict is an exit code, so a forbidden hit can fail a gate instead of only being read', () => {
+  const here = spawnSync(process.execPath, ['scripts/procedural-audit.mjs'], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(here.status, 0, `the procedural audit exited ${here.status} on a clean tree: ${here.stderr.slice(0, 400)}`);
+  assert.match(here.stdout, /^PROCEDURAL ONLY$/m, `row G7's EXPECT is PROCEDURAL ONLY and this run did not print it:\n${here.stdout.slice(-300)}`);
+
+  const dirs = [];
+  try {
+    const clean = auditIn((dirs[0] = auditScratch(null)));
+    assert.equal(clean.status, 0, `the tool failed on a scratch tree that holds nothing forbidden, exit ${clean.status}:\n${clean.stderr.slice(0, 400)}`);
+    assert.match(clean.stdout, /PROCEDURAL ONLY/, `the benign tree did not read as procedural, so the fail clause below is vacuous:\n${clean.stdout.slice(-300)}`);
+
+    const dirty = auditIn((dirs[1] = auditScratch('fetch("https://example.com/a.png");\n')));
+    const verdict = (dirty.stdout.match(/PROBLEM: \d+ forbidden hits/) || [])[0];
+    assert.ok(verdict, `the tool did not even report the forbidden line it was pointed at:\n${dirty.stdout.slice(-400)}${dirty.stderr.slice(0, 300)}`);
+    assert.notEqual(dirty.status, 0, `the audit printed "${verdict}" and still exited ${dirty.status}: a CHECK that cannot fail is a comment, not a gate`);
+  } finally {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test('branch-gate.sh: one unread ruleset is named as unread and cannot erase the rulesets already read', () => {
