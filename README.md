@@ -65,7 +65,7 @@ HUD top left:
 | `Slow motion` | 1x, 1/4, 1/10, 1/50 - a time factor on the animation, never on the kinematics |
 | `CUTAWAY` | one plane through the crank axis; the camera always stands on the side that gets removed |
 | `EXPLODED` / `ASSEMBLE` | a chain teardown along each family's own build axis, and its exact inverse |
-| `Part inspection` | menu built from the 205 inspectable members the scene itself publishes (`view.inspectables()`, measured live by `node test/controls.smoke.mjs`), plus `INSPECT`, `CLEAR` |
+| `Part inspection` | menu built from the inspectable members the scene itself publishes: the count is what `node test/controls.smoke.mjs` prints live from `view.inspectables()`, and `test/ledger.test.mjs` forbids restating it here |
 | `RESET CAMERA` | back to the published home pose (`SPEC.view`) |
 
 Viewport:
@@ -93,7 +93,7 @@ walking under the plate is structurally impossible rather than unlucky.
 | Authority | `src/engine/animation.js` | `state.theta` (crank angle), `state.rpm` (`RPM_MIN` 0 / `RPM_MAX` 4000), slow-motion factor |
 | Authority | `src/engine/view.js` | the view law as pure math: cutaway plane from the published home pose, explode directions from real assembly axes, part-bank reading - no DOM, no per-part magic number |
 | Authority | `src/engine/oil.js` | the published drilling network: 59 DOHC bores over 431 legs, 18 OHV bores over 66 legs (supply way, galleries, flank legs, head crossings, main/rod/cam feeds, pump, pickup, gauge), every bore with its own drilling radius and the bearing it feeds |
-| Plumbing | `src/ui/viewControls.js` | applies that law to the live scene graph: the member table (212 members mapped, 119 moved, 205 inspectable - all three measured live by `node test/controls.smoke.mjs`), the mount hardware, and the published `state()` - including `frameRange`, what an inspection asked the rig to stand at |
+| Plumbing | `src/ui/viewControls.js` | applies that law to the live scene graph: the member table (mapped / moved / inspectable, all three printed live by `node test/controls.smoke.mjs` rather than copied into this file), the mount hardware, and the published `state()` - including `frameRange`, what an inspection asked the rig to stand at |
 | Renderer | `src/render/*.js` | block, heads, cranktrain, valvetrain, manifolds, stand, spark plugs, the drawn oil drilling network, materials - all procedural |
 | UI | `src/ui/cameraRig.js`, `src/ui/panel.js`, `src/main.js` | camera goal-damping and the control surface |
 
@@ -108,11 +108,14 @@ setter; `sync()` re-reads the authorities and repaints the widgets. A widget the
 cannot disagree with the simulation, which is what lets the gates drive the real
 buttons instead of a mirror API.
 
-Surfaces are `MeshStandardMaterial` throughout: 31 material families, 847
-normal/roughness/color maps drawn on `<canvas>` in `src/render/materials.js`, and an
-environment map built from a `CanvasTexture` through `PMREMGenerator`. Machined
-metal, as-cast metal and the stand's painted/rubber finishes carry different
-metalness and roughness laws - see the G7 row in `GATES.md`.
+Surfaces are `MeshStandardMaterial` throughout: every family and every
+normal/roughness/color map is drawn on `<canvas>` in `src/render/materials.js`, and an
+environment map is built from a `CanvasTexture` through `PMREMGenerator`. The mesh /
+family / map census of the rendered tree is printed by `node test/screenshots.mjs`, in
+its material audit line - this file names that gate instead of keeping a copy of its
+numbers, because a copy in a doc that never builds a scene is wrong the moment the
+geometry moves. Machined metal, as-cast metal and the stand's painted/rubber finishes
+carry different metalness and roughness laws - see the G7 row in `GATES.md`.
 
 ## Verify it
 
