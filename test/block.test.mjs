@@ -719,3 +719,188 @@ test(`${OIL_WAY}: the five OHV tunnel bushings each name the azimuth and the wal
   }
   console.log(`${OIL_WAY} OHV tunnel bushings pending the drilling decision:\n  ${rows.join('\n  ')}`);
 });
+
+// ================= A1-G6 slice 8E: closed water jackets, block side =============
+// Issue #8 addendum item 1: the block is a V-block casting whose cooling does not
+// stop at the gasket. These laws gate the published coolant network against the
+// DRAWN iron through test/support/coolant-iron.mjs, which reads the same oracle the
+// oil slice gates with - so no number below is copied from the thing it gates.
+// The jacket model these laws were written against was proven before it was written:
+// tmp/8e-warrant3.mjs samples every leg in both variants (WARRANT OK, 394952
+// samples, 0 offender kinds, 0 leg-joint gaps).
+
+const C8E = () => {
+  if (!SPEC.coolant) {
+    throw new Error('A1-G6 8E: SPEC.coolant is not published, so a water jacket has no land, skin, web, floor plane or crown plane to be built to');
+  }
+  return SPEC.coolant;
+};
+
+const net8E = async (variant, why) => {
+  let mod;
+  try {
+    mod = await import('../src/engine/coolant.js');
+  } catch (e) {
+    throw new Error(`A1-G6 8E: src/engine/coolant.js is not in the tree (${why}): ${e.message}`);
+  }
+  C8E();
+  return mod.coolantNetwork(variant);
+};
+
+test('A1-G6 8E: SPEC.coolant publishes the walls a water jacket is cast in', () => {
+  const C = C8E();
+  const O = SPEC.oil;
+  for (const k of ['landCm', 'skinCm', 'webCm', 'tunnelWebCm', 'boltWebCm', 'wallMinCm', 'floorClrCm', 'floorWallCm', 'deckBandCm', 'bayClrCm', 'railClrCm']) {
+    assert.ok(typeof C[k] === 'number' && C[k] > 0, `A1-G6 8E: SPEC.coolant.${k} is ${JSON.stringify(C[k])}: a casting wall a jacket is closed by has to be a positive published thickness`);
+  }
+  assert.ok(near(C.linerOdCm, B.boreShellRadius + B.linerWallCm),
+    `A1-G6 8E: the liner the water stands off is ${C.linerOdCm} cm while the ${B.boreShellRadius} cm machined bore wall plus the ${B.linerWallCm} cm press-fit interference is ${B.boreShellRadius + B.linerWallCm} cm`);
+  assert.ok(near(C.waterInCm, C.linerOdCm + C.landCm),
+    `A1-G6 8E: the water's inner face is at ${C.waterInCm} cm while the liner is ${C.linerOdCm} cm OD and the published cast land is ${C.landCm} cm`);
+  assert.ok(near(C.waterOutCm, B.deckHalfWidth - C.skinCm),
+    `A1-G6 8E: the water's outer face is at ${C.waterOutCm} cm while the deck face is ${B.deckHalfWidth} cm half width and the published cast skin is ${C.skinCm} cm`);
+  assert.ok(C.waterInCm < C.waterOutCm,
+    `A1-G6 8E: the jacket would be ${C.waterOutCm - C.waterInCm} cm wide between the land and the skin: no water`);
+  assert.ok(near(C.jacketFloorA, B.caseOuterRadius + C.floorClrCm),
+    `A1-G6 8E: the jacket floor plane is a ${C.jacketFloorA} cm while it has to stand ${C.floorClrCm} cm above the ${B.caseOuterRadius} cm crankcase drum the casting is built around`);
+  assert.ok(C.floorWallCm > C.floorClrCm,
+    `A1-G6 8E: the row claims ${C.floorWallCm} cm of iron stands under the jacket floor while it only places the floor ${C.floorClrCm} cm clear of the drum: the closure claim has to be the thicker number the prober measures`);
+  assert.ok(near(C.jacketCrownA, B.deckA - C.deckBandCm),
+    `A1-G6 8E: the jacket crown plane is a ${C.jacketCrownA} cm while the deck face is a ${B.deckA} cm and the row publishes a ${C.deckBandCm} cm band of iron between the water and the machined deck`);
+  assert.ok(C.jacketCrownA > C.jacketFloorA,
+    `A1-G6 8E: the jacket's crown a ${C.jacketCrownA} is not above its floor a ${C.jacketFloorA}`);
+  assert.ok(near(C.jacketXHalfCm, B.counterBayHalfX - C.bayClrCm),
+    `A1-G6 8E: the jacket runs to |x| ${C.jacketXHalfCm} while the counter bays open at |x| ${B.counterBayHalfX} and the row publishes a ${C.bayClrCm} cm cast end wall`);
+  assert.ok(near(C.headFloorA, B.deckA + H.gasketT),
+    `A1-G6 8E: the coolant's floor in the head is a ${C.headFloorA} cm while the head deck face sits on the ${H.gasketT} cm compressed gasket over the ${B.deckA} cm block deck`);
+  assert.ok(near(C.headCrownA, O.railBand - O.feedDrillR - C.railClrCm),
+    `A1-G6 8E: the coolant's roof in the head is a ${C.headCrownA} cm while this build bores its cam feed gallery at a ${O.railBand} cm with a ${O.feedDrillR} cm drill, and the row publishes a ${C.railClrCm} cm clearance between oil and water`);
+  assert.ok(C.headCrownA > C.headFloorA,
+    `A1-G6 8E: the head's coolant roof a ${C.headCrownA} is not above its floor a ${C.headFloorA}: the passages would have no height in the head`);
+  assert.ok(Array.isArray(C.bands) && C.bands.length === 3,
+    `A1-G6 8E: SPEC.coolant.bands is ${JSON.stringify(C.bands)}: the wall band each bank carries water in is one valley-side band and the two flanks the cast oil boss splits`);
+  assert.ok(Array.isArray(C.pending) && C.pending.length > 0,
+    'A1-G6 8E: SPEC.coolant.pending is empty: no pump, thermostat, hose route or drain is modelled in this tree, and a row that says "coolant passages" has to name what it did not build');
+});
+
+test('A1-G6 8E: each bank jacket band fills the wall band and splits around the cast oil boss', async () => {
+  const C = C8E();
+  const O = SPEC.oil;
+  const net = await net8E('dohc', 'the block jackets have no published bands to be measured against');
+  assert.equal(net.jackets.length, 2 * C.bands.length,
+    `A1-G6 8E: the network publishes ${net.jackets.length} jacket legs for ${C.bands.length} bands over two banks`);
+  for (const bank of ['L', 'R']) {
+    const own = net.jackets.filter((j) => j.bank === bank);
+    assert.equal(own.length, C.bands.length, `${bank}: ${own.length} jacket legs where the row publishes ${C.bands.length} bands per bank`);
+    const sorted = [...own].sort((a, b) => a.leg.o0 - b.leg.o0);
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      assert.ok(sorted[i].leg.o1 <= sorted[i + 1].leg.o0 + 1e-9,
+        `${bank}: the jacket bands ${sorted[i].id} (o ${sorted[i].leg.o0}..${sorted[i].leg.o1}) and ${sorted[i + 1].id} (o ${sorted[i + 1].leg.o0}..${sorted[i + 1].leg.o1}) overlap, so the census counts the same water twice`);
+      const gap = sorted[i + 1].leg.o0 - sorted[i].leg.o1;
+      assert.ok(gap >= 2 * (O.feedDrillR + C.webCm) - 1e-9,
+        `${bank}: the gap between ${sorted[i].id} and ${sorted[i + 1].id} is ${gap.toFixed(4)} cm, under the ${2 * (O.feedDrillR + C.webCm)} cm this build's ${O.feedDrillR} cm feed drilling at o ${O.railOut} needs with its ${C.webCm} cm webs`);
+    }
+    for (const j of own) {
+      assert.ok(j.leg.o1 - j.leg.o0 >= C.bandMinCm,
+        `${j.id}: the band is ${j.leg.o1 - j.leg.o0} cm of water, under the ${C.bandMinCm} cm the row publishes as the narrowest coolant way it will claim`);
+      assert.ok(Math.abs(j.leg.o0) >= C.waterInCm - 1e-9 && Math.abs(j.leg.o1) <= C.waterOutCm + 1e-9,
+        `${j.id}: the band stands o ${j.leg.o0}..${j.leg.o1} while the published water band is |o| ${C.waterInCm}..${C.waterOutCm}`);
+      assert.ok(near(j.leg.x0, -C.jacketXHalfCm) && near(j.leg.x1, C.jacketXHalfCm),
+        `${j.id}: the band runs x ${j.leg.x0}..${j.leg.x1} instead of the published |x| <= ${C.jacketXHalfCm}`);
+      assert.ok(j.leg.a0 <= C.jacketFloorA + 1e-9 && j.leg.a1 >= C.jacketCrownA - 1e-9,
+        `${j.id}: the band spans a ${j.leg.a0}..${j.leg.a1} while the published jacket is a ${C.jacketFloorA}..${C.jacketCrownA}`);
+    }
+  }
+});
+
+test('A1-G6 8E: every block jacket and riser leg is bored in drawn iron, DOHC and OHV', async () => {
+  const { coolantProber } = await import('./support/coolant-iron.mjs');
+  for (const variant of ['dohc', 'ohv']) {
+    const net = await net8E(variant, `the ${variant} block has no published coolant network to probe`);
+    const p = coolantProber(net, variant);
+    const legs = [...net.jackets.map((j) => ({ ...j.leg, name: j.id, cast: j.cast, bank: j.bank }))];
+    for (const pt of net.ports) legs.push({ ...pt.legs[0].leg, name: pt.id, cast: pt.legs[0].cast, bank: pt.bank });
+    let samples = 0;
+    const bad = [];
+    for (const leg of legs) {
+      const r = p.legIron(leg);
+      samples += r.samples;
+      bad.push(...r.offenders);
+    }
+    assert.ok(bad.length === 0,
+      `${variant}: ${bad.length} of ${samples} samples of the published ${legs.length} block coolant legs do not stand in drawn iron:\n  ${bad.slice(0, 12).join('\n  ')}`);
+  }
+});
+
+test('A1-G6 8E: a water jacket is closed, iron stands behind every wall it claims', async () => {
+  const { coolantProber } = await import('./support/coolant-iron.mjs');
+  for (const variant of ['dohc', 'ohv']) {
+    const net = await net8E(variant, `the ${variant} jackets have no published walls to close them`);
+    const p = coolantProber(net, variant);
+    const bad = [];
+    let faces = 0, samples = 0;
+    for (const j of net.jackets) {
+      for (const face of ['floor', 'crown', 'inner', 'outer', 'x0', 'x1']) {
+        const claim = j.walls[face];
+        if (!claim) continue;
+        faces++;
+        const r = p.faceClosed(j.leg, face, claim);
+        samples += r.samples;
+        bad.push(...r.offenders);
+      }
+    }
+    assert.ok(faces >= net.jackets.length * 4,
+      `${variant}: only ${faces} jacket faces carry a published wall claim over ${net.jackets.length} jacket legs: a jacket whose faces make no thickness claim is not closed`);
+    assert.ok(bad.length === 0,
+      `${variant}: ${bad.length} offenders over ${faces} claimed faces (${samples} iron samples) - the jacket is not closed:\n  ${bad.slice(0, 12).join('\n  ')}`);
+  }
+});
+
+test('A1-G6 8E: every liner is watered on both flanks and every station and both ends rise to the deck', async () => {
+  const C = C8E();
+  const net = await net8E('dohc', 'the risers that carry jacket water to the deck have no published windows');
+  const jackets = net.jackets;
+  const inJacket = (bank, x, a, o) => jackets.some((j) => j.bank === bank
+    && a >= j.leg.a0 - 1e-9 && a <= j.leg.a1 + 1e-9 && o >= j.leg.o0 - 1e-9 && o <= j.leg.o1 + 1e-9 && x >= j.leg.x0 - 1e-9 && x <= j.leg.x1 + 1e-9);
+  // the geometric limit of a flat wall band: the flank arc a band of |o|
+  // waterIn..waterOut can reach at all, at radius waterOut, times the two flanks
+  const limit = 2 * (180 - 2 * (Math.asin(C.waterInCm / C.waterOutCm) * 180 / Math.PI));
+  for (const c of SPEC.cylinders) {
+    const st = B.stations[c.station];
+    const covered = new Set();
+    for (let deg = 0; deg < 360; deg++) {
+      const psi = deg * Math.PI / 180;
+      let hit = false;
+      for (let r = C.waterInCm; r <= C.waterOutCm + 1e-9 && !hit; r += 0.05) {
+        const x = st + r * Math.cos(psi), o = r * Math.sin(psi);
+        for (let a = C.jacketFloorA; a <= C.jacketCrownA + 1e-9; a += 0.5) {
+          if (inJacket(c.bank, x, a, o)) { hit = true; break; }
+        }
+      }
+      if (hit) covered.add(deg);
+    }
+    const watered = covered.size;
+    assert.ok(watered >= limit - 2,
+      `cylinder ${c.num} (station ${st}): the jacket waters ${watered} deg of the liner's circumference against the ${limit.toFixed(1)} deg a |o| ${C.waterInCm}..${C.waterOutCm} band can reach at all - the cooling has holes in it`);
+    assert.ok(covered.has(90) && covered.has(270),
+      `cylinder ${c.num}: the outboard flank (psi 90) or the valley flank (psi 270) of its liner is not inside any published jacket band`);
+  }
+  // every station and both ends of every bank rise from the jacket crown up
+  // through the deck face, which is where cooling stops if it stops anywhere
+  for (const bank of ['L', 'R']) {
+    const risers = net.ports.filter((pt) => pt.bank === bank);
+    for (const st of B.stations) {
+      const at = risers.filter((pt) => pt.station === st);
+      assert.ok(at.length >= C.bands.length,
+        `${bank} station ${st}: ${at.length} deck risers where the row publishes one per jacket band (${C.bands.length})`);
+      for (const pt of at) {
+        const L = pt.legs[0];
+        assert.ok(near(L.leg.a1, B.deckA), `${pt.id}: the block riser tops out at a ${L.leg.a1}, not at the ${B.deckA} cm block deck face`);
+      }
+    }
+    for (const side of ['fore', 'aft']) {
+      const at = risers.filter((pt) => pt.side === side);
+      assert.ok(at.length >= C.bands.length, `${bank} ${side} end: ${at.length} end risers where the row publishes one per jacket band (${C.bands.length})`);
+    }
+  }
+});
