@@ -73,6 +73,12 @@ const refOf = (ref, path) => {
 const kinds = {};
 const bump = (k) => { kinds[k] = (kinds[k] || 0) + 1 };
 
+// Claim census (issue #12): a claim line the reader dropped used to be absent from every
+// number this tool printed. claimLines is every line indented under a row, labelled those
+// carrying `LABEL: value`, unlabelled the wrapped halves of a sentence.
+let claimLines = 0;
+let labelled = 0;
+
 // (2) read the rows. One row-id grammar, shared with ROW_HEAD in
 // scripts/ledger-name-evidence.py: the bare G<id> ids this ledger used up to G7, and the
 // phase-prefixed ids issue #8 declares (P1-G1, A1-G9, P2-G5, A2-G5). A row either tool
@@ -94,13 +100,27 @@ for (const line of gatesText.split('\n')) {
     const any = ANY_ROW.exec(line);
     badIds.push(any[2]);
     rows.push({ done: any[1] === 'x', name: any[2], title: line.slice(any[0].length), check: '', expect: '', ev: [] });
-  } else if (rows.length) {
-    const f = line.match(/^  (CHECK|EXPECT|EVIDENCE|NOTE|[A-Z][A-Z ()/,-]{2,}): (.*)$/);
-    if (f) {
-      if (f[1] === 'CHECK') rows[rows.length - 1].check = f[2];
-      else if (f[1] === 'EXPECT') rows[rows.length - 1].expect = f[2];
-      else rows[rows.length - 1].ev.push(`${f[1]}: ${f[2]}`);
-    }
+  } else if (rows.length && /^ {2,}\S/.test(line)) {
+    // A CLAIM IS ANY LINE INDENTED UNDER A ROW (issue #12). The label grammar was the defect:
+    // the strict shape read 316 of this ledger's 535 indented claim lines and dropped the
+    // other 219 without reporting the drop - among them row G7's six pinned shot identities,
+    // which sit on the wrapped half of a sentence and have therefore never been compared with
+    // the files they name by any committed tool. scripts/ledger-name-evidence.py has no label
+    // grammar at all (its prefix rule covers every line of a row block, 609 lines here), which
+    // is the disagreement this fix closes: a line the proof demands survive cannot be invisible
+    // to the audit that checks it.
+    // The ORACLE grammar deliberately does not widen with the evidence grammar: the published
+    // gate-sig recipe hashes the values of `  CHECK: ` and `  EXPECT: ` exactly, so reading
+    // `CHECK (measured at this head):` as an oracle would move every sig in the ledger on a
+    // wording edit. A labelled line that is not one of those two is evidence text; so is a
+    // line with no label at all. Measured and pinned by test/ledger.test.mjs (issue #12 guard).
+    claimLines++;
+    const f = line.match(/^  ([A-Z][^:]*): (.*)$/);
+    const row = rows[rows.length - 1];
+    if (f && f[1] === 'CHECK') { row.check = f[2]; labelled++; }
+    else if (f && f[1] === 'EXPECT') { row.expect = f[2]; labelled++; }
+    else if (f) { row.ev.push(`${f[1]}: ${f[2]}`); labelled++; }
+    else row.ev.push(line.trim());
   }
 }
 
@@ -108,6 +128,7 @@ for (const line of gatesText.split('\n')) {
 // the tool walks past would otherwise still be counted in the totals below.
 const phasePrefixed = rows.filter((r) => /^[A-Z][0-9]+-/.test(r.name)).length;
 console.log(`gate rows indexed: ${rows.length} (${rows.length - phasePrefixed} bare G ids, ${phasePrefixed} phase-prefixed)`);
+console.log(`claim census: claim lines read ${claimLines} (labelled ${labelled}, unlabelled ${claimLines - labelled})`);
 
 // (3) the recipe: the sig recorded for G7 is sha256(CHECK value + "\n" + EXPECT value)
 const defects = [];
