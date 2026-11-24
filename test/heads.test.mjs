@@ -1139,3 +1139,143 @@ test('A1-G7: the whole bearing stack is published in SPEC.cam.bearing and every 
   assert.ok(housingIn > tabR,
     `the housing wall at ${housingIn.toFixed(4)} cm has to stand outside the ${tabR.toFixed(4)} cm tab ring, or the column casting is where the cap has to lift off its split plane.`);
 });
+
+// ============ A1-G6 slice 8E: the coolant goes on through the heads =============
+// Issue #8 addendum item 1: "Heads get the matching jacket and passage work so
+// cooling does not stop at the gasket." These laws gate the head half of the
+// published coolant network against the drawn head iron through
+// test/support/coolant-iron.mjs. The geometry was proven before it was written
+// (tmp/8e-warrant3.mjs: WARRANT OK in both variants, 0 offender kinds).
+
+const netHeads = async (variant, why) => {
+  let mod;
+  try {
+    mod = await import('../src/engine/coolant.js');
+  } catch (e) {
+    throw new Error(`A1-G6 8E: src/engine/coolant.js is not in the tree (${why}): ${e.message}`);
+  }
+  if (!SPEC.coolant) throw new Error(`A1-G6 8E: SPEC.coolant is not published (${why})`);
+  return mod.coolantNetwork(variant);
+};
+
+test('A1-G6 8E: the head half of every coolant passage is bored in drawn head iron', async () => {
+  const { coolantProber } = await import('./support/coolant-iron.mjs');
+  for (const variant of ['dohc', 'ohv']) {
+    const net = await netHeads(variant, `the ${variant} heads have no published coolant passages to probe`);
+    const p = coolantProber(net, variant);
+    const legs = [];
+    for (const pt of net.ports) legs.push({ ...pt.legs[1].leg, name: pt.id, cast: 'head', bank: pt.bank });
+    for (const l of net.links) legs.push({ ...l.leg, name: l.id, cast: l.cast, bank: l.bank });
+    for (const g of net.galleries) legs.push({ ...g.leg, name: g.id, cast: g.cast, bank: g.bank });
+    let samples = 0;
+    const bad = [];
+    for (const leg of legs) {
+      const r = p.legIron(leg);
+      samples += r.samples;
+      bad.push(...r.offenders);
+    }
+    assert.ok(bad.length === 0,
+      `${variant}: ${bad.length} of ${samples} samples of the ${legs.length} published head coolant legs do not stand in drawn head iron:\n  ${bad.slice(0, 12).join('\n  ')}`);
+  }
+});
+
+test('A1-G6 8E: cooling does not stop at the gasket, block and head legs share one window', async () => {
+  const C = SPEC.coolant;
+  const net = await netHeads('dohc', 'no published passage tells the laws where the block hands its water to the head');
+  assert.ok(net.ports.length > 0, 'A1-G6 8E: the network publishes no block-to-head passages at all');
+  let checked = 0;
+  for (const pt of net.ports) {
+    assert.equal(pt.legs.length, 2, `${pt.id}: a block-to-head passage needs a leg in each casting, it has ${pt.legs.length}`);
+    const [blk, head] = pt.legs;
+    assert.equal(blk.cast, 'block', `${pt.id}: its first leg is bored in ${blk.cast}`);
+    assert.equal(head.cast, 'head', `${pt.id}: its second leg is bored in ${head.cast}`);
+    for (const k of ['o0', 'o1', 'x0', 'x1']) {
+      assert.ok(Math.abs(blk.leg[k] - head.leg[k]) <= 1e-9,
+        `${pt.id}: the block leg's ${k} window ${blk.leg[k]} is not the head leg's ${head.leg[k]}: the passage narrows or steps at the gasket instead of continuing`);
+    }
+    assert.ok(Math.abs(blk.leg.a1 - (head.leg.a0 - H.gasketT)) <= 1e-9,
+      `${pt.id}: the block leg tops out at a ${blk.leg.a1} and the head leg starts at a ${head.leg.a0}, which is not a ${H.gasketT} cm gasket apart - the two legs do not meet`);
+    assert.ok(blk.leg.a1 >= B.deckA - 1e-9 && head.leg.a0 <= B.deckA + H.gasketT + 1e-9,
+      `${pt.id}: the joint between its legs is not at the compressed gasket band (${B.deckA}..${B.deckA + H.gasketT})`);
+    assert.ok(head.leg.a1 > C.headFloorA + C.bandMinCm,
+      `${pt.id}: the head leg only reaches a ${head.leg.a1}, ${head.leg.a1 - C.headFloorA} cm above the head deck face: the water is in the head by less than the ${C.bandMinCm} cm way the row claims as its narrowest coolant passage`);
+    checked++;
+  }
+  const perBank = {};
+  for (const pt of net.ports) perBank[pt.bank] = (perBank[pt.bank] ?? 0) + 1;
+  assert.ok(checked === net.ports.length && perBank.L === perBank.R,
+    `A1-G6 8E: ${checked} of ${net.ports.length} passages checked, per bank ${JSON.stringify(perBank)}`);
+  // the head carries the water on past the risers: links at both ends of each
+  // bank and a cross gallery across each end
+  assert.ok(net.links.length >= 2 * 2 * C.bands.length,
+    `A1-G6 8E: ${net.links.length} head links where the row publishes one per bank, per band and per end (${2 * 2 * C.bands.length})`);
+  assert.ok(net.galleries.length >= 2 * 2,
+    `A1-G6 8E: ${net.galleries.length} head cross galleries where the row publishes one per bank and per end (4)`);
+  for (const g of net.galleries) {
+    assert.ok(g.leg.a1 >= C.headCrownA - 1e-9, `${g.id}: the cross gallery tops out at a ${g.leg.a1} instead of the published coolant roof a ${C.headCrownA}`);
+    assert.ok(Math.abs(g.leg.o1) >= C.waterOutCm - 1e-9 && Math.abs(g.leg.o0) <= C.waterInCm + 1e-9,
+      `${g.id}: the gallery spans o ${g.leg.o0}..${g.leg.o1} instead of reaching from the valley side to the outboard flank (|o| ${C.waterInCm}..${C.waterOutCm})`);
+    for (const l of net.links.filter((x) => x.bank === g.bank && x.side === g.side)) {
+      const overlap = Math.min(l.leg.x1, g.leg.x1) - Math.max(l.leg.x0, g.leg.x0);
+      assert.ok(overlap > 0, `${l.id} and ${g.id}: the link and the gallery it feeds share ${overlap.toFixed(3)} cm of x, so the water has no way between them`);
+    }
+  }
+});
+
+test('A1-G6 8E: the drawn coolant members measure at their published windows', async () => {
+  const { createCoolant } = await import('../src/render/coolant.js')
+    .catch((e) => { throw new Error(`A1-G6 8E: src/render/coolant.js is not in the tree (nothing draws the published passages): ${e.message}`); });
+  const { coolantProber, legFrameBox } = await import('./support/coolant-iron.mjs');
+  const net = await netHeads('dohc', 'the drawn coolant assembly has no published windows to be measured at');
+  const { group } = createCoolant(proxyMaterials(), 'dohc');
+  const p = coolantProber(net, 'dohc');
+  const TOL = 1e-3;
+  const want = [];
+  for (const j of net.jackets) want.push([j.id, j.bank, j.leg]);
+  for (const pt of net.ports) for (const L of pt.legs) want.push([pt.id, pt.bank, L.leg]);
+  for (const l of net.links) want.push([l.id, l.bank, l.leg]);
+  for (const g of net.galleries) want.push([g.id, g.bank, g.leg]);
+  const bad = [];
+  for (const [id, bank, leg] of want) {
+    const mesh = group.getObjectByName(id);
+    if (!mesh) { bad.push(`${id}: the drawn assembly has no member with that name`); continue; }
+    const box = legFrameBox(bank, mesh);
+    for (const [k, lo, hi] of [['a', leg.a0, leg.a1], ['o', leg.o0, leg.o1], ['x', leg.x0, leg.x1]]) {
+      const dLo = Math.abs(box[`${k}0`] - lo), dHi = Math.abs(box[`${k}1`] - hi);
+      if (dLo > TOL || dHi > TOL) {
+        bad.push(`${id}: the drawn member spans ${k} ${box[`${k}0`].toFixed(3)}..${box[`${k}1`].toFixed(3)} against the published ${lo.toFixed(3)}..${hi.toFixed(3)} (off by ${Math.max(dLo, dHi).toFixed(4)} cm)`);
+      }
+    }
+  }
+  assert.ok(bad.length === 0, `${bad.length} drawn coolant members do not stand at their published window:\n  ${bad.slice(0, 12).join('\n  ')}`);
+  assert.ok(p.legs().every((L) => L.cast === 'block' || L.cast === 'head'), 'a published coolant leg names no casting it is bored in');
+});
+
+test('A1-G6 8E: the coolant assembly census is measured from the tree and its names are its own', async () => {
+  const { createCoolant } = await import('../src/render/coolant.js')
+    .catch((e) => { throw new Error(`A1-G6 8E: src/render/coolant.js is not in the tree (the census has nothing to count): ${e.message}`); });
+  const net = await netHeads(SPEC.build.variant, 'the census has no published member list to compare with');
+  const { group } = createCoolant(proxyMaterials(), SPEC.build.variant);
+  const drawn = [];
+  group.traverse((o) => { if (o.isMesh) drawn.push(o.name); });
+  assert.equal(new Set(drawn).size, drawn.length, `the drawn assembly repeats a name: ${drawn.filter((n, i) => drawn.indexOf(n) !== i).join(', ')}`);
+  assert.equal(drawn.length, net.members.length,
+    `the drawn coolant assembly holds ${drawn.length} meshes while the published network lists ${net.members.length} members - the census has to be one measured number, not two typed ones`);
+  const missing = net.members.filter((n) => !drawn.includes(n));
+  const extra = drawn.filter((n) => !net.members.includes(n));
+  assert.ok(missing.length === 0 && extra.length === 0, `published but not drawn: ${missing.join(', ') || '-'} / drawn but not published: ${extra.join(', ') || '-'}`);
+  // no coolant name may shadow a casting member: the inspection menu and the
+  // teardown table key members by name
+  const { createBlock } = await import('../src/render/block.js');
+  const { createHeads } = await import('../src/render/heads.js');
+  const casting = new Set();
+  for (const g of [createBlock(proxyMaterials(), SPEC.build.variant), createHeads(proxyMaterials()).group]) {
+    g.traverse((o) => { if (o.isMesh) casting.add(o.name); });
+  }
+  const clash = drawn.filter((n) => casting.has(n));
+  assert.ok(clash.length === 0, `coolant members shadow casting members: ${clash.join(', ')}`);
+  for (const n of drawn) {
+    assert.ok(/^[a-z0-9-]+$/.test(n), `${n}: a member name has to be one the inspection menu and the teardown table can key on`);
+    assert.ok(/coolant-/.test(n), `${n}: a coolant member has to name itself as coolant work, the way oil members name themselves oil work`);
+  }
+});
