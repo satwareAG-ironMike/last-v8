@@ -713,6 +713,31 @@ test('branch-gate.sh: a 404 on required_status_checks cannot print as "required 
   assert.match(r.out, /PROTECTION GATE FAILED/, `no verdict line:\n${r.out}`);
 });
 
+// issue #14: scripts/procedural-audit.mjs is a text scanner. It walks src/ and public/ and
+// hashes them; it runs no browser and sees no scene. Line 84 nonetheless ENDED its scan with
+// `-- live counts this file cannot see (see test/screenshots.mjs output): 847 texture maps
+// over 790 meshes in 31 material families` - three numbers the tool never measured, printed
+// in the same transcript row G7 cites. The eight spark plugs moved the live census to 854
+// meshes / 40 families and the tool could not notice, because a restated number cannot drift
+// in only one direction: it is wrong silently. The fix this law gates is that the tool names
+// the gate owning the census and prints none of its numbers.
+const CENSUS = /\b\d[\d,]*\s+(texture maps?|meshes|material families)\b/g;
+
+test('scripts/procedural-audit.mjs prints only what it measures: the live mesh/map/family census is owned by test/screenshots.mjs and is not restated here', () => {
+  const src = readFileSync('scripts/procedural-audit.mjs', 'utf8');
+  const copied = [...src.matchAll(CENSUS)].map((m) => m[0]);
+  assert.deepEqual(copied, [], `the tool carries a hand-copied live census it cannot measure: ${copied.join('; ')}`);
+
+  const r = spawnSync(process.execPath, ['scripts/procedural-audit.mjs'], { encoding: 'utf8', env: runnerEnv() });
+  assert.equal(r.status, 0, `the procedural audit exited ${r.status}: ${r.stderr.slice(0, 400)}`);
+  const out = `${r.stdout}\n${r.stderr}`;
+  const printed = [...out.matchAll(CENSUS)].map((m) => m[0]);
+  assert.deepEqual(printed, [], `the audit printed a scene census it did not measure: ${printed.join('; ')}`);
+  assert.match(out, /test\/screenshots\.mjs/,
+    'the tool has to name which committed gate owns the live census instead of quoting numbers ' +
+    `it cannot re-derive:\n${out.slice(-400)}`);
+});
+
 test('branch-gate.sh: one unread ruleset is named as unread and cannot erase the rulesets already read', () => {
   const r = runGate(gateTree(), ghStub({ missingRuleset: true }));
   assert.ok(!r.out.includes('no branch ruleset includes refs/heads/eng'),
