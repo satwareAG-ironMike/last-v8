@@ -498,6 +498,149 @@ test('every tool that reads citations out of the ledger, and this file, share on
   assert.ok(bare.match(CITED), `this file's citation reader does not match the bare spelling it claims to share:\n${CITED.source}`);
 });
 
+// --- issue #15: citations that name what a fresh checkout actually carries ------------------
+// scripts/ledger-audit.mjs indexed only tmp/ and shots/ (its walk), and its name grammar knew
+// only those two gitignored directories. Both measurements in issue #15 come from that: a
+// 16-hex pin of a committed source file (row G6 cites scripts/ledger-fill-g6.py
+// output-sha256=88128e08...) is invisible in every tree, a `git show <commit>:<path>` pin -
+// this ledger's spelling for "the committed form of that tool" - is answered by the wrong file
+// or by nothing, and in a git archive of this repo (every CI runner, every reviewer) the audit
+// resolved 0 citations and reported 293 problems (tmp/v8-c15-fresh-rec.out). These laws run
+// against a synthetic GIT tree, because "what a fresh checkout carries" is only measurable in
+// a tree that knows what it tracks.
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+const GIT_USER = ['-c', 'user.name=ledger-synthetic', '-c', 'user.email=ledger@synthetic.invalid'];
+const SYNTH_TRACKED = { 'src/cited.js': 'the tracked source a row pins\n', 'src/later.js': 'the committed form before it moved\n' };
+const SYNTH_MOVED = 'the same file after a second commit moved it\n';
+const HEX_CITED = shaOf(SYNTH_TRACKED['src/cited.js']);
+const HEX_LATER1 = shaOf(SYNTH_TRACKED['src/later.js']);
+const HEX_MOVED = shaOf(SYNTH_MOVED);
+
+/** A synthetic git tree: two tracked commits, the second moving one pinned file, then the
+ *  same synthetic-row run as synthAudit. @C1@ inside the rows is replaced with the first
+ *  commit's id, so a row can name a commit that exists without anyone typing it. */
+const synthGitAudit = (rows) => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-cite-git-'));
+  const put = (p, body) => { const f = join(dir, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, body); };
+  const git = (...a) => spawnSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8', env: GIT_ENV });
+  put('src/cited.js', SYNTH_TRACKED['src/cited.js']);
+  put('src/later.js', SYNTH_TRACKED['src/later.js']);
+  git('init', '-q');
+  git('add', '-A');
+  git(...GIT_USER, 'commit', '-q', '-m', 'pinned forms');
+  const c1 = git('rev-parse', 'HEAD').stdout.trim();
+  put('src/later.js', SYNTH_MOVED);
+  git('add', '-A');
+  git(...GIT_USER, 'commit', '-q', '-m', 'the pinned file moved');
+  const check = 'node --test test/synthetic-anchor.test.mjs';
+  const expect = 'fail 0';
+  put('GATES.md', `- [ ] G7: the synthetic anchor row the audit runs its recipe check on\n  CHECK: ${check}\n  EXPECT: ${expect}\n` +
+    `  EVIDENCE: gate-sig=${shaOf(`${check}\n${expect}`).slice(0, 16)}\n${rows.replace(/@C1@/g, c1)}`);
+  put('scripts/ledger-audit.mjs', readFileSync('scripts/ledger-audit.mjs', 'utf8'));
+  const r = spawnSync(process.execPath, ['scripts/ledger-audit.mjs'], { cwd: dir, encoding: 'utf8', env: GIT_ENV });
+  return { status: r.status, out: `${r.stdout}${r.stderr}`, c1 };
+};
+const citeProblems = (out, id) => out.split('\n').filter((l) => l.trim().startsWith(`CITE PROBLEM: ${id}:`));
+
+test('a sound citation of a tracked file resolves, so a reviewer in a plain checkout can check it (issue #15)', () => {
+  const r = synthGitAudit(`- [ ] P1-G80: a row citing a tracked file's content\n  EVIDENCE: src/cited.js output-sha256=${HEX_CITED}\n`);
+  assert.equal(citeProblems(r.out, 'P1-G80').length, 0,
+    `the row names src/cited.js, this tree carries it, its content hashes to exactly the cited value, and the ` +
+    `audit still reports a problem: its index walks only tmp/ and shots/ and its name grammar knows only those ` +
+    `gitignored dirs, so a citation a reviewer CAN check is answered as one nobody can (issue #15):\n` +
+    `${citeProblems(r.out, 'P1-G80').join('\n')}\n${r.out.slice(0, 500)}`);
+  assert.equal(synthResolved(r.out), 1,
+    `the audit resolved ${synthResolved(r.out)} of 1 citations that name a tracked file whose content hashes to ` +
+    `the cited value:\n${r.out.slice(0, 500)}`);
+  assert.equal(r.status, 0, `a ledger whose only citation names a tracked file's real content exited ${r.status}:\n${r.out.slice(0, 500)}`);
+});
+
+test('a git show <commit>:<path> pin resolves against that commit; the same hash against the moved working file does not (issue #15)', () => {
+  const r = synthGitAudit(
+    `- [ ] P1-G81: a row pinning the committed form of src/later.js at the commit that form lives at\n  EVIDENCE: git show @C1@:src/later.js output-sha256=${HEX_LATER1}\n` +
+    `- [ ] P1-G82: a row claiming that same hash for the file as this tree now carries it\n  EVIDENCE: src/later.js output-sha256=${HEX_LATER1}\n`);
+  assert.equal(citeProblems(r.out, 'P1-G81').length, 0,
+    `the row names git show @C1@:src/later.js as spelled with the real commit id, that object holds exactly the ` +
+    `cited content, and the audit still refuses it - the tool's own comment (row P1-G11) reports this as ` +
+    `hash ... is the content of ..., which the row does not name, a true statement about a scratch copy and a ` +
+    `false statement about the row (issue #15 measurement A):\n${citeProblems(r.out, 'P1-G81').join('\n')}\n${r.out.slice(0, 500)}`);
+  const stale = citeProblems(r.out, 'P1-G82');
+  assert.equal(stale.length, 1,
+    `src/later.js as this tree carries it hashes ${HEX_MOVED.slice(0, 16)}..., the row cites ${HEX_LATER1.slice(0, 16)}... ` +
+    `against that name, and ${stale.length} problems were reported for it:\n${r.out.slice(0, 500)}`);
+  assert.match(stale[0], /src\/later\.js/,
+    `the stale-pin problem does not name the file whose content it contradicts - it can only say the hash matches ` +
+    `no scratch file, because the name grammar never saw src/later.js at all:\n${stale[0]}`);
+  assert.match(stale[0], new RegExp(`hashes ${HEX_MOVED.slice(0, 16)}`),
+    `the stale-pin problem reports src/later.js but not what that file hashes to today (${HEX_MOVED.slice(0, 16)}... ` +
+    `vs the cited ${HEX_LATER1.slice(0, 16)}...), so a reader cannot tell an aged pin from a typo:\n${stale[0]}`);
+});
+
+test('a 16-hex committed-form pin is read and checked against the file it names (issue #15)', () => {
+  const r = synthGitAudit(
+    `- [ ] P1-G83: a row pinning src/cited.js the 16-hex way row G6 uses for scripts/ledger-fill-g6.py\n  EVIDENCE: src/cited.js output-sha256=${HEX_CITED.slice(0, 16)}\n` +
+    `- [ ] P1-G84: a row pinning src/cited.js at a 16-hex prefix no longer true of that file\n  EVIDENCE: src/cited.js output-sha256=${shaOf('an older pinned form\n').slice(0, 16)}\n`);
+  assert.equal(citeProblems(r.out, 'P1-G83').length, 0,
+    `a 16-hex pin of a tracked file that still matches the file is reported as a problem:\n${citeProblems(r.out, 'P1-G83').join('\n')}`);
+  const aged = citeProblems(r.out, 'P1-G84');
+  assert.equal(aged.length, 1,
+    `this control's second arm is the case issue #15 was filed with: row G6 cites scripts/ledger-fill-g6.py ` +
+    `output-sha256=88128e080a120116 - 16 hex, the style the closed rows use to pin a committed tool. Today the ` +
+    `extractor requires 64 hex, so BOTH arms above are invisible: arm 1 passes only because the tool never saw ` +
+    `the pin, and arm 2 reports 0 problems although the prefix contradicts the file named (${HEX_CITED.slice(0, 16)}... ` +
+    `on disk). A pin nobody can read is a pin nobody can age out:\n${r.out.slice(0, 500)}`);
+  assert.match(aged[0], /src\/cited\.js.*hashes [0-9a-f]{16}/s, `the aged 16-hex pin is not reported against the file it names:\n${aged[0]}`);
+});
+
+test('an unverifiable scratch citation is named as unverifiable, not as a hash that never existed (issue #15)', () => {
+  const gone = shaOf('a recorded run this synthetic tree does not carry\n');
+  const r = synthGitAudit(`- [ ] P1-G85: a row citing a scratch run output that git never tracked and this tree lacks\n  EVIDENCE: tmp/gone.out output-sha256=${gone}\n`);
+  assert.match(r.out, /CITE PROBLEM: P1-G85: names tmp\/gone\.out which is not on disk/,
+    `the existing wording this control supersedes additively must keep reporting the absence:\n${r.out.slice(0, 500)}`);
+  assert.match(r.out, /names tmp\/gone\.out which is not on disk - untracked in git/,
+    `the audit calls an absent scratch file and an absent committed file the same thing. Issue #15's whole ` +
+    `finding is that a reviewer cannot tell them apart: a gitignored run output is unverifiable in every fresh ` +
+    `checkout, while a tracked path that IS on disk is verifiable in every tree - and today the tool can name ` +
+    `only the first kind at all:\n${citeProblems(r.out, 'P1-G85').join('\n')}`);
+  assert.match(r.out, /hash [0-9a-f]{16}\.\.\. matches no scratch file on disk/,
+    `the existing hash wording must survive as a prefix of the new one:\n${citeProblems(r.out, 'P1-G85').join('\n')}`);
+  assert.match(r.out, /matches no scratch file on disk \(named tmp\/gone\.out, which this tree does not carry\)/,
+    `the hash problem and the name problem are the same citation reported twice without either sentence ` +
+    `referring to the other:\n${citeProblems(r.out, 'P1-G85').join('\n')}`);
+});
+
+// A guard, and the only law here that is green against the committed tool - stated as such
+// because it gates the FIX's new extraction, not an old defect: the committed extractor cannot
+// read 16-hex citations at all, so a closed row carrying only such a pin trips the closed-box
+// rule today for the wrong reason (blindness). The naive fix (extract 16 hex, keep one hexes
+// array) would let a source-file pin masquerade as a recorded run and close a box with no
+// run behind it; that is exactly one of the pokes tmp/15-negctl.py drives red.
+test('the closed-box rule still demands a 64-hex run output: a 16-hex pin alone does not close a row (guard on the issue #15 extraction)', () => {
+  const r = synthGitAudit(`- [x] P1-G86: a closed row whose only citation is a 16-hex pin of a tracked file\n  CHECK: node --test test/synthetic.test.mjs\n  EXPECT: fail 0\n  EVIDENCE: src/cited.js output-sha256=${HEX_CITED.slice(0, 16)}\n`);
+  assert.match(r.out, /DEFECT: P1-G86: the box reads \[x\] while the row names no recorded run output \(no 64-hex output citation\)/,
+    `the row names src/cited.js and a 16-hex prefix of its content - a pin of source, not a record of a run. If ` +
+    `the closed-box rule accepts that, widening the citation extractor to 16 hex (which issue #15 requires) ` +
+    `would let any closed row pass by pinning a source file:\n${r.out.slice(0, 500)}`);
+  assert.equal(r.status, 1, `a closed row with no 64-hex run citation exited ${r.status}:\n${r.out.slice(0, 500)}`);
+});
+
+test('the audit prints a cite census separating what resolved against disk, git content and a named commit, and which absences each problem is (issue #15)', () => {
+  const gone = shaOf('a recorded run this synthetic tree does not carry\n');
+  const r = synthGitAudit(
+    `- [ ] P1-G87: tracked content citation\n  EVIDENCE: src/cited.js output-sha256=${HEX_CITED}\n` +
+    `- [ ] P1-G88: commit-pin citation\n  EVIDENCE: git show @C1@:src/later.js output-sha256=${HEX_LATER1}\n` +
+    `- [ ] P1-G89: absent scratch citation\n  EVIDENCE: tmp/gone.out output-sha256=${gone}\n`);
+  const m = r.out.match(/cite census: resolved tracked (\d+), resolved commit (\d+), resolved scratch (\d+), names absent untracked (\d+), hashes matching nothing (\d+)/);
+  assert.ok(m,
+    `no census line: the audit's only citation output today is one resolved count plus a flat problem list, and ` +
+    `the flat list is why issue #15 could not be sized - 135 problems in this harness tree and 293 in a git ` +
+    `archive of the same commit, indistinguishable in kind:\n${r.out.slice(0, 700)}`);
+  assert.deepEqual(m.slice(1).map(Number), [1, 1, 0, 1, 1],
+    `the census for three citations that each resolve a different way (tracked content, a named commit object, ` +
+    `and one scratch run output this tree lacks - its name and its hash are two reports of that one citation): ` +
+    `got ${m.slice(1).join(', ')}\n${r.out.slice(0, 700)}`);
+});
+
 // --- the exception span read by NUMBER, not as text (the exception-span review finding) --
 // This ledger's own exception span is `G1-G3`. Compared as text, "G10" is NOT greater than
 // "G3": 'G'=='G', then '1' < '3'. So a ledger grown past G9 sweeps G10 through G19 into the
