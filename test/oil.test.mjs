@@ -661,9 +661,13 @@ test('oil: the DOHC build, its default variant and its published geometry are un
   const blk = blockOf('dohc');
   const bd = boxOf(blk);
   assert.ok(Math.abs(bd.max.x - 26.5) < EPS || Math.abs(bd.max.x - 27.4) < EPS, `the DOHC block's drawn extent moved to ${bd.max.x}`);
-  // the drilled oil holes in the shells themselves are slice 8D-2 and are not in the
-  // tree yet: the row names that open clause instead of pretending they are drawn
-  assert.equal(o.oilSpec('dohc').pending.drawnHoles, '#8', `the drawn-oil-hole clause is ${JSON.stringify(o.oilSpec('dohc').pending.drawnHoles)}, not issue #8`);
+  // the drilled oil holes in the shells are slice 8D-2: 8D-2b machined them into the
+  // main shells, and what is not machined yet is named clause by clause rather than
+  // hidden behind one issue number
+  const drawn = o.oilSpec('dohc').pending.drawnHoles;
+  assert.equal(drawn.issue, '#8', `the drawn-oil-hole clause is ${JSON.stringify(drawn)}, not issue #8`);
+  assert.ok(Array.isArray(drawn.open) && drawn.open.length >= 1,
+    `the drawn-oil-hole clause names ${JSON.stringify(drawn.open)}: an open slice has to say which holes are still unwritten`);
   assert.equal(SPEC.oil.pendingIssues.includes('#8'), true, 'SPEC.oil does not name the drawn-hole clause');
   assert.equal(SPEC.oil.wallMinCm, STACK.housingWall, 'SPEC.oil typed a wall instead of reusing the published bearing wall');
 });
@@ -750,7 +754,7 @@ test('oil 8D-2a: the tree draws one mesh per published bore, plus the pump, the 
       assert.equal(oil.group.getObjectByName(`oil-main-x${p.x}`) ?? null, null, `the feed for ${p.part} is drawn while issue ${p.issue} is open`);
     }
     assert.equal(oil.group.getObjectByName('oil-gallery-lifter') ?? null, null, 'a lifter gallery is drawn while issue #16 has not chosen the 8C-3 casting');
-    assert.equal(net.spec.pending.drawnHoles, '#8', 'the drilled holes in the shells are claimed as drawn while 8D-2b has not landed');
+    assert.equal(net.spec.pending.drawnHoles.issue, '#8', 'the drilled holes in the shells are claimed as closed while issue #8 still names them open');
     // the drawn member count is measured, not projected: bores + the three assemblies
     const drawn = oil.group.children.filter((c) => c.isMesh || c.isGroup);
     assert.equal(drawn.length, ids.length + ASSEMBLIES.length,
@@ -996,3 +1000,13 @@ test('oil 8D-2a: the drawn oil system rides the published material families and 
   assert.ok((seen.get('oilFilm') ?? 0) >= 1, 'no drawn bore rides the published oil film family');
   t.diagnostic(`oil material families: ${[...seen].map(([k, n]) => `${k} x${n}`).join(', ')}`);
 });
+
+// The rod bearing's own internal way - a drilling bored up the rod beam from the
+// big-end bore to the small end - is NOT drawn by this slice and the law for it is
+// not written either. The published feed is `throughCrank: true`: it is bored in the
+// crank's own metal and ends mid the pin film (src/engine/oil.js rodFeeds), so
+// machining it means drilling the crank throws, which is the clause
+// SPEC.oil.pending.drawnHoles.open names. test/oil.test.mjs law 15 gates the
+// published through-crank terminus today; the rod-body way gets its own law with
+// its own RED when that clause is built.
+
