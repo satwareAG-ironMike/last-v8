@@ -10,14 +10,17 @@
 // two boot-framing citations. This file is the committed form of that measurement, so the
 // claim can be recomputed instead of trusted.
 //
-// Counting definitions, stated because "15" and "847" mean different things:
+// Counting definitions, stated because the two kinds of number in this file mean different
+// things:
 //   the canvas law is counted as canvas-creation lines plus 2D-context lines in
-//     src/render/materials.js (7 + 8 = 15), which is what the G7 row's "15 canvas 2D
-//     contexts" records;
-//   the 847 maps and 790 meshes are NOT countable statically, because the map families are
-//     built in loops. They are live counts, printed by test/screenshots.mjs at crank 0
-//     (tmp/g7-run14.out:4 prints "790 meshes drawn by 31 material families ... 847 texture
-//     maps ({"canvas":847})"), and this file only re-checks the static half of the claim.
+//     src/render/materials.js, and the sum this file prints is what the G7 row's
+//     "canvas 2D contexts" records;
+//   the mesh / material-family / texture-map census of the drawn scene is NOT countable
+//     statically, because the map families are built in loops. It is a live count, printed
+//     from the rendered tree by the committed gate test/screenshots.mjs, and that gate owns
+//     it: this file prints none of it. A number copied out of another gate's transcript is a
+//     claim this tool can neither re-derive nor notice going stale - which is exactly what
+//     happened to the census line this file used to end with (issue #14).
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -81,7 +84,7 @@ console.log(
     `${(mat.match(/PMREMGenerator|fromEquirectangular/g) || []).length} PMREM calls, ` +
     `${(mat.match(/\benvMap\b/g) || []).length} envMap references`,
 );
-console.log(`-- live counts this file cannot see (see test/screenshots.mjs output): 847 texture maps over 790 meshes in 31 material families`);
+console.log('-- live scene census (meshes, material families, texture maps) is measured from the rendered tree by test/screenshots.mjs, which owns it; this file scans text and prints none of it'); // issue #14
 
 const dataUris = scan(/data:[a-z]+\/[a-z0-9.+-]+/i);
 console.log(`-- data: URIs in the product: ${dataUris.length}`);
