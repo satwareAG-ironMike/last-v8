@@ -91,3 +91,8 @@ console.log(`-- data: URIs in the product: ${dataUris.length}`);
 for (const d of dataUris) console.log(`   ${d}`);
 
 console.log(`\n${total === 0 ? 'PROCEDURAL ONLY' : `PROBLEM: ${total} forbidden hits`}`);
+
+// The verdict is also the exit code (issue #34): row G7's CHECK runs this file, and a gate
+// whose CHECK cannot fail is a comment rather than a gate. Before this line both states
+// reported success, so a forbidden hit in the product was only ever readable off a transcript.
+process.exitCode = total === 0 ? 0 : 1;
