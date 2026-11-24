@@ -957,3 +957,126 @@ test('branch-gate.sh: one unread ruleset is named as unread and cannot erase the
     `answered by an empty accumulator:\n${r.out}`);
   assert.notEqual(r.status, 0, `an unread ruleset left the gate green:\n${r.out}`);
 });
+
+// --- issue #12: a claim line the label grammar cannot read is a claim nobody checks ---------
+// scripts/ledger-audit.mjs read a row's claim line only when its label matched
+// `CHECK|EXPECT|EVIDENCE|NOTE|[A-Z][A-Z ()/,-]{2,}`. Every other indented line under a row was
+// dropped - not reported as unread, just absent. Measured against this file at the head issue
+// #12 was filed at: 525 indented claim lines, 306 read. At the head this slice starts at, after
+// issue #15 landed: 535 indented claim lines, 316 read, 219 invisible. What that costs is
+// measurable rather than rhetorical: the pinned shot identities of row G7 (`shots/07-home.png
+// sha256=605ee6b2...`) sit on a wrapped continuation line no grammar ever read, so six picture
+// hashes this ledger publishes have never been checked by any tool; and a `NOTE (heads unit)`
+// style label - the shape most of this ledger's evidence actually uses - hides the citation on
+// it too. scripts/ledger-name-evidence.py has no label grammar at all: its prefix rule covers
+// every indented line, which is why the two tools disagree about what a claim line is.
+//
+// The laws below run against the same synthetic trees as issue #15's, plus one measurement
+// against this file itself.
+const gatesIn = (text) => {
+  const dir = mkdtempSync(join(tmpdir(), 'last-v8-claim-'));
+  writeFileSync(join(dir, 'GATES.md'), text);
+  cpSync('scripts/ledger-audit.mjs', join(dir, 'scripts/ledger-audit.mjs'));
+  const r = spawnSync(process.execPath, ['scripts/ledger-audit.mjs'], { cwd: dir, encoding: 'utf8' });
+  return { dir, status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+
+/** Every indented line a ledger text carries UNDER a row: from the first row title on, any
+ *  line indented by two or more spaces that is not itself a row title. This is the count
+ *  scripts/ledger-name-evidence.py's prefix rule applies to, and the count the audit's claim
+ *  census must match. */
+const claimLinesUnderRows = (text) => {
+  const out = [];
+  let seen = false;
+  for (const l of text.split('\n')) {
+    if (ROW_TITLE.test(l)) { seen = true; continue; }
+    if (seen && /^ {2,}\S/.test(l)) out.push(l);
+  }
+  return out;
+};
+
+test('a claim line whose label carries prose is read, so the citation on it is checked (issue #12)', () => {
+  const r = synthAudit('- [ ] P1-G90: a row whose evidence label carries a parenthetical sentence\n'
+    + `  MEASURED (the probe, tmp/one.out -> run one): output-sha256=${SYNTH_HEX['tmp/one.out']}\n`);
+  assert.equal(synthResolved(r.out), 1,
+    `the row names tmp/one.out, this tree carries it, its content hashes to exactly the cited value, and the ` +
+    `audit resolved ${synthResolved(r.out)}: the label ` + '`MEASURED (the probe, tmp/one.out -> run one)` ' +
+    `is outside the strict shape, so the whole line - citation included - was dropped (issue #12):\n${r.out.slice(0, 600)}`);
+  assert.equal(citeProblems(r.out, 'P1-G90').length, 0,
+    `a citation this tree can answer was reported as a problem:\n${citeProblems(r.out, 'P1-G90').join('\n')}`);
+});
+
+test("a label carrying a digit, an apostrophe or a slash is read too (issue #12)", () => {
+  const r = synthAudit('- [ ] P1-G91: a row written the way this ledger writes evidence\n'
+    + `  PLUG 1's seat (of 8, overlap 0.1000 cm): measured in tmp/one.out output-sha256=${SYNTH_HEX['tmp/one.out']}\n`);
+  assert.equal(synthResolved(r.out), 1,
+    `the label "PLUG 1's seat (of 8, overlap 0.1000 cm)" is outside the strict shape (apostrophe, digits), so a ` +
+    `citation pointing at a file this tree carries and hashes correctly was never extracted: resolved ` +
+    `${synthResolved(r.out)} of 1\n${r.out.slice(0, 600)}`);
+});
+
+test('a citation on a wrapped continuation line is read, which is how row G7 pins its pictures (issue #12)', () => {
+  const r = synthAudit('- [ ] P1-G92: a row whose claim wraps onto a continuation line\n'
+    + '  SHOT FILE IDENTITY (recorded after tmp/one.out, whose printed byte count this\n'
+    + `      line carries): shots/two.png sha256=${SYNTH_HEX['shots/two.png']}\n`);
+  assert.equal(citeProblems(r.out, 'P1-G92').length, 0,
+    `this row cites shots/two.png on the wrapped half of its sentence, the file is on disk and hashes to the ` +
+    `cited value, and the audit still reports problems:\n${citeProblems(r.out, 'P1-G92').join('\n')}\n${r.out.slice(0, 600)}`);
+  assert.equal(synthResolved(r.out), 1,
+    `the six picture hashes row G7 publishes sit on continuation lines of exactly this shape; resolved ` +
+    `${synthResolved(r.out)} of 1, so no tool has ever compared them with the files they name:\n${r.out.slice(0, 600)}`);
+});
+
+test('the audit prints a claim census, so a line with no label is counted and not skipped (issue #12)', () => {
+  const r = synthAudit('- [ ] P1-G93: a row carrying one labelled claim and one wrapped half\n'
+    + `  MEASURED (the probe): the run ended cleanly, recorded in tmp/one.out output-sha256=${SYNTH_HEX['tmp/one.out']}\n`
+    + '      and this continuation of the same sentence\n');
+  const m = r.out.match(/claim census: claim lines read (\d+) \(labelled (\d+), unlabelled (\d+)\)/);
+  assert.ok(m, `the audit reported a citation census but never said how many claim lines it read at all, which ` +
+    `is what made 219 of this ledger's 535 lines invisible in total silence:\n${r.out.slice(0, 700)}`);
+  // The tree's ledger is the anchor row (CHECK, EXPECT, EVIDENCE = 3 labelled lines) plus the
+  // row under test (1 labelled, 1 wrapped half): 5 lines, 4 labelled, 1 unlabelled.
+  assert.equal(Number(m[1]), 5, `this synthetic ledger carries 5 indented claim lines and the census read ${m[1]}:\n${r.out.slice(0, 400)}`);
+  assert.equal(Number(m[2]), 4, `4 of those lines carry a label and the census calls ${m[2]} labelled:\n${r.out.slice(0, 400)}`);
+  assert.equal(Number(m[3]), 1, `the wrapped half must be counted as unlabelled rather than absent:\n${r.out.slice(0, 400)}`);
+  assert.equal(Number(m[1]), Number(m[2]) + Number(m[3]), `the census does not add up:\n${r.out.slice(0, 400)}`);
+});
+
+test('the widening does not widen the oracle grammar: a parenthetical CHECK cannot move a recorded gate-sig (issue #12 guard)', () => {
+  // The audit's recipe check is hardcoded on a row named G7, so this tree carries the same
+  // anchor the other synthetic harnesses write. The row under test labels its oracle lines
+  // with an aside and carries no gate-sig at all, so the correct reading is "declared without
+  // an oracle": the published spelling of an oracle is `  CHECK: ` and `  EXPECT: `, and a
+  // label with a parenthetical in it must not become one.
+  const anchorCheck = 'node --test test/synthetic-anchor.test.mjs';
+  const anchorExpect = 'fail 0';
+  const r = gatesIn('- [ ] G7: the synthetic anchor row the audit runs its recipe check on\n'
+    + `  CHECK: ${anchorCheck}\n  EXPECT: ${anchorExpect}\n`
+    + `  EVIDENCE: gate-sig=${shaOf(`${anchorCheck}\n${anchorExpect}`).slice(0, 16)}\n`
+    + '- [ ] P1-G94: a row that labels its oracle lines with a parenthetical\n'
+    + '  CHECK (measured at this head): node --test test/x.test.mjs\n'
+    + '  EXPECT (the printed tail): fail 0\n');
+  assert.ok(!/P1-G94: carries a CHECK\/EXPECT but no gate-sig/.test(r.out),
+    `the gate-sig recipe is sha256(CHECK value + newline + EXPECT value) on the exact published spelling. Reading ` +
+    `"CHECK (measured at this head):" as that row's oracle makes the row look like it declares an oracle the ` +
+    `recipe cannot re-derive, so a wording edit moves every sig in the ledger:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /gate-sig recomputes: 1\/1 rows that declare one/,
+    `the widening must leave the sig count alone: only the anchor row declares an oracle in the published ` +
+    `spelling, and only its sig is re-derived:\n${r.out.slice(0, 700)}`);
+  assert.match(r.out, /rows declared without an oracle \(manual evidence\): 1 - P1-G94/,
+    `a row whose oracle lines carry an aside is a row the audit reads no published oracle from - named as such, ` +
+    `not dropped:\n${r.out.slice(0, 700)}`);
+});
+
+test('the audit reads every indented claim line this ledger declares (measured against GATES.md, issue #12)', () => {
+  const declared = claimLinesUnderRows(gates);
+  const a = freshAudit();
+  const out = `${a.stdout}${a.stderr}`;
+  const m = out.match(/claim census: claim lines read (\d+)/);
+  assert.ok(m, `no claim census in the audit's output, so nothing in any tree says how many of this file's ` +
+    `${declared.length} claim lines the tool read:\n${out.slice(0, 400)}`);
+  assert.equal(Number(m[1]), declared.length,
+    `this file declares ${declared.length} indented claim lines under its rows - the count ` +
+    `scripts/ledger-name-evidence.py's prefix rule applies to - and the audit read ${m[1]}. A row the audit ` +
+    `skips is a row whose citations, gate-sig and recorded run nobody checks:\n${out.slice(0, 400)}`);
+});
