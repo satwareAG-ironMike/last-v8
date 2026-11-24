@@ -738,6 +738,24 @@ test('scripts/procedural-audit.mjs prints only what it measures: the live mesh/m
     `it cannot re-derive:\n${out.slice(-400)}`);
 });
 
+// issue #14 measured this on the tool side. The same defect sits in a durable doc: a census
+// number copied out of a gate's transcript into a file that never builds a scene cannot drift
+// in only one direction, it is wrong silently. Measured at f2dd8e7: README.md wrote `31
+// material families, 847 ... maps` and `212 members mapped, 119 moved, 205 inspectable`, while
+// the gates that count the rendered tree and the live controls printed 43 families, 921 maps
+// and 212 / 119 / 205 for that head - the surfaces had moved under the sentence, the sentence
+// had not. A doc's job is to name the gate that owns a live count, not to keep the count.
+const PART_CENSUS = /\b\d[\d,]*\s+(texture maps?|meshes|material families|inspectable members|members (?:mapped|ruled|moved|wrapped))/g;
+const DOC_CENSUS_FILES = ['README.md', 'HISTORY.md'];
+
+test('README.md and HISTORY.md name the gate that counts the live scene instead of restating its mesh/map/family census', () => {
+  for (const f of DOC_CENSUS_FILES) {
+    const text = readFileSync(f, 'utf8');
+    const copied = [...text.matchAll(PART_CENSUS)].map((m) => m[0]);
+    assert.deepEqual(copied, [], `${f} carries a hand-copied live census it cannot measure: ${copied.join('; ')}`);
+  }
+});
+
 // issue #34: the same tool's last line is the only thing separating "the procedural claim
 // holds" from "it does not", and the tool never sets an exit code, so BOTH states report
 // success. Measured at d6949ef: one poke putting `fetch("https://example.com/a.png")` into a
