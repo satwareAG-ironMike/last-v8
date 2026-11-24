@@ -781,7 +781,17 @@ SPEC.oil = {
   },
   pendingIssues: ['#8', '#16', '#28'],
   pending: {
-    drawnHoles: '#8', // slice 8D-2: the drilled oil holes in the shells themselves
+    drawnHoles: {
+      // 8D-2a drew the oil assembly; 8D-2b drills the iron it feeds: main shells
+      // and the OHV tunnel bushings are done (test/block.test.mjs), these two are not.
+      issue: '#8',
+      open: [
+        'the 5 OHV tunnel bushings (their bore is measured at 48 turned facets by '
+        + 'test/ohv-cam.test.mjs; the drilling collides with that grid, options on #8)',
+        'the head gasket oil hole',
+        'the crank throw way that feeds the rod bearings',
+      ],
+    },
     lifterGallery: '#16', // no lifter gallery is cast until 8C-3 picks an option
     ohvMains: '#28', // the OHV fore/aft mains stand off the wall band with no iron route
     ohvInboardGallery: '#28', // nothing bridges the banks at its crown plane

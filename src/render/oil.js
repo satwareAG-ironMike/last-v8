@@ -16,7 +16,7 @@
 // What this file does NOT draw, and says so:
 //   - the drilled oil holes INSIDE the iron (main-shell-*, the 56 cam shells and their
 //     cradles, the OHV tunnel bushings, the rod body). That is slice 8D-2b and
-//     SPEC.oil.pending.drawnHoles names it as issue #8.
+//     SPEC.oil.pending.drawnHoles names each one, with its issue.
 //   - the OHV inboard gallery and the OHV fore/aft main feeds (issue #28) and any
 //     lifter gallery feed (issue #16). The network publishes them as pending, so
 //     nothing is drawn for them; test/oil.test.mjs gates their absence.

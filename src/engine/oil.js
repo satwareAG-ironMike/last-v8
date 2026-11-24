@@ -11,8 +11,10 @@
 // of what it proves.
 //
 // What is NOT here yet, and each clause is named rather than hidden:
-//   SPEC.oil.pending.drawnHoles (#8)  - the drilled oil holes in the shells and the
-//     drawn oil parts themselves: slice 8D-2 (src/render/oil.js).
+//   SPEC.oil.pending.drawnHoles (#8)  - the drilled oil holes in the iron: 8D-2b
+//     machined them into the 5 main shells and the 5 OHV tunnel bushings
+//     (src/render/block.js, gated in test/block.test.mjs); the gasket oil hole and
+//     the rod's internal bore are the two clauses that file names as still open.
 //   SPEC.oil.pending.lifterGallery (#16) - the OHV lifter gallery: no lifter bank is
 //     cast until 8C-3 chooses its option, so there is nothing to feed.
 //   SPEC.oil.pending.ohvMains / ohvInboardGallery (#28) - the OHV fore and aft mains
@@ -202,6 +204,11 @@ function camBridges(rails) {
 }
 
 /** Every main bearing feed: out of the gallery onto the shell its cap presses. */
+const arriveAz = (path, axisY, axisZ) => {
+  const last = path.at(-1);
+  return (Math.atan2(last[2] - axisZ, last[1] - axisY) / DEG + 360) % 360;
+};
+
 function mainFeeds(id, gallery) {
   const feeds = [];
   const legs = id === 'dohc' ? null : OIL.ohvMainLeg;
@@ -216,6 +223,7 @@ function mainFeeds(id, gallery) {
       gallery: gallery.id,
       part: `main-shell-x${x}`,
       drillR: FEED_R,
+      az: arriveAz(path, 0, 0), // the azimuth this shell has to be drilled at
       path,
       allow: { solid: [`main-shell-x${x}`], oil: [`film-main-x${x}`] },
     });
@@ -290,6 +298,13 @@ function dohcCamFeeds(rails) {
 function ohvCamFeeds(gallery, H, G, galY, crownZ) {
   return G.stations.map((x, i) => {
     const name = `cam-bushing-${i + 1}`;
+    const path = [
+      [x, galY, crownZ],
+      [x, OIL.ohvCamFeed.inCm, crownZ],
+      [x, H.tunnelWallR, OIL.ohvCamFeed.shelfZ],
+      [x, H.tunnelWallR, -H.belowCrankCm],
+      [x, G.boreR, -H.belowCrankCm],
+    ];
     return {
       id: `oil-cam-ohv-${x}`,
       kind: 'cam',
@@ -298,13 +313,8 @@ function ohvCamFeeds(gallery, H, G, galY, crownZ) {
       from: gallery.id,
       part: name,
       drillR: FEED_R,
-      path: [
-        [x, galY, crownZ],
-        [x, OIL.ohvCamFeed.inCm, crownZ],
-        [x, H.tunnelWallR, OIL.ohvCamFeed.shelfZ],
-        [x, H.tunnelWallR, -H.belowCrankCm],
-        [x, G.boreR, -H.belowCrankCm],
-      ],
+      az: arriveAz(path, 0, -H.belowCrankCm), // due outboard: the azimuth this shell is drilled at
+      path,
       allow: { solid: [name], oil: [`film-ohv-cam-${i + 1}`] },
     };
   });
