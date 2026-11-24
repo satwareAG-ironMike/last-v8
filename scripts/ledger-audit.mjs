@@ -196,14 +196,21 @@ for (const r of rows) {
   const refs = [...blob.matchAll(/git show ([0-9a-f]{7,40}):([\w./-]+)/g)].map((x) => ({ ref: x[1], path: x[2] }));
   for (const c of cites) {
     const h = c.h;
-    const rowRefs = c.lineRefs.length ? c.lineRefs : refs;
+    // A commit pin answers only where it is spelled: a `git show <ref>:<path>` on another line
+    // of the same row is that line's claim, not an answer to this hash (measured while filling
+    // this fix: row G7 pins scripts/procedural-audit.mjs at output-sha256=e1a9e447e8aa6015 on
+    // one line and names a commit for that path on a later line; letting the later line answer
+    // the earlier hash moved one citation from "aged pin" to "resolved" on a true statement
+    // about a different sentence - 3 resolved commit against 2 with the line-local rule).
+    const rowRefs = c.lineRefs;
     const hitTracked = names.find((n) => tracked.has(n) && byName.get(n) === h);
-    const hitPin = h.length === 16 ? names.find((n) => (byName.get(n) || '').startsWith(h)) : null;
+    const hitPinRepo = h.length === 16 ? names.find((n) => tracked.has(n) && (byName.get(n) || '').startsWith(h)) : null;
+    const hitPinScratch = h.length === 16 ? names.find((n) => !tracked.has(n) && (byName.get(n) || '').startsWith(h)) : null;
     const hitRef = rowRefs.find((o) => { const hh = refOf(o.ref, o.path); return hh && (h.length === 16 ? hh.startsWith(h) : hh === h); });
     const hitScratch = names.find((n) => !tracked.has(n) && byName.get(n) === h);
-    if (hitTracked || hitPin) { bump('resolved tracked'); citeOk++; continue; }
+    if (hitTracked || hitPinRepo) { bump('resolved tracked'); citeOk++; continue; }
     if (hitRef) { bump('resolved commit'); citeOk++; continue; }
-    if (hitScratch) { bump('resolved scratch'); citeOk++; continue; }
+    if (hitScratch || hitPinScratch) { bump('resolved scratch'); citeOk++; continue; }
     const global = byHash.get(h);
     if (global) {
       bump('hashes of unnamed files');
@@ -212,23 +219,37 @@ for (const r of rows) {
     }
     // One citation, two honest sentences: the hash report names the file the row cites it
     // beside, so a reader can tell an aged pin from a hash that never existed.
-    // Pairing is positional: a name standing in front of THIS hash on THIS line is its
-    // candidate file, closest first - on a line that cites four pins, panel.js is not an
-    // answer to a question about main.js.
+    // Pairing is positional AND by kind. Positional: a name standing in front of THIS hash on
+    // THIS line, closest first - on a line citing four pins, panel.js is not an answer to a
+    // question about main.js (measured against this file: pairing every hash with the whole row
+    // instead of its line puts 36 of 50 aged-citation notes on the wrong record). By kind: a
+    // 16-hex pin claims the committed form of a repo file and a 64-hex hash claims a recorded
+    // run output, so a run hash is never matched to a source file on the line unless the line
+    // names no scratch file at all - the shape a row writes when it pins a tracked file's full
+    // content (measured: without the kind rule 24 of 28 repo-side notes name a file no
+    // 64-hex run record ever claims).
     const before = c.lineNames.map((n) => [n, c.line.lastIndexOf(n, c.at)]).filter(([, i]) => i >= 0)
       .sort((a, b) => b[1] - a[1]).map(([n]) => n);
     const pair = before.length ? before : (c.lineNames.length ? c.lineNames : names);
     const present = pair.map((n) => [n, byName.get(n)]).filter(([, hh]) => hh);
-    const near = present.find(([n, hh]) => h.length === 16 && tracked.has(n) && !hh.startsWith(h))
-      || present.find(([, hh]) => hh.slice(0, h.length) !== h);
+    const repoOnLine = present.filter(([n]) => tracked.has(n));
+    const scratchOnLine = present.filter(([n]) => !tracked.has(n));
+    const namesScratchOnLine = pair.some((n) => !tracked.has(n));
+    const aged64 = h.length === 64 && !namesScratchOnLine
+      ? repoOnLine.find(([, hh]) => hh !== h) : null;
+    const near = (h.length === 16 ? repoOnLine.find(([, hh]) => !hh.startsWith(h)) : scratchOnLine.find(([, hh]) => hh !== h))
+      || aged64;
     const absent = pair.find((n) => !byName.has(n) && !existsSync(n));
     const unread = [...new Set(rowRefs.filter((o) => refOf(o.ref, o.path) === null).map((o) => o.ref))];
-    const tail = near ? `(the row does name ${near[0]}, whose content hashes ${near[1].slice(0, 16)}... instead)`
-      : absent ? `(named ${absent}, which this tree does not carry)`
+    const aged = near && tracked.has(near[0])
+      ? `matches no content git tracks at ${near[0]}, whose content in this tree hashes ${near[1].slice(0, 16)}...`
+      : near ? `matches no scratch file on disk (the row does name ${near[0]}, whose content hashes ${near[1].slice(0, 16)}... instead)`
+        : null;
+    const tail = aged ? '' : absent ? `(named ${absent}, which this tree does not carry)`
       : unread.length ? `(commit${unread.length > 1 ? 's' : ''} ${unread.join(', ')} not readable in this tree)`
-      : '(and nothing git tracks or holds at a commit named here)';
+        : '(and nothing git tracks or holds at a commit named here)';
     bump('hashes matching nothing');
-    citeBad.push(`${r.name}: hash ${h.slice(0, 16)}... matches no scratch file on disk ${tail}`);
+    citeBad.push(`${r.name}: hash ${h.slice(0, 16)}... ${aged || `matches no scratch file on disk ${tail}`}`);
   }
   // every file the row names, present or not - and which kind of absence that is
   for (const n of names) {
