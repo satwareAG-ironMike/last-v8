@@ -5,6 +5,7 @@
 // touches no source file, so it can run at any time.
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 
@@ -32,6 +33,45 @@ const walk = (dir) => {
 for (const dir of ['tmp', 'shots']) {
   if (existsSync(dir)) walk(dir);
 }
+
+// (1b) issue #15: index what a fresh checkout actually carries. tmp/ and shots/ are
+// gitignored, so a citation naming a scratch file is unverifiable by a reviewer or a CI
+// runner no matter how sound it is; a citation naming a tracked path is verifiable in every
+// tree, and until this index existed the audit could not answer one. A row that pins a
+// committed FORM writes `git show <ref>:<path>` - that commit object, not the file as it
+// stands today, is what such a hash names, so readable commit objects are hashed too.
+const tracked = new Set();
+const gitFiles = spawnSync('git', ['ls-files', '-z'], { encoding: 'utf8' });
+const hasGitIndex = gitFiles.status === 0;
+if (hasGitIndex) {
+  for (const p of gitFiles.stdout.split('\0').filter(Boolean)) {
+    tracked.add(p);
+    if (!existsSync(p)) continue;
+    let h;
+    try {
+      h = sha(readFileSync(p));
+    } catch {
+      continue;
+    }
+    byName.set(p, h);
+    if (!byHash.has(h)) byHash.set(h, p);
+  }
+}
+const refIndex = new Map();
+const refOf = (ref, path) => {
+  const key = `${ref}:${path}`;
+  if (!refIndex.has(key)) {
+    const g = spawnSync('git', ['show', `${ref}:${path}`], { encoding: 'utf8' });
+    refIndex.set(key, g.status === 0 ? sha(Buffer.from(g.stdout, 'utf8')) : null);
+  }
+  return refIndex.get(key);
+};
+
+// Cite kinds (issue #15): the flat cite-problem list is why the issue could not be sized -
+// 135 problems in this harness tree and 293 in a git archive of the same commit, with no
+// way to tell "names a gitignored scratch file" from "hash matches nothing anywhere".
+const kinds = {};
+const bump = (k) => { kinds[k] = (kinds[k] || 0) + 1 };
 
 // (2) read the rows. One row-id grammar, shared with ROW_HEAD in
 // scripts/ledger-name-evidence.py: the bare G<id> ids this ledger used up to G7, and the
@@ -116,7 +156,8 @@ for (const r of rows) {
     }
   }
 
-  // every output hash cited anywhere in the row, resolved against the whole scratch index.
+  // Every output hash cited anywhere in the row, resolved against the scratch index, the
+  // tracked tree and the commit objects the row names (issue #15).
   // ACCEPTED CITATION SPELLINGS (issue #13): `output-sha256=`, `output=`, `driver=` and the
   // bare `sha256=`. The bare form is what this ledger's pinned-identity paragraphs write -
   // row G7's shot identities are cited that way - and until now this extractor skipped it,
@@ -127,21 +168,89 @@ for (const r of rows) {
   // scripts/ledger-name-evidence.py's name insertion and in the CITED reader of
   // test/ledger.test.mjs, which measures that agreement (issue #13's fix direction 1).
   const names = [...blob.matchAll(/\b((?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs))\b/g)].map((x) => x[1]);
-  const hexes = [...blob.matchAll(/(?:output-sha256|output|driver|sha256)=([0-9a-f]{64})/g)].map((x) => x[1]);
-  for (const h of hexes) {
-    const named = names.find((n) => byName.get(n) === h);
-    if (named) { citeOk++; continue; }
-    const global = byHash.get(h);
-    citeBad.push(`${r.name}: hash ${h.slice(0, 16)}... ${global ? `is the content of ${global}, which the row does not name` : 'matches no scratch file on disk'}`);
+  // TRACKED NAMES (issue #15): a citation may also name a path this repo's own index holds.
+  // Matched as exact index paths rather than as a widened filename regex, so a prose
+  // mention of a file that exists nowhere becomes no citation at all - the old grammar's
+  // discipline, extended to what a reviewer can actually open, not dissolved into any
+  // word ending in .js.
+  for (const p of tracked) if (blob.includes(p) && !names.includes(p)) names.push(p);
+  // SPELLINGS (issue #13) plus LENGTH (issue #15): 64 hex is a recorded run output; 16 hex
+  // is what the closed rows write when they pin the committed form of a tool or source
+  // file (row G6: scripts/ledger-fill-g6.py output-sha256=88128e080a120116). Both are read;
+  // hex64 below keeps the closed-box rule on run records alone - a source pin is not a
+  // proof that an oracle ran.
+  // A citation is read WITH its line: the file named beside a hash on the same claim line is
+  // what that hash claims (measured while filling this fix: row-wide names let a mention of
+  // GATES.md answer a question about src/ui/panel.js, which is technically true and useless).
+  const cites = [];
+  for (const line of blob.split('\n')) {
+    const lineNames = [...line.matchAll(/\b((?:tmp|shots)\/[\w./-]+?\.(?:out|png|sh|html|js|mjs))\b/g)].map((x) => x[1]);
+    for (const p of tracked) if (line.includes(p) && !lineNames.includes(p)) lineNames.push(p);
+    lineNames.sort((a, b) => line.indexOf(a) - line.indexOf(b));
+    const lineRefs = [...line.matchAll(/git show ([0-9a-f]{7,40}):([\w./-]+)/g)].map((x) => ({ ref: x[1], path: x[2] }));
+    for (const m of line.matchAll(/(?:output-sha256|output|driver|sha256)=([0-9a-f]{64}|[0-9a-f]{16})(?![0-9a-f])/g))
+      cites.push({ h: m[1], line, at: m.index, lineNames, lineRefs });
   }
-  // every scratch file the row names, present or not
+  const hexes = cites.map((c) => c.h);
+  const hex64 = hexes.filter((h) => h.length === 64);
+  const refs = [...blob.matchAll(/git show ([0-9a-f]{7,40}):([\w./-]+)/g)].map((x) => ({ ref: x[1], path: x[2] }));
+  for (const c of cites) {
+    const h = c.h;
+    const rowRefs = c.lineRefs.length ? c.lineRefs : refs;
+    const hitTracked = names.find((n) => tracked.has(n) && byName.get(n) === h);
+    const hitPin = h.length === 16 ? names.find((n) => (byName.get(n) || '').startsWith(h)) : null;
+    const hitRef = rowRefs.find((o) => { const hh = refOf(o.ref, o.path); return hh && (h.length === 16 ? hh.startsWith(h) : hh === h); });
+    const hitScratch = names.find((n) => !tracked.has(n) && byName.get(n) === h);
+    if (hitTracked || hitPin) { bump('resolved tracked'); citeOk++; continue; }
+    if (hitRef) { bump('resolved commit'); citeOk++; continue; }
+    if (hitScratch) { bump('resolved scratch'); citeOk++; continue; }
+    const global = byHash.get(h);
+    if (global) {
+      bump('hashes of unnamed files');
+      citeBad.push(`${r.name}: hash ${h.slice(0, 16)}... is the content of ${global}, which the row does not name`);
+      continue;
+    }
+    // One citation, two honest sentences: the hash report names the file the row cites it
+    // beside, so a reader can tell an aged pin from a hash that never existed.
+    // Pairing is positional: a name standing in front of THIS hash on THIS line is its
+    // candidate file, closest first - on a line that cites four pins, panel.js is not an
+    // answer to a question about main.js.
+    const before = c.lineNames.map((n) => [n, c.line.lastIndexOf(n, c.at)]).filter(([, i]) => i >= 0)
+      .sort((a, b) => b[1] - a[1]).map(([n]) => n);
+    const pair = before.length ? before : (c.lineNames.length ? c.lineNames : names);
+    const present = pair.map((n) => [n, byName.get(n)]).filter(([, hh]) => hh);
+    const near = present.find(([n, hh]) => h.length === 16 && tracked.has(n) && !hh.startsWith(h))
+      || present.find(([, hh]) => hh.slice(0, h.length) !== h);
+    const absent = pair.find((n) => !byName.has(n) && !existsSync(n));
+    const unread = [...new Set(rowRefs.filter((o) => refOf(o.ref, o.path) === null).map((o) => o.ref))];
+    const tail = near ? `(the row does name ${near[0]}, whose content hashes ${near[1].slice(0, 16)}... instead)`
+      : absent ? `(named ${absent}, which this tree does not carry)`
+      : unread.length ? `(commit${unread.length > 1 ? 's' : ''} ${unread.join(', ')} not readable in this tree)`
+      : '(and nothing git tracks or holds at a commit named here)';
+    bump('hashes matching nothing');
+    citeBad.push(`${r.name}: hash ${h.slice(0, 16)}... matches no scratch file on disk ${tail}`);
+  }
+  // every file the row names, present or not - and which kind of absence that is
   for (const n of names) {
-    if (!byName.has(n) && !existsSync(n)) citeBad.push(`${r.name}: names ${n} which is not on disk`);
+    if (byName.has(n) || existsSync(n)) continue;
+    if (refs.some((o) => o.path === n)) {
+      bump('names absent elsewhere');
+      citeBad.push(`${r.name}: names ${n}, which this tree carries at no commit it names either`);
+    } else if (tracked.has(n)) {
+      bump('names absent elsewhere');
+      citeBad.push(`${r.name}: names ${n} which is not on disk although git tracks it in this index`);
+    } else if (hasGitIndex) {
+      bump('names absent untracked');
+      citeBad.push(`${r.name}: names ${n} which is not on disk - untracked in git, so a fresh checkout of this repo carries nothing to verify it against`);
+    } else {
+      bump('names absent elsewhere');
+      citeBad.push(`${r.name}: names ${n} which is not on disk (this tree carries no git index to locate it against)`);
+    }
   }
   // A closed box is a claim that the row's oracle ran. Text cannot prove a run happened, but
   // text can prove the row points at no recorded run at all - no 64-hex citation anywhere -
   // which is a defect in every tree, gitignored scratch dirs present or not.
-  if (r.done && hexes.length === 0) {
+  if (r.done && hex64.length === 0) {
     defects.push(`${r.name}: the box reads [x] while the row names no recorded run output (no 64-hex output citation), so its checkmark rests on prose`);
   }
 }
@@ -159,6 +268,7 @@ console.log(`\ngate-sig recomputes: ${sigOk}/${withSig} rows that declare one (o
 console.log(`rows declared without an oracle (manual evidence): ${noOracle.length} - ${noOracle.join(', ') || 'none'}`);
 for (const b of sigBad) console.log(`  NOT RECOMPUTABLE: ${b}`);
 console.log(`cited output hashes resolved to a file the row names: ${citeOk}`);
+console.log(`cite census: resolved tracked ${kinds['resolved tracked'] || 0}, resolved commit ${kinds['resolved commit'] || 0}, resolved scratch ${kinds['resolved scratch'] || 0}, names absent untracked ${kinds['names absent untracked'] || 0}, hashes matching nothing ${kinds['hashes matching nothing'] || 0}${kinds['hashes of unnamed files'] ? `, hashes of unnamed files ${kinds['hashes of unnamed files']}` : ''}${kinds['names absent elsewhere'] ? `, names absent elsewhere ${kinds['names absent elsewhere']}` : ''}`);
 for (const b of citeBad) console.log(`  CITE PROBLEM: ${b}`);
 
 // (5) the verdict. What is refused here is what this tool can prove from the ledger text
