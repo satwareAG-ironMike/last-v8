@@ -327,7 +327,10 @@ function grabFrame() {
 }
 
 window.__v8 = {
-  version: 'v8-0.11-load',
+  version: 'v8.0.0', // The identity the page publishes. test/release.test.mjs pins this stamp
+  // to `v` + the package.json version, so the console stamp a reader sees and the version the
+  // tag carries are one fact rather than a load-phase marker that drifts.
+  SPEC,
   SPEC,
   bankOut,
   bankUp,
