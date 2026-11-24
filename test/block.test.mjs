@@ -19,6 +19,7 @@ import {
 import { housingInRel, housingOutRel } from '../src/engine/bearings.js';
 
 const B = SPEC.block;
+const HD = SPEC.head;
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
 
 test('design dimensions are the pinned real-world values', () => {
@@ -771,16 +772,17 @@ test('A1-G6 8E: SPEC.coolant publishes the walls a water jacket is cast in', () 
     `A1-G6 8E: the jacket's crown a ${C.jacketCrownA} is not above its floor a ${C.jacketFloorA}`);
   assert.ok(near(C.jacketXHalfCm, B.counterBayHalfX - C.bayClrCm),
     `A1-G6 8E: the jacket runs to |x| ${C.jacketXHalfCm} while the counter bays open at |x| ${B.counterBayHalfX} and the row publishes a ${C.bayClrCm} cm cast end wall`);
-  assert.ok(near(C.headFloorA, B.deckA + H.gasketT),
-    `A1-G6 8E: the coolant's floor in the head is a ${C.headFloorA} cm while the head deck face sits on the ${H.gasketT} cm compressed gasket over the ${B.deckA} cm block deck`);
+  assert.ok(near(C.headFloorA, B.deckA + HD.gasketT),
+    `A1-G6 8E: the coolant's floor in the head is a ${C.headFloorA} cm while the head deck face sits on the ${HD.gasketT} cm compressed gasket over the ${B.deckA} cm block deck`);
   assert.ok(near(C.headCrownA, O.railBand - O.feedDrillR - C.railClrCm),
     `A1-G6 8E: the coolant's roof in the head is a ${C.headCrownA} cm while this build bores its cam feed gallery at a ${O.railBand} cm with a ${O.feedDrillR} cm drill, and the row publishes a ${C.railClrCm} cm clearance between oil and water`);
   assert.ok(C.headCrownA > C.headFloorA,
     `A1-G6 8E: the head's coolant roof a ${C.headCrownA} is not above its floor a ${C.headFloorA}: the passages would have no height in the head`);
   assert.ok(Array.isArray(C.bands) && C.bands.length === 3,
     `A1-G6 8E: SPEC.coolant.bands is ${JSON.stringify(C.bands)}: the wall band each bank carries water in is one valley-side band and the two flanks the cast oil boss splits`);
-  assert.ok(Array.isArray(C.pending) && C.pending.length > 0,
-    'A1-G6 8E: SPEC.coolant.pending is empty: no pump, thermostat, hose route or drain is modelled in this tree, and a row that says "coolant passages" has to name what it did not build');
+  const open = C.pending?.open;
+  assert.ok(Array.isArray(open) && open.length > 0,
+    'A1-G6 8E: SPEC.coolant.pending names nothing it left out: no pump, thermostat, hose route or drain is modelled in this tree, and a row that says "coolant passages" has to name what it did not build');
 });
 
 test('A1-G6 8E: each bank jacket band fills the wall band and splits around the cast oil boss', async () => {
@@ -839,12 +841,14 @@ test('A1-G6 8E: a water jacket is closed, iron stands behind every wall it claim
     const p = coolantProber(net, variant);
     const bad = [];
     let faces = 0, samples = 0;
-    for (const j of net.jackets) {
+    for (const j of p.legs()) {
+      const walls = net.jackets.find((k) => k.id === j.name)?.walls;
+      if (!walls) continue;
       for (const face of ['floor', 'crown', 'inner', 'outer', 'x0', 'x1']) {
-        const claim = j.walls[face];
+        const claim = walls[face];
         if (!claim) continue;
         faces++;
-        const r = p.faceClosed(j.leg, face, claim);
+        const r = p.faceClosed(j, face, claim);
         samples += r.samples;
         bad.push(...r.offenders);
       }

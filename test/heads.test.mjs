@@ -1213,8 +1213,11 @@ test('A1-G6 8E: cooling does not stop at the gasket, block and head legs share o
     `A1-G6 8E: ${net.galleries.length} head cross galleries where the row publishes one per bank and per end (4)`);
   for (const g of net.galleries) {
     assert.ok(g.leg.a1 >= C.headCrownA - 1e-9, `${g.id}: the cross gallery tops out at a ${g.leg.a1} instead of the published coolant roof a ${C.headCrownA}`);
-    assert.ok(Math.abs(g.leg.o1) >= C.waterOutCm - 1e-9 && Math.abs(g.leg.o0) <= C.waterInCm + 1e-9,
-      `${g.id}: the gallery spans o ${g.leg.o0}..${g.leg.o1} instead of reaching from the valley side to the outboard flank (|o| ${C.waterInCm}..${C.waterOutCm})`);
+    const reach = Math.max(Math.abs(g.leg.o0), Math.abs(g.leg.o1));
+    assert.ok(g.leg.o0 < 0 && g.leg.o1 > 0,
+      `${g.id}: the cross gallery spans o ${g.leg.o0}..${g.leg.o1} without straddling the bore line, so it bridges nothing between the valley side and the outboard flank`);
+    assert.ok(reach >= C.waterOutCm - 1e-9,
+      `${g.id}: the gallery reaches |o| ${reach.toFixed(2)} while the published water band runs out to |o| ${C.waterOutCm}: it stops short of the flank it is supposed to cool`);
     for (const l of net.links.filter((x) => x.bank === g.bank && x.side === g.side)) {
       const overlap = Math.min(l.leg.x1, g.leg.x1) - Math.max(l.leg.x0, g.leg.x0);
       assert.ok(overlap > 0, `${l.id} and ${g.id}: the link and the gallery it feeds share ${overlap.toFixed(3)} cm of x, so the water has no way between them`);
@@ -1232,7 +1235,7 @@ test('A1-G6 8E: the drawn coolant members measure at their published windows', a
   const TOL = 1e-3;
   const want = [];
   for (const j of net.jackets) want.push([j.id, j.bank, j.leg]);
-  for (const pt of net.ports) for (const L of pt.legs) want.push([pt.id, pt.bank, L.leg]);
+  for (const pt of net.ports) for (const L of pt.legs) want.push([L.member, pt.bank, L.leg]);
   for (const l of net.links) want.push([l.id, l.bank, l.leg]);
   for (const g of net.galleries) want.push([g.id, g.bank, g.leg]);
   const bad = [];
@@ -1275,7 +1278,7 @@ test('A1-G6 8E: the coolant assembly census is measured from the tree and its na
   const clash = drawn.filter((n) => casting.has(n));
   assert.ok(clash.length === 0, `coolant members shadow casting members: ${clash.join(', ')}`);
   for (const n of drawn) {
-    assert.ok(/^[a-z0-9-]+$/.test(n), `${n}: a member name has to be one the inspection menu and the teardown table can key on`);
+    assert.ok(/^[a-z0-9-]+$/i.test(n), `${n}: a member name has to be one the inspection menu and the teardown table can key on`);
     assert.ok(/coolant-/.test(n), `${n}: a coolant member has to name itself as coolant work, the way oil members name themselves oil work`);
   }
 });

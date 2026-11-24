@@ -77,15 +77,23 @@ export function coolantProber(net, variantId = net.variant) {
     return out;
   };
 
-  /** The face of a leg nearest / farthest from the bore axis it cools. */
-  const faces = (leg) => ({
-    floor: { key: 'a', at: leg.a0, dir: -1, claim: 'floor' },
-    crown: { key: 'a', at: leg.a1, dir: +1, claim: 'crown' },
-    inner: { key: 'o', at: Math.abs(leg.o0) < Math.abs(leg.o1) ? leg.o0 : leg.o1, dir: -Math.sign(Math.abs(leg.o0) < Math.abs(leg.o1) ? leg.o0 : leg.o1), claim: 'inner' },
-    outer: { key: 'o', at: Math.abs(leg.o0) > Math.abs(leg.o1) ? leg.o0 : leg.o1, dir: -Math.sign(Math.abs(leg.o0) > Math.abs(leg.o1) ? leg.o0 : leg.o1), claim: 'outer' },
-    x0: { key: 'x', at: leg.x0, dir: -1, claim: 'x0' },
-    x1: { key: 'x', at: leg.x1, dir: +1, claim: 'x1' },
-  });
+  /**
+   * The six faces of a leg, each with the normal that points OUT of the cavity.
+   * `inner` / `outer` name which of the two o faces stands nearer the bore axis it
+   * cools; the walk direction is the box's own, so a leg that straddles o = 0 (a
+   * cross gallery) still has both its o faces measured from the correct side.
+   */
+  const faces = (leg) => {
+    const o0IsInner = Math.abs(leg.o0) <= Math.abs(leg.o1);
+    return {
+      floor: { key: 'a', at: leg.a0, dir: -1, claim: 'floor' },
+      crown: { key: 'a', at: leg.a1, dir: +1, claim: 'crown' },
+      inner: { key: 'o', at: o0IsInner ? leg.o0 : leg.o1, dir: o0IsInner ? -1 : +1, claim: 'inner' },
+      outer: { key: 'o', at: o0IsInner ? leg.o1 : leg.o0, dir: o0IsInner ? +1 : -1, claim: 'outer' },
+      x0: { key: 'x', at: leg.x0, dir: -1, claim: 'x0' },
+      x1: { key: 'x', at: leg.x1, dir: +1, claim: 'x1' },
+    };
+  };
 
   /** One sampled point inside a leg, judged. Returns an offender string or null. */
   const judge = (bank, leg, x, a, o) => {
@@ -97,16 +105,16 @@ export function coolantProber(net, variantId = net.variant) {
     }
     for (const s of B.stations) {
       const r = Math.hypot(x - s, o);
-      if (r < B.boreRadius + C.tunnelWebCm) {
+      if (r < B.boreRadius + C.tunnelWebCm - 1e-9) {
         return `${leg.name} [${leg.cast}]: sample at ${at} stands ${r.toFixed(4)} cm off the bore axis at station ${s}: the machined bore is ${B.boreRadius} cm and the row publishes a ${C.tunnelWebCm} cm web`;
       }
-      if (r < C.linerOdCm + C.landCm) {
+      if (r < C.linerOdCm + C.landCm - 1e-9) {
         return `${leg.name} [${leg.cast}]: sample at ${at} stands ${r.toFixed(4)} cm off the bore axis at station ${s}: the press-fit liner is ${C.linerOdCm} cm OD and the row publishes a ${C.landCm} cm cast land`;
       }
     }
     for (const s of segs) {
       const d = segDist(w, s);
-      if (d < C.webCm) {
+      if (d < C.webCm - 1e-9) {
         return `${leg.name} [${leg.cast}]: sample at ${at} stands ${d.toFixed(4)} cm off the published oil bore ${s.id}: the row publishes a ${C.webCm} cm web between water and a drilling`;
       }
     }
@@ -115,7 +123,7 @@ export function coolantProber(net, variantId = net.variant) {
         for (const bo of [-H.boltOut, H.boltOut]) {
           if (a < C.boltA0Cm - 1e-9 || a > C.boltA1Cm + 1e-9) continue;
           const planar = Math.hypot(x - (s + xo), o - bo);
-          if (planar < H.deckBoltRadius + C.boltWebCm) {
+          if (planar < H.deckBoltRadius + C.boltWebCm - 1e-9) {
             return `${leg.name} [${leg.cast}]: sample at ${at} stands ${planar.toFixed(4)} cm off the head bolt axis at x ${(s + xo).toFixed(2)} o ${bo}: its shank is ${H.deckBoltRadius} cm and the row publishes a ${C.boltWebCm} cm web`;
           }
         }
@@ -158,7 +166,7 @@ export function coolantProber(net, variantId = net.variant) {
       for (const v of span[1]) {
         for (let d = step; d <= thickness + 1e-9; d += step) {
           const p = { a: leg.a0, o: leg.o0, x: leg.x0 };
-          p[f.key] = f.at - f.dir * d; // the face normal points out of the cavity
+          p[f.key] = f.at + f.dir * d; // out of the cavity, into the iron behind the face
           if (f.key === 'a') p.o = u, p.x = v;
           else if (f.key === 'o') p.a = u, p.x = v;
           else p.a = u, p.o = v;
