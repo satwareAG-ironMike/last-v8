@@ -834,27 +834,40 @@ test('A1-G6 8E: every block jacket and riser leg is bored in drawn iron, DOHC an
   }
 });
 
-test('A1-G6 8E: a water jacket is closed, iron stands behind every wall it claims', async () => {
+test('A1-G6 8E: every published coolant passage is closed, iron stands behind every wall it claims', async () => {
   const { coolantProber } = await import('./support/coolant-iron.mjs');
   for (const variant of ['dohc', 'ohv']) {
     const net = await net8E(variant, `the ${variant} jackets have no published walls to close them`);
     const p = coolantProber(net, variant);
+    // Every published leg, block and head alike: a passage whose faces make no
+    // thickness claim is an open cavity, not a jacket or a bored way.
+    const claims = new Map();
+    for (const j of net.jackets) claims.set(j.id, j.walls);
+    for (const pt of net.ports) for (const L of pt.legs) claims.set(L.member ?? pt.id, L.walls);
+    for (const l of net.links) claims.set(l.id, l.walls);
+    for (const g of net.galleries) claims.set(g.id, g.walls);
+    const legs = p.legs();
     const bad = [];
-    let faces = 0, samples = 0;
-    for (const j of p.legs()) {
-      const walls = net.jackets.find((k) => k.id === j.name)?.walls;
-      if (!walls) continue;
+    const unclaimed = [];
+    let faces = 0, samples = 0, claimed = 0;
+    for (const leg of legs) {
+      const walls = claims.get(leg.name);
+      const own = Object.values(walls ?? {}).filter((v) => typeof v === 'number' && v > 0);
+      if (own.length === 0) { unclaimed.push(`${leg.name} [${leg.cast}]`); continue; }
+      claimed++;
       for (const face of ['floor', 'crown', 'inner', 'outer', 'x0', 'x1']) {
         const claim = walls[face];
         if (!claim) continue;
         faces++;
-        const r = p.faceClosed(j, face, claim);
+        const r = p.faceClosed(leg, face, claim);
         samples += r.samples;
         bad.push(...r.offenders);
       }
     }
-    assert.ok(faces >= net.jackets.length * 4,
-      `${variant}: only ${faces} jacket faces carry a published wall claim over ${net.jackets.length} jacket legs: a jacket whose faces make no thickness claim is not closed`);
+    assert.ok(unclaimed.length === 0,
+      `${variant}: ${unclaimed.length} of ${legs.length} published coolant legs carry no wall claim at all: ${unclaimed.slice(0, 8).join(', ')} - a leg with no claimed wall is a hole in the casting, not a closed passage`);
+    assert.ok(faces >= legs.length * 3,
+      `${variant}: only ${faces} published wall claims over ${claimed} coolant legs: a passage closed on fewer than three faces is not closed`);
     assert.ok(bad.length === 0,
       `${variant}: ${bad.length} offenders over ${faces} claimed faces (${samples} iron samples) - the jacket is not closed:\n  ${bad.slice(0, 12).join('\n  ')}`);
   }

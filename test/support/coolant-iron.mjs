@@ -71,7 +71,7 @@ export function coolantProber(net, variantId = net.variant) {
   const allLegs = () => {
     const out = [];
     for (const j of net.jackets) out.push({ ...j.leg, name: j.id, cast: j.cast, bank: j.bank });
-    for (const p of net.ports) for (const L of p.legs) out.push({ ...L.leg, name: p.id, cast: L.cast, bank: p.bank });
+    for (const p of net.ports) for (const L of p.legs) out.push({ ...L.leg, name: L.member ?? p.id, cast: L.cast, bank: p.bank });
     for (const l of net.links) out.push({ ...l.leg, name: l.id, cast: l.cast, bank: l.bank });
     for (const g of net.galleries) out.push({ ...g.leg, name: g.id, cast: g.cast, bank: g.bank });
     return out;
