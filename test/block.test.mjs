@@ -564,3 +564,158 @@ test(`${OHV_BRG}: the drawn OHV block carries five front-insert bearing rings at
   const named = new Set(solids.map((m) => m.userData.part));
   console.log(`${OHV_BRG} drawn: ${solids.length} solids, ${named.size} named parts; 5 rings at ${JSON.stringify(G.windows.map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]))} reading OD ${Math.max(...bushings.map((m) => readRing(m).maxR)).toFixed(4)} (the line bore ${G.boreR.toFixed(4)}) over ID ${Math.min(...bushings.map((m) => readRing(m).minR)).toFixed(4)} (shell inside ${G.shellIdR.toFixed(4)} on journal ${G.journalR.toFixed(4)}); retainer x ${pbb.min.x.toFixed(2)}..${pbb.max.x.toFixed(2)} r ${pr.minR.toFixed(4)}..${pr.maxR.toFixed(4)} on 2 bolts at r ${G.boltOutRel.toFixed(4)} / ${JSON.stringify(G.boltAzDeg.map((a) => +a.toFixed(2)))} deg, ${G.boltEngageCm} cm deep into the fore face`);
 });
+
+// A1-G4 / issue #8 item 5 (slice 8D-2b): the bearing iron carries its own
+// drilled oil way. The measurement below is the form test/heads.test.mjs law
+// 16 already proves the 56 DOHC cam shells with, moved to the block's own
+// bearing carriers: a radial ray out of the bearing axis through the carrier's
+// own wall either meets that wall or it does not, and the widest azimuth at
+// which it still meets nothing implies the radius of the drill that made the
+// opening. Asking only for "a void with wall beside it" is what passed a shell
+// with no drilling at all, because the band of a ring that simply is not there
+// reads as a void with wall 90 deg away.
+const OIL_WAY = 'A1-G4/issue #8 item 5 slice 8D-2b: the bearing iron carries its own drilled oil way';
+const DEG = Math.PI / 180;
+const SHELL_IN = SPEC.crank.mainRadius + 0.05; // 2.75 main shell bore: journal + published film
+const SHELL_OUT = SHELL_IN + 0.7; // 3.45 its outside face, the band main-shell-* is bored at
+const REACH_DEG = 20; // past this azimuth a void in the band is not a drilled hole:
+// it stands outside the footprint of the machined cuts, so a ring with a piece
+// missing rather than a hole bored in it is caught here
+
+/**
+ * Radial-way probe over one drawn carrier: `rays` walks the carrier's own
+ * triangles along a radial line at an azimuth about world X (psi measured from
+ * +y toward +z, the convention src/render/block.js rings are bored at), from
+ * just inside the bore to just outside the OD band. `edge` bisects outward from
+ * the published azimuth to the tangent of the opening, so the implied drilling
+ * radius is read off the carrier's own surface. `axis` is a point on THIS
+ * carrier's own axis: a ray stood on another station's axis reads open because
+ * it never meets this shell at all, which is a probe bug, not a drilling.
+ */
+const drilledWay = async (mesh, axis, az, rIn, rOut) => {
+  const THREE = await import('three');
+  const { raycast, trisOf } = await import('./support/ray-triangles.mjs');
+  const own = trisOf(mesh).filter((t) => t.label === mesh.name);
+  const o = new THREE.Vector3(...axis);
+  const dirAt = (psi) => new THREE.Vector3(0, Math.cos(psi * DEG), Math.sin(psi * DEG));
+  const hitsAt = (psi) => raycast(own, o, dirAt(psi), rIn - 0.02, rOut + 0.02).length;
+  const open = (psi) => hitsAt(psi) === 0;
+  const edge = (sign) => {
+    let near = az;
+    for (let step = REACH_DEG / 2; step > 1e-4; step /= 2) if (open(near + sign * step)) near += sign * step;
+    return Math.abs(near - az);
+  };
+  return { tris: own.length, hits: hitsAt(az), wall: [hitsAt(az - REACH_DEG), hitsAt(az + REACH_DEG)], half: [edge(-1), edge(1)], holeR: Math.sin(edge(-1) * DEG) * rOut };
+};
+
+/** The azimuth the published feed walks in from, read off its own last leg
+ * against the axis of the carrier it is bored in. */
+const fedAz = (path, axisZ = 0) => {
+  const last = path.at(-1);
+  return (Math.atan2(last[2] - axisZ, last[1]) * 180 / Math.PI + 360) % 360;
+};
+const sameAz = (a, b) => Math.abs(((a - b + 540) % 360) - 180) < GEOM_EPS;
+
+/** The wall band a carrier holds about its own axis, and how many of 360 deg of
+ * azimuth that band is actually iron at: the band a drilling has to be bored
+ * through, and how much of a facet pitch a drill of the published radius opens. */
+const drilledBand = async (mesh, axis, rIn, rOut) => {
+  const THREE = await import('three');
+  const { raycast, trisOf } = await import('./support/ray-triangles.mjs');
+  mesh.updateWorldMatrix(true, false);
+  const own = trisOf(mesh).filter((t) => t.label === mesh.name);
+  const o = new THREE.Vector3(...axis);
+  const p = mesh.geometry.attributes.position;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < p.count; i++) {
+    const v = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld);
+    const r = Math.hypot(v.y - o.y, v.z - o.z);
+    lo = Math.min(lo, r);
+    hi = Math.max(hi, r);
+  }
+  let iron = 0;
+  for (let psi = 0; psi < 360; psi += 1) {
+    const d = new THREE.Vector3(0, Math.cos(psi * DEG), Math.sin(psi * DEG));
+    if (raycast(own, o, d, rIn - 0.02, rOut + 0.02).length > 0) iron += 1;
+  }
+  return { lo, hi, iron };
+};
+
+test(`${OIL_WAY}: every drawn main bearing shell is drilled through at the azimuth its published feed arrives from, with the published drilling`, async () => {
+  const O = await import('../src/engine/oil.js');
+  const offenders = [];
+  const rows = [];
+  for (const variant of [SPEC.build.variant, 'ohv']) {
+    const { block } = await drawnBlock(variant);
+    const net = O.oilNetwork(variant);
+    const feeds = net.feeds.filter((f) => f.kind === 'main');
+    // the census is the published mains minus the ones issue #28 names pending
+    const expect = (variant === 'dohc' ? SPEC.oil.counts.dohc.mains : SPEC.oil.counts.ohv.mains) - net.pendingMains.length;
+    assert.equal(feeds.length, expect, `${variant}: ${feeds.length} main feeds published, not the ${expect} mains its drawn iron reaches`);
+    for (const feed of feeds) {
+      const mesh = block.getObjectByName(feed.part);
+      assert.ok(mesh, `${variant} ${feed.id}: the feed is bored in ${feed.part}, which the drawn ${variant} block does not have`);
+      const azList = mesh.userData.oilAz;
+      assert.ok(Array.isArray(azList) && azList.length >= 1,
+        `${variant} ${feed.part}: the drawn shell names no oil azimuth of its own, so nothing in the tree says where its oil way has to be machined`);
+      const az = azList[0];
+      assert.ok(sameAz(az, fedAz(feed.path)),
+        `${variant} ${feed.id}: the shell carries its oil azimuth at ${az} deg while the published feed walks in at ${fedAz(feed.path).toFixed(4)} deg - a hole the feed does not arrive at is decoration`);
+      const m = await drilledWay(mesh, [feed.x, 0, 0], az, SHELL_IN, SHELL_OUT);
+      if (m.hits !== 0)
+        offenders.push(`${variant} ${feed.part}: a ray along the shell's own oil azimuth ${az} deg crosses the shell wall ${m.hits} times from the ${SHELL_IN} bore to the ${SHELL_OUT} OD - the shell is cast solid where its feed has to enter, so no oil reaches this bearing's running clearance`);
+      if (m.wall[0] === 0 || m.wall[1] === 0)
+        offenders.push(`${variant} ${feed.part}: the band is still open ${REACH_DEG} deg either side of its oil azimuth (wall ${m.wall.join('/')} crossings) - a region of a shell that is simply missing is not a drilled hole`);
+      if (Math.abs(m.half[0] - m.half[1]) > 0.01)
+        offenders.push(`${variant} ${feed.part}: the opening runs -${m.half[0].toFixed(4)}..+${m.half[1].toFixed(4)} deg about its azimuth - a machined drilling is centred on the axis it was bored along`);
+      if (Math.abs(m.holeR - SPEC.oil.feedDrillR) > 0.01)
+        offenders.push(`${variant} ${feed.part} measures ${m.holeR.toFixed(4)} cm of drilling against the published ${SPEC.oil.feedDrillR} cm way SPEC.oil.feedDrillR names`);
+      rows.push(`${variant} ${feed.part}: open -${m.half[0].toFixed(4)}..+${m.half[1].toFixed(4)} deg at ${az} deg, implied hole ${m.holeR.toFixed(4)} cm, wall ${m.wall.join('/')} crossings at +/-${REACH_DEG} deg`);
+    }
+  }
+  console.log(`${OIL_WAY} main shells drilled:\n  ${rows.join('\n  ')}`);
+  assert.equal(rows.length, SPEC.oil.counts.dohc.mains + SPEC.oil.counts.ohv.mains - (await O.oilNetwork('ohv')).pendingMains.length,
+    `${rows.length} shells measured, not the 5 DOHC mains plus the OHV mains its drawn iron reaches`);
+  assert.deepEqual(offenders, [], offenders.join('\n'));
+});
+
+// The 5 OHV front-insert bushings are the carriers this slice does NOT machine, and
+// the law says so rather than pretending: it measures the band each published feed
+// has to be drilled through and the azimuth it walks in from, and it refuses the
+// tree if that clause is not named as open. The reason is a measurement collision,
+// not an unwritten route - test/ohv-cam.test.mjs law "the drawn journal rides the
+// drawn front-insert rings on exactly the published oil film" reads that ring's
+// bore as a uniform TURNED_SEGMENTS facet grid, and a SPEC.oil.feedDrillR drill in a
+// shell this size opens asin(drillR / boreR) of azimuth: the drilling's own facets
+// would sit ~2 deg apart against the bore's 7.5 deg grid. Options on issue #8.
+test(`${OIL_WAY}: the five OHV tunnel bushings each name the azimuth and the wall band their published cam feed has to be drilled through, and the tree names that drilling open`, async () => {
+  const O = await import('../src/engine/oil.js');
+  const L = await ohvLayout();
+  const G = L.ohvBearings();
+  const C = SPEC.variants.ohv.belowCrankCm;
+  const { block } = await drawnBlock('ohv');
+  const net = O.oilNetwork('ohv');
+  const feeds = net.feeds.filter((f) => f.kind === 'cam');
+  assert.equal(feeds.length, SPEC.oil.counts.ohv.cams, `the OHV network publishes ${feeds.length} cam feeds for ${SPEC.oil.counts.ohv.cams} drawn tunnel bushings`);
+  const open = net.spec.pending.drawnHoles.open;
+  assert.ok(Array.isArray(open) && open.some((s) => /bushing/i.test(s)),
+    `SPEC.oil.pending.drawnHoles.open is ${JSON.stringify(open)}: the tunnel bushings' drilling is not machined in this tree, so the row has to name it instead of leaving it unspoken`);
+  const rows = [];
+  for (const feed of feeds) {
+    const mesh = block.getObjectByName(feed.part);
+    assert.ok(mesh, `${feed.id}: the feed is bored in ${feed.part}, which the drawn OHV block does not have`);
+    const azList = mesh.userData.oilAz;
+    assert.ok(Array.isArray(azList) && azList.length >= 1,
+      `${feed.part}: the drawn bushing names no oil azimuth of its own, so the tree cannot say where its front-insert shell has to be drilled`);
+    const az = azList[0];
+    assert.ok(sameAz(az, fedAz(feed.path, -C)),
+      `${feed.id}: ${feed.part} carries its oil azimuth at ${az} deg while the published feed walks in at ${fedAz(feed.path, -C).toFixed(4)} deg`);
+    const band = await drilledBand(mesh, [feed.x, 0, -C], G.shellIdR, G.boreR);
+    assert.ok(Math.abs(band.lo - G.shellIdR) < 1e-3 && Math.abs(band.hi - G.boreR) < 1e-3,
+      `${feed.part} holds a ${band.lo.toFixed(4)}..${band.hi.toFixed(4)} cm wall band, not the ${G.shellIdR.toFixed(4)} shell bore to ${G.boreR.toFixed(4)} line bore its feed has to be drilled through`);
+    const pitch = 360 / 48; // src/engine/ohv.js TURNED_SEGMENTS
+    const opens = 2 * Math.asin(SPEC.oil.feedDrillR / G.boreR) / DEG;
+    rows.push(`${feed.part}: band ${band.lo.toFixed(4)}..${band.hi.toFixed(4)} to drill through, iron stands at ${band.iron} of 360 deg of it, its feed arrives at ${az} deg, and a ${SPEC.oil.feedDrillR} cm drill there opens ${opens.toFixed(3)} deg = ${((opens / pitch) * 100).toFixed(1)}% of the ${pitch.toFixed(2)} deg facet pitch that ring is measured at`);
+  }
+  console.log(`${OIL_WAY} OHV tunnel bushings pending the drilling decision:\n  ${rows.join('\n  ')}`);
+});

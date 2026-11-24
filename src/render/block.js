@@ -24,9 +24,11 @@ import {
   idHalfDepth,
   endDiscFaceX,
 } from '../engine/spec.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ohvBearings, ohvHousing, panPlanes, variantEntry } from '../engine/layout.js';
+import { oilNetwork } from '../engine/oil.js';
 import { boxInBank, worldBox, latheX, latheBank, machinedArc, machinedCircle } from './parts.js';
-import { alignX, extrude } from './primitives.js';
+import { alignX, circleHole, extrude } from './primitives.js';
 
 const B = SPEC.block;
 const CR = SPEC.crank;
@@ -46,6 +48,90 @@ function ringX(rOut, rIn, x0, x1) {
     [rIn, x0],
     [rOut, x0],
   ];
+}
+
+/**
+ * A1-G4 / issue #8 item 5 (slice 8D-2b): a bearing ring machined with its own
+ * radial oil drilling, built the way src/render/heads.js machines the 56 DOHC
+ * cam shells. An axially bored ring cannot carry a radial through-hole at all -
+ * a notch in an axially bored outline would cut the ring in half instead of
+ * drilling it - so the ring is bored in bands: the two end bands are turned
+ * rings, the band a drilling stands in is machined as radial cuts whose own
+ * extrusion direction IS the drilling direction. No boolean geometry exists in
+ * this repo, exactly as in heads.js.
+ *
+ * psi is measured about world X from +y toward +z, the convention these rings
+ * are bored at. Each cut's corner is compensated onto the published OD: the cut
+ * is bored from rFace = sqrt(rOut^2 - halfTang^2), so the ring keeps its
+ * published band and the machined face stands the sagitta inside it.
+ */
+const OIL_CUT_RATIO = 0.7; // one cut's azimuth half width against the ring's own angular step
+const OIL_BAND_HALF = 0.4; // axial half width of the band a drilling is machined in
+const DEG = Math.PI / 180;
+const XHAT = new THREE.Vector3(1, 0, 0);
+const forMerge = (g) => (g.index ? g.toNonIndexed() : g);
+
+/** An annulus sector about world X, bored along X: the band a drilling is not in. */
+function arcRingX(rIn, rOut, psi0, psi1, x0, x1, segs) {
+  const span = psi1 - psi0;
+  const at = (r, psi) => [r * Math.cos(psi * DEG), r * Math.sin(psi * DEG)]; // [y, z]
+  const pts = [];
+  for (let i = 0; i <= segs; i++) pts.push(at(rOut, psi0 + (span * i) / segs));
+  for (let i = 0; i <= segs; i++) pts.push(at(rIn, psi1 - (span * i) / segs));
+  const shape = new THREE.Shape();
+  pts.forEach(([y, z], i) => (i ? shape.lineTo(y, z) : shape.moveTo(y, z)));
+  shape.closePath();
+  const g = extrude(shape, x1 - x0, { bevel: 0, curveSegments: 1 });
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), XHAT));
+  g.translate((x0 + x1) / 2, 0, 0);
+  return g;
+}
+
+/**
+ * One radial cut of a bearing ring: a slab extruded ALONG the radial direction,
+ * so a circle in its outline is a radial through-drill rather than a notch.
+ * (X, d x X, d) is a right-handed basis for a radial d standing off world X,
+ * which is what keeps every face outward - the same handedness rule heads.js
+ * radialFacet follows.
+ */
+function radialCutX(bx, psi, rIn, rFace, halfAxial, cutDeg, drillR) {
+  const halfTang = Math.sin(cutDeg * DEG) * ((rIn + rFace) / 2);
+  const d = new THREE.Vector3(0, Math.cos(psi * DEG), Math.sin(psi * DEG));
+  const tang = d.clone().cross(XHAT);
+  const shape = new THREE.Shape();
+  const pts = [[-halfAxial, -halfTang], [halfAxial, -halfTang], [halfAxial, halfTang], [-halfAxial, halfTang]];
+  pts.forEach(([a, b], i) => (i ? shape.lineTo(a, b) : shape.moveTo(a, b)));
+  shape.closePath();
+  if (drillR > 0) shape.holes.push(circleHole(0, 0, drillR, false));
+  const g = extrude(shape, rFace - rIn, { bevel: 0, curveSegments: 14 });
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(XHAT, tang, d));
+  const off = new THREE.Vector3(bx, 0, 0).addScaledVector(d, (rIn + rFace) / 2);
+  g.translate(off.x, off.y, off.z);
+  return g;
+}
+
+/**
+ * The full ring a bearing shell is: turned at its two end bands, bored the long
+ * way around the middle band, and machined with three radial cuts across the
+ * published oil azimuth - the centre one carrying the drilling. The cuts cover
+ * past the arc's gap at every radius of the band, so the only opening left in
+ * the wall is the drilled hole itself.
+ */
+function drilledRingX(rIn, rOut, x0, x1, psiWay, drillR, turnedSegs) {
+  const stepDeg = 360 / turnedSegs; // the ring's own angular step: 9 deg at 40 facets
+  const cutDeg = OIL_CUT_RATIO * stepDeg;
+  const bx = (x0 + x1) / 2;
+  const mid = Math.min(OIL_BAND_HALF, (x1 - x0) / 2 - 0.2);
+  const halfTang = Math.sin(cutDeg * DEG) * ((rIn + rOut) / 2);
+  const rFace = Math.sqrt(rOut ** 2 - halfTang ** 2); // the cut's corner lands on the OD
+  return mergeGeometries([
+    latheX(ringX(rOut, rIn, x0, bx - mid), turnedSegs),
+    latheX(ringX(rOut, rIn, bx + mid, x1), turnedSegs),
+    arcRingX(rIn, rOut, psiWay + stepDeg, psiWay + 360 - stepDeg, bx - mid, bx + mid, turnedSegs - 2),
+    radialCutX(bx, psiWay, rIn, rFace, mid, cutDeg, drillR),
+    radialCutX(bx, psiWay - stepDeg, rIn, rFace, mid, cutDeg, 0),
+    radialCutX(bx, psiWay + stepDeg, rIn, rFace, mid, cutDeg, 0),
+  ].map(forMerge), false);
 }
 
 /**
@@ -120,6 +206,8 @@ function ohvEndWall(H, x0, x1, mainBoreR) {
 export function createBlock(materials, variantId = SPEC.build.variant) {
   const variant = variantEntry(variantId);
   const P = panPlanes(variantId); // the bolt planes THIS variant casts
+  const OILNET = oilNetwork(variantId); // the ways this variant's bearings are fed, and
+  // the azimuth each carrier has to be drilled at so its own feed can enter it (8D-2b)
   const H = variant.centralCam ? ohvHousing() : null;
   const group = new THREE.Group();
   group.name = 'block';
@@ -176,9 +264,23 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
     const G = ohvBearings();
     for (let i = 0; i < G.windows.length; i++) {
       const [a, b] = G.windows[i];
+      const name = `cam-bushing-${i + 1}`;
+      const feed = OILNET.feeds.find((f) => f.part === name);
+      // A1-G4 / issue #8 item 5 (slice 8D-2b): this front-insert shell is the one
+      // carrier in this tree whose drilling is NOT machined yet. Its bore is turned
+      // at the 48-facet resolution test/ohv-cam.test.mjs law "the drawn journal
+      // rides the drawn front-insert rings on exactly the published oil film"
+      // measures the running clearance against (src/engine/ohv.js TURNED_SEGMENTS),
+      // and a 0.1000 cm drill in a 3.1400 cm bore opens only
+      // asin(0.1000/3.4000) = 1.6905 deg of azimuth: drilling this ring would put
+      // the opening's own facets 1.7 deg apart against the bore's 7.5000 deg grid.
+      // The way is published and drawn (bore oil-cam-ohv-*, the azimuth is feed.az
+      // below) and the clause is named in SPEC.oil.pending.drawnHoles.open; the
+      // options are on issue #8.
       const ring = latheX(ringX(G.boreR, G.shellIdR, a, b), 48);
       ring.translate(0, 0, -H.belowCrankCm); // the ring turns about the CAM axis, not the crank's
-      put(`cam-bushing-${i + 1}`, ring, materials.bearingShell);
+      const bush = put(name, ring, materials.bearingShell);
+      if (feed) bush.userData.oilAz = [feed.az]; // where its oil way has to be machined
     }
 
     // the retainer: the front-insert cap A1-G7 names for this variant. It stands
@@ -266,7 +368,18 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
   for (const c of MAIN_CAPS_X) {
     const x0 = c - 0.9;
     const x1 = c + 0.9;
-    put(`main-shell-x${c}`, latheX(ringX(SHELL_OUT, SHELL_IN, x0 + 0.05, x1 - 0.05), 40), materials.bearingShell);
+    const name = `main-shell-x${c}`;
+    const feed = OILNET.feeds.find((f) => f.part === name);
+    // A1-G4 / issue #8 item 5 (slice 8D-2b): the shell is machined with its own
+    // drilled oil way, bored radially at the azimuth its published feed arrives
+    // from. A main this variant does not feed - the OHV fore and aft mains, named
+    // pending on issue #28 - stays a plain turned ring: drilling a bearing the
+    // published network does not feed would draw a way to nowhere.
+    const shell = feed
+      ? drilledRingX(SHELL_IN, SHELL_OUT, x0 + 0.05, x1 - 0.05, feed.az, SPEC.oil.feedDrillR, 40)
+      : latheX(ringX(SHELL_OUT, SHELL_IN, x0 + 0.05, x1 - 0.05), 40);
+    const sh = put(name, shell, materials.bearingShell);
+    if (feed) sh.userData.oilAz = [feed.az];
     if (c === MAIN_CAPS_X[0] || c === MAIN_CAPS_X[4]) continue; // fore/aft mains ride the end discs
     if (H) {
       for (const sgn of [1, -1]) {
