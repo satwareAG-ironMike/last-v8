@@ -542,7 +542,16 @@ export const SPEC = {
       id: 'ohv',
       badgeWord: 'OHV',
       centralCam: true,
-      drawn: false,
+      // Slice 8C-3b (issue #16 option B): the follower hardware whose host iron
+      // this casting machines IS drawn - 16 lifters standing in the 16 bores
+      // ohvLifterGallery() cuts. What is not drawn is named beside the flag, so
+      // drawn: true cannot read as "the whole train is done".
+      drawn: true,
+      pendingHardware: [
+        { family: 'pushrods', issue: '#16', why: 'no pushrod host iron is cast in this block' },
+        { family: 'rockers', issue: '#16', why: 'no rocker stud or pedestal is cast in this block' },
+        { family: 'covers', issue: '#16', why: 'the rocker covers that replace the cam bosses stand on the rocker iron this block does not cast yet' },
+      ],
       belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
       // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
       // lobes swing in is BORED - its machined face is the swept outline plus this
@@ -796,7 +805,7 @@ SPEC.oil = {
         'the crank throw way that feeds the rod bearings',
       ],
     },
-    lifterGallery: '#16', // no lifter gallery is cast until 8C-3 picks an option
+    lifterGallery: '#16', // the gallery is cast and its 16 lifters are drawn; the FEED drilling is still owed (row A1-G4)
     ohvMains: '#28', // the OHV fore/aft mains stand off the wall band with no iron route
     ohvInboardGallery: '#28', // nothing bridges the banks at its crown plane
   },

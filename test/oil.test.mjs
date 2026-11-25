@@ -44,9 +44,10 @@
 //     wall from r 3.40 to 4.28 (tmp/8d-gap10.out, tmp/8d-ohvfix.out).
 //
 // What this file does NOT gate, and says so:
-//   - the OHV LIFTER GALLERY feed. SPEC.variants.ohv.drawn is false and issue #16
-//     has not chosen a casting option yet, so no lifter gallery exists to feed.
-//     Law 10 names that clause as pending instead of pretending it is done.
+//   - the drilling that feeds the OHV LIFTER GALLERY. The gallery is cast (slice
+//     8C-3a) and its 16 followers are drawn (slice 8C-3b); no drilling into it is
+//     bored yet, so law 10 names that clause pending on #16 instead of pretending
+//     the feed exists.
 //   - the OHV fore and aft main bearings and the OHV inboard gallery. The drawn
 //     carriers stand 4.70 cm off the wall band and no iron bridges the banks at the
 //     crown plane, so neither can be bored to (issue #28). Law 3 and law 8 name them
@@ -639,14 +640,23 @@ test('oil: every oil count is generated from the published position lists and ma
   }
 });
 
-test('oil: the OHV lifter gallery stays a named pending clause while slice 8C-3 is undecided', async () => {
+test('oil: the OHV lifter gallery is cast and its followers are drawn, while the drilling that feeds it stays a named pending clause', async () => {
   const o = await O();
   const net = o.oilNetwork('ohv');
-  assert.equal(SPEC.variants.ohv.drawn, false, 'the OHV follower train is drawn: the pending clause has to be re-gated');
-  assert.equal(net.lifterGallery.pending, '#16', 'the lifter gallery clause is not named as pending on issue #16');
-  assert.equal(net.lifterGallery.feed, null, 'a lifter gallery feed exists while no lifter gallery is cast: 8C-3 has not landed');
-  assert.equal(net.feeds.some((f) => f.kind === 'lifter'), false, 'a lifter feed is claimed with no lifters in the tree');
+  const L = await import('../src/engine/layout.js');
+  // slice 8C-3a cast the gallery, slice 8C-3b drew the 16 followers it bores:
+  // what this clause is still pending on is the FEED, not the gallery
+  assert.equal(SPEC.variants.ohv.drawn, true, 'the oil laws read the OHV lifter gallery as cast iron and its followers as drawn: the switch has to say so');
+  const GAL = L.ohvLifterGallery();
+  assert.equal(Object.values(GAL.banks).reduce((n, b) => n + b.bores.length, 0), L.followers('ohv').lifters,
+    'the oil clause names a lifter gallery the block does not machine bores for');
+  assert.equal(net.lifterGallery.pending, '#16', 'the lifter gallery feed clause is not named as pending on issue #16');
+  assert.equal(net.lifterGallery.feed, null, 'a lifter gallery feed is claimed while no drilling into that gallery is bored (row A1-G4)');
+  assert.equal(net.feeds.some((f) => f.kind === 'lifter'), false, 'a lifter feed is claimed with no drilling bored for it');
+  assert.ok(net.lifterGallery.why && /drilling/i.test(net.lifterGallery.why),
+    `the pending clause has to say what is missing beside the drawn followers, reads "${net.lifterGallery.why}"`);
   assert.equal(o.oilSpec('ohv').pendingIssues.includes('#16'), true, 'SPEC.oil does not name issue #16 as the open clause');
+  console.log(`oil lifter gallery: ${GAL.boreRadius.toFixed(4)} cm bores x ${L.followers('ohv').lifters} drawn lifters, feed ${net.lifterGallery.feed === null ? 'null' : 'claimed'} pending ${net.lifterGallery.pending}`);
 });
 
 test('oil: the DOHC build, its default variant and its published geometry are untouched by the oil system', async () => {

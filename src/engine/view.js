@@ -336,10 +336,10 @@ export function mountClearLift(box, shift, mount, at = 0, clearance = SPEC.stand
 // --------------------------------------------------------------- inspection ---
 /** Human-readable identity of a pickable part, read from its name. */
 export function partLabel(name) {
-  const perCyl = /^(piston|rod|valve|spring|bucket)-cyl(\d+)(?:-(intake|exhaust))?$/.exec(name);
+  const perCyl = /^(piston|rod|valve|spring|bucket|lifter)-cyl(\d+)(?:-(intake|exhaust))?$/.exec(name);
   if (perCyl) {
     const c = SPEC.cylinders.find((k) => k.num === Number(perCyl[2]));
-    const what = { piston: 'Piston', rod: 'Connecting rod', valve: 'Valve', spring: 'Valve spring', bucket: 'Spring bucket (tappet)' }[perCyl[1]];
+    const what = { piston: 'Piston', rod: 'Connecting rod', valve: 'Valve', spring: 'Valve spring', bucket: 'Spring bucket (tappet)', lifter: 'Lifter (flat tappet, in its block bore)' }[perCyl[1]];
     const side = perCyl[3] ? ` ${perCyl[3]}` : '';
     const station = c ? `station ${SPEC.block.stations[c.station]}, ${c.bank === 'L' ? 'left' : 'right'} bank, fire ${c.powerTDC}\u00b0` : '';
     return `${what} - cylinder ${perCyl[2]}${side} - ${station}`;
