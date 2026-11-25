@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { SPEC, bankOut, bankUp, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
 import { bearingStack } from '../src/engine/bearings.js';
+import { partLabel } from '../src/engine/view.js';
 import { createHeads } from '../src/render/heads.js';
 import { closestToShell, newShell, REACH, shellAdd } from './support/surface-clearance.mjs';
 import {
@@ -1519,6 +1520,11 @@ test(`${TRAIN}: the OHV build draws 16 lifters, each one inside the void its blo
       `${f.name}: its body stands ${linerMin.toFixed(4)} cm off its cylinder's bore axis, and this block casts liner iron out to ${SPEC.block.boreShellRadius} cm`);
     perBank[f.bank] += 1;
     rows.push(`${f.bank}${f.cyl}${f.valve[0]} r${rMax.toFixed(4)} face ${faceVerts}v/${faceSpread.toFixed(5)} t${tMin.toFixed(3)}..${tMax.toFixed(3)} guide ${guide.toFixed(4)} iron ${inIron} crank ${crankMin.toFixed(4)} liner ${linerMin.toFixed(4)}`);
+    // the inspection menu has to be able to NAME the part it picks
+    const lbl = partLabel(f.name);
+    assert.notEqual(lbl, f.name, `${f.name}: partLabel() returns the raw name, so the inspection menu drops this lifter`);
+    assert.ok(/lifter/i.test(lbl) && lbl.includes(`cylinder ${f.cyl}`) && lbl.includes(f.valve),
+      `partLabel("${f.name}") reads "${lbl}" - it has to name a lifter and the cylinder and valve it serves`);
   }
   for (const bank of Object.keys(SPEC.banks)) {
     assert.equal(perBank[bank], G.banks[bank].bores.length,
