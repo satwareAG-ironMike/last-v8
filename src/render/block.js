@@ -23,9 +23,11 @@ import {
   MAIN_CAPS_X,
   idHalfDepth,
   endDiscFaceX,
+  bankUp,
+  bankOut,
 } from '../engine/spec.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { ohvBearings, ohvHousing, panPlanes, variantEntry } from '../engine/layout.js';
+import { ohvBearings, ohvHousing, ohvLifterGallery, panPlanes, variantEntry } from '../engine/layout.js';
 import { oilNetwork } from '../engine/oil.js';
 import { boxInBank, worldBox, latheX, latheBank, machinedArc, machinedCircle } from './parts.js';
 import { alignX, circleHole, extrude } from './primitives.js';
@@ -203,6 +205,52 @@ function ohvEndWall(H, x0, x1, mainBoreR) {
   return ohvSection(H, [cam, main], x0, x1);
 }
 
+/**
+ * A1-G6 / issue #16 option B (slice 8C-3a): one piece of one bank's gallery rib.
+ *
+ * A rib is machined ALONG the lifter axis (parallel to this bank's cylinder
+ * bores, through the cam axis), so the two lifter bores it carries are holes
+ * bored through the iron the rib is cast as - the same hole-path idiom
+ * ohvEndWall bores its cam tunnel with. The outline is the published cast wall
+ * outside each bore, and the relief the crank-side room demands is not a pad
+ * under the rib: it is the rib's own inboard face.
+ *
+ * The room does not stop at the bore, it also eats the iron the bore stands in.
+ * The published wall outside the bore (ribIn) stays clear of the room only up to
+ * the station where the room's arc crosses it (stepT), so each rib is two prisms
+ * machined against the same bore: the mouth block from the machined tunnel face
+ * to that station at the full cast wall, and the guide wall from there to the
+ * guide's outboard end, standing on the room's own arc (wallIn). They share the
+ * plane stepT and the bore runs through both, and the rib's outboard face reaches
+ * past the crankcase void wall ID at the mouth - that is what ties the gallery
+ * into the casting.
+ */
+function ohvGalleryRib(G, bank, cluster, span, inFace, name) {
+  const g = G.banks[bank];
+  const sgn = SPEC.banks[bank].outSign;
+  const up = bankUp(bank);
+  const outv = bankOut(bank);
+  const ribOut = g.axisOut + G.boreRadius + G.castWallCm;
+  const [x0, x1] = cluster;
+  const shape = new THREE.Shape();
+  shape.moveTo(x0, sgn * inFace);
+  shape.lineTo(x1, sgn * inFace);
+  shape.lineTo(x1, sgn * ribOut);
+  shape.lineTo(x0, sgn * ribOut);
+  shape.closePath();
+  const bored = g.bores.filter((b) => b.x >= x0 && b.x <= x1);
+  for (const b of bored) shape.holes.push(circleHole(b.x, sgn * g.axisOut, G.boreRadius));
+  const geo = extrude(shape, span[1] - span[0], { bevel: 0, curveSegments: 24 });
+  geo.translate(0, 0, g.axisAlong + (span[0] + span[1]) / 2); // local z is `along`
+  geo.applyMatrix4(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, sgn * outv[1], sgn * outv[2]),
+    new THREE.Vector3(0, up[1], up[2])
+  ));
+  geo.computeVertexNormals();
+  return { geo, bored, name };
+}
+
 export function createBlock(materials, variantId = SPEC.build.variant) {
   const variant = variantEntry(variantId);
   const P = panPlanes(variantId); // the bolt planes THIS variant casts
@@ -314,6 +362,24 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
         G.foreFaceX - G.boltEngageCm, G.plateForeX + G.boltHeadCm,
         yc - G.boltCircumR, yc + G.boltCircumR,
         zc - G.boltCircumR, zc + G.boltCircumR, 0.15), materials.fastenerDark);
+    }
+
+    // A1-G6 / issue #16 option B (slice 8C-3a): the lifter gallery this variant
+    // casts for its 16 lifters - four cluster ribs per bank, each carrying the
+    // two bores of one cylinder, bored through the rib's own iron. Each rib is
+    // the mouth block plus the guide wall the crank-side room leaves room for.
+    const GAL = ohvLifterGallery();
+    for (const bank of ['L', 'R']) {
+      GAL.banks[bank].clusters.forEach(([x0, x1], i) => {
+        const parts = [
+          ohvGalleryRib(GAL, bank, [x0, x1], [GAL.banks[bank].guideFrom, GAL.banks[bank].stepT], GAL.banks[bank].ribIn, `gallery-${bank}-${i + 1}`),
+          ohvGalleryRib(GAL, bank, [x0, x1], [GAL.banks[bank].stepT, GAL.banks[bank].guideTo], GAL.banks[bank].wallIn, `gallery-${bank}-${i + 1}-guide`),
+        ];
+        for (const p of parts) {
+          const rib = put(p.name, p.geo, materials.castIronBlock);
+          rib.userData.bores = p.bored.map((b) => b.name);
+        }
+      });
     }
   }
 
