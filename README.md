@@ -93,8 +93,9 @@ walking under the plate is structurally impossible rather than unlucky.
 | Authority | `src/engine/animation.js` | `state.theta` (crank angle), `state.rpm` (`RPM_MIN` 0 / `RPM_MAX` 4000), slow-motion factor |
 | Authority | `src/engine/view.js` | the view law as pure math: cutaway plane from the published home pose, explode directions from real assembly axes, part-bank reading - no DOM, no per-part magic number |
 | Authority | `src/engine/oil.js` | the published drilling network: 59 DOHC bores over 431 legs, 18 OHV bores over 66 legs (supply way, galleries, flank legs, head crossings, main/rod/cam feeds, pump, pickup, gauge), every bore with its own drilling radius and the bearing it feeds |
+| Authority | `src/engine/coolant.js` | the published water passages: the jacket bands each bank carries water in, the deck risers bored through block and head as one shared window, the head end links and the cross galleries in each head end wall, each face with the cast wall it claims to stand in - and `SPEC.coolant.pending`, which names the pump, thermostat, radiator, hoses and drain this build does not model. Its member census is measured from the drawn tree by the A1-G6 laws, not copied here |
 | Plumbing | `src/ui/viewControls.js` | applies that law to the live scene graph: the member table (mapped / moved / inspectable, all three printed live by `node test/controls.smoke.mjs` rather than copied into this file), the mount hardware, and the published `state()` - including `frameRange`, what an inspection asked the rig to stand at |
-| Renderer | `src/render/*.js` | block, heads, cranktrain, valvetrain, manifolds, stand, spark plugs, the drawn oil drilling network, materials - all procedural |
+| Renderer | `src/render/*.js` | block, heads, cranktrain, valvetrain, manifolds, stand, spark plugs, the drawn oil drilling network, the drawn coolant jackets and passages, materials - all procedural |
 | UI | `src/ui/cameraRig.js`, `src/ui/panel.js`, `src/main.js` | camera goal-damping and the control surface |
 
 The renderer is driven from one number: the crank angle. `cranktrain.update(deg)` and
