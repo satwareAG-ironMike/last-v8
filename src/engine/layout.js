@@ -477,6 +477,65 @@ export function ohvLifterGallery() {
 }
 
 /**
+ * The 16 followers the bores above hold (issue #16 option B, slice 8C-3b): one
+ * flat-tappet lifter per valve, standing in its own bore, riding its own lobe.
+ * Nothing here is a choice either - the body radius is the bore less the oil
+ * film the bore is machined for, the length is the station where a body that
+ * wide stops on the room the crank swings are owed, and the travel is the
+ * ground base circle to the outline the cam sweeps.
+ *
+ * The contact face is a PLANE across the bore axis at the distance the lobe's
+ * tangent plane stands from the cam axis (src/engine/timing.js lobeFaceDistance,
+ * read through src/engine/ohv.js ohvLift), so a lifter face is never cut by the
+ * profile it rides - the outline is the envelope of those planes.
+ */
+export function ohvLifters(G = ohvLifterGallery(), H = ohvHousing()) {
+  const baseR = SPEC.head.camBaseRadius; // the circle a follower sits on at zero lift
+  const liftMax = H.worstOutlineR - baseR; // the ground nose over that circle
+  if (liftMax <= 0) {
+    throw new Error(`the cam's widest outline ${H.worstOutlineR} cm is not wider than the ${baseR} cm base circle its followers ride, so this variant has no lift to give them`);
+  }
+  const lifters = [];
+  for (const [bank, g] of Object.entries(G.banks)) {
+    for (const bore of g.bores) {
+      const faceMin = baseR; // at zero lift the face stands on the base circle
+      const faceMax = baseR + liftMax; // at full lift it stands on the swept outline
+      lifters.push({
+        name: bore.name, cyl: bore.cyl, valve: bore.valve, bank, x: bore.x,
+        radius: G.stemRadius, boreRadius: G.boreRadius, oilFilm: G.oilFilm,
+        length: g.bodyLength,
+        faceMin, faceMax,
+        topMin: faceMin + g.bodyLength, topMax: faceMax + g.bodyLength,
+        axisOut: g.axisOut, axisAlong: g.axisAlong,
+        guideFrom: g.guideFrom, guideTo: g.guideTo,
+        engagementMin: faceMin + g.bodyLength - g.guideFrom,
+        engagementMax: g.guideTo - g.guideFrom,
+        // the closest the body's own surface ever comes to the crank axis: the
+        // outboard end, measured across the film the room is owed by
+        crankClearR: Math.hypot(g.axisAlong + g.bodyTop, g.axisOut - G.stemRadius),
+        linerClearR: g.axisOut - G.stemRadius, // off its own cylinder's bore axis line
+      });
+    }
+  }
+  return {
+    lifters,
+    baseRadius: baseR,
+    liftMaxCm: liftMax,
+    bodyRadius: G.stemRadius,
+    boreRadius: G.boreRadius,
+    oilFilm: G.oilFilm,
+    bodyLengthCm: G.banks.L.bodyLength,
+    engagementMinCm: Math.min(...lifters.map((l) => l.engagementMin)),
+    engagementMaxCm: Math.max(...lifters.map((l) => l.engagementMax)),
+    crankClearCm: Math.min(...lifters.map((l) => l.crankClearR)),
+    reliefR: G.reliefR,
+    crankSideAirCm: G.crankSideAirCm,
+    maxSweep: G.maxSweep,
+    tunnelBoreR: G.tunnelBoreR,
+  };
+}
+
+/**
  * The bolt planes each variant casts, and the sump that hangs off them. The DOHC
  * build reads the published planes; the OHV build reads its own skirt.
  */
