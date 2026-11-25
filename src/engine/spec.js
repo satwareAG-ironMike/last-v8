@@ -812,6 +812,44 @@ SPEC.oil = {
 };
 
 /**
+ * A1-G7 / issue #18 ask 1 (slice 8C-3d): the main bearing seat this block machines for the
+ * three central mains it carries itself, and the air its cast iron keeps from everything
+ * the crank swings. Both are published here because until now neither was a fact of the
+ * build: the only crank-side air in this file (SPEC.variants.ohv.tunnel.crankSideAirCm) is
+ * a cam tunnel fact, and no number anywhere stated what bore a block-side main rides in.
+ *
+ * The seat bore IS the bearing shell's own outside face, so its radius is derived from the
+ * shell contract above (film + wall on the journal) rather than written as a second number
+ * beside it - src/render/block.js, src/engine/oil.js and test/support/oil-iron.mjs all
+ * derive the same 3.4500 from these three published values.
+ *
+ * The seat is LINE BORED, not an interference fit: the casting is machined to the shell OD
+ * and the shell is pressed into that bore, so the intended interference is 0.0000. The
+ * central supports are CAST with their flat top on castTopCm, this far below the crank
+ * axis; the bore dips past that plane and machines a dish out of it. That dish is the iron
+ * the 8C-3d slice removes - 0.1000 cm at the DOHC necks and 0.0907 cm at the OHV cap lugs,
+ * measured off the drawn faces by tmp/8c3d-red.mjs and now gated by
+ * test/crankblock.test.mjs.
+ */
+SPEC.block.mainSeat = {
+  boreCm: SPEC.crank.mainRadius + SPEC.oil.mainShell.filmCm + SPEC.oil.mainShell.wallCm, // 3.4500
+  castTopCm: 3.35, // the nominal plane the central main supports are cast on, 0.1000 short of the bore bottom
+  interferenceCm: 0, // line contact at the bore: decision recorded on #18 (2026-11-24), machine it out
+};
+
+/**
+ * The least air any cast-iron face of this block keeps from any outline the crank swings
+ * (src/engine/layout.js crankSwings(): the rod big end at 7.1000, the counterweight lobe
+ * tip at 6.3000, the crank pin sweep at 6.4000, each over its own x bands). It is an axial
+ * clearance, not a radial one: an OHV main cap lug reaches MAIN_CAPS_X 11 plus 2.3000 to x
+ * 13.300, and the crank pin at throw 16.5000 half-width SPEC.crank.pinWidth/2 2.9000
+ * sweeps from x 13.600. test/crankblock.test.mjs measures the drawn iron against it in both
+ * builds and prints the tightest reading. Issue #47 records why the cap cannot simply move
+ * further inboard: the swept bands are the room the crank itself needs.
+ */
+SPEC.block.crankCastAirCm = 0.3;
+
+/**
  * The cooling of both builds (issue #8 addendum item 1, GATES row A1-G6 slice 8E):
  * the walls a water jacket is cast in and the planes its passages are bored between.
  * Like SPEC.oil, this table routes and dimensions the cavities; it adds no geometry
