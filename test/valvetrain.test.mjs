@@ -8,12 +8,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { SPEC, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
+import { SPEC, bankOut, bankUp, camAxisStation, wrap360, signedAngle } from '../src/engine/spec.js';
 import { bearingStack } from '../src/engine/bearings.js';
+import { partLabel } from '../src/engine/view.js';
 import { createHeads } from '../src/render/heads.js';
 import { closestToShell, newShell, REACH, shellAdd } from './support/surface-clearance.mjs';
 import {
-  lobeProfileRadius, lobeIndexAngle, lobeAzimuth, followerAzimuth,
+  lobeProfileRadius, lobeIndexAngle, lobeAzimuth, followerAzimuth, camAzimuth,
   lobeContactLift, lobeHalfCamDeg,
   valveLift, valveAxisPoint, valveSeatPoint, valveAxisDir, camAxisPoint,
   eventMid, crankEvent, cycleAngle,
@@ -27,12 +28,21 @@ const EPS = 1e-3;
 const camGroupNames = ['cam-L-intake', 'cam-L-exhaust', 'cam-R-intake', 'cam-R-exhaust'];
 const valves = ['intake', 'exhaust'];
 
-async function buildValvetrain() {
+async function buildValvetrain(variantId = SPEC.build.variant) {
   const { createValvetrain } = await import('../src/render/valvetrain.js');
   const mats = {};
   for (const n of ['camShaft', 'camLobe', 'bucket', 'springSteel', 'valveIntake', 'valveExhaust', 'fastenerDark', 'chainSteel'])
     mats[n] = new THREE.MeshStandardMaterial({ name: n });
-  return createValvetrain(mats);
+  return createValvetrain(mats, variantId);
+}
+
+/** How many parts of one drawn group carry one follower word in their name or kind. */
+function censusWords(group, word) {
+  let hits = 0;
+  group.traverse((o) => {
+    if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1;
+  });
+  return hits;
 }
 
 function count(group, prefix) {
@@ -1235,7 +1245,7 @@ test(`${OHV_LAW}: the published OHV cam axis clears everything that swings past 
   assert.ok(below > 0, `row A1-G6 has to fix this before the OHV cam can be cast: the bored tunnel floor at ${floorZ} cm `
     + `stands ${below.toFixed(2)} cm below the crankcase drum this tree casts (caseOuterRadius ${SPEC.block.caseOuterRadius}), `
     + `and ${(-floorZ - SPEC.block.panRailZ).toFixed(2)} cm below the pan-rail face at ${SPEC.block.panRailZ}`);
-  assert.equal(SPEC.variants.ohv.drawn, false, 'no law may read the OHV cam tunnel as cast while it is not: the variant has to say so');
+  assert.equal(SPEC.variants.ohv.drawn, true, 'every law in this block reads the OHV cam tunnel as cast iron: the variant has to say so');
   console.log(`${OHV_LAW} placement: C ${Cc} cm on the bisector, tunnel bore ${tunnel.boreR.toFixed(4)} / face ${tunnel.faceR.toFixed(4)} / floor ${floorZ.toFixed(2)} cm, `
     + `widest outline ${worst.toFixed(4)} cm; swings ${margins.join('; ')} (lobe sweep / bearing column); `
     + `liners ${linerReadings.join('; ')}; skirt bottom ${skirtWorst.toFixed(3)} cm; tunnel floor ${below.toFixed(2)} cm under caseOuterRadius ${SPEC.block.caseOuterRadius}`);
@@ -1268,30 +1278,390 @@ test(`${OHV_LAW}: a cam clearance law reads the widest outline the cam can prese
     + `${realLaw.toFixed(3)} cm as the law this row gates`);
 });
 
-test(`${OHV_LAW}: the OHV valvetrain is a published contract and not a drawn part - the scene still carries exactly the cams the switch names`, async () => {
+test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and every family still owed is named`, async () => {
   const L = await ohvLayout();
-  assert.equal(SPEC.variants.ohv.drawn, false, 'the OHV variant has to publish that its geometry is not built yet');
-  const { group } = await buildValvetrain();
-  const want = [...L.camGroupNames()].sort();
-  for (const name of want) assert.ok(group.getObjectByName(name), `the published switch names the camshaft "${name}" and the drawn valve train has no such part`);
+  const owed = L.followers('ohv');
+  assert.equal(SPEC.variants.ohv.drawn, true, 'the block machines the 16 lifter bores and the build draws the 16 followers that stand in them: the switch has to say so');
+  const pending = SPEC.variants.ohv.pendingHardware;
+  assert.ok(Array.isArray(pending) && pending.length > 0, 'drawn: true beside an undrawn train is a claim the spec has to bound: pendingHardware has to name what is still owed');
+  for (const p of pending) {
+    assert.ok(owed[p.family] > 0, `pendingHardware names "${p.family}", which this variant's own contract does not owe (${JSON.stringify(owed)})`);
+    assert.ok(/^#\d+$/.test(p.issue), `pendingHardware family "${p.family}" is not tied to an open issue: "${p.issue}"`);
+    assert.ok(p.why && p.why.length > 10, `pendingHardware family "${p.family}" names no reason a reader can check`);
+  }
+  const named = pending.map((p) => p.family).sort();
+  assert.deepEqual([...named].sort(), ['covers', 'pushrods', 'rockers'],
+    `pendingHardware has to name exactly the follower families the OHV build does not draw, measured ${named.join(', ')}`);
+
+  // the DOHC build beside it: four camshafts, buckets, and no lifter in it
+  const dohc = (await buildValvetrain('dohc')).group;
+  const wantDOHC = [...L.camGroupNames('dohc')].sort();
+  assert.equal(wantDOHC.length, L.cams('dohc'), 'the switch has to name as many camshafts as it counts');
+  for (const name of wantDOHC) assert.ok(dohc.getObjectByName(name), `the DOHC switch names the camshaft "${name}" and the drawn valve train has no such part`);
   // read the semantic kind, not a name prefix: 'cam-sprocket-*' shares the
   // prefix with 'cam-L-intake' and would poison a prefix-only filter
-  const drawn = new Set();
-  group.traverse((o) => { if (o.userData && o.userData.part === 'camshaft' && o.parent) drawn.add(o.parent.name); });
-  assert.deepEqual([...drawn].sort(), want,
-    `the camshafts drawn in the valve train ${[...drawn].sort().join(', ')} have to be exactly the ones the switch names, ${want.join(', ')}`);
-  assert.equal(want.length, L.cams(), 'the switch has to name as many camshafts as it counts');
-  const banned = ['lifter', 'pushrod', 'push-rod', 'rocker', 'cover'];
-  for (const word of banned) {
+  const drawnDOHC = new Set();
+  dohc.traverse((o) => { if (o.userData && o.userData.part === 'camshaft' && o.parent) drawnDOHC.add(o.parent.name); });
+  assert.deepEqual([...drawnDOHC].sort(), wantDOHC,
+    `the camshafts drawn in the DOHC valve train ${[...drawnDOHC].sort().join(', ')} have to be exactly the ones the switch names, ${wantDOHC.join(', ')}`);
+  let dohcLifters = 0;
+  dohc.traverse((o) => { if (o.name.toLowerCase().includes('lifter')) dohcLifters += 1; });
+  assert.equal(dohcLifters, 0, `the DOHC build draws ${dohcLifters} lifter(s): that variant rides buckets on its overhead cams, not lifters in a block gallery`);
+
+  // the OHV build: the one cam the switch names plus the followers its bores hold
+  const ohv = (await buildValvetrain('ohv')).group;
+  const wantOHV = [...L.camGroupNames('ohv')].sort();
+  assert.equal(wantOHV.length, L.cams('ohv'), 'the OHV switch has to name as many camshafts as it counts');
+  for (const name of wantOHV) assert.ok(ohv.getObjectByName(name), `the OHV switch names the camshaft "${name}" and the drawn valve train has no such part`);
+  const G = L.ohvLifterGallery();
+  const bores = Object.values(G.banks).flatMap((b) => b.bores.map((o) => o.name)).sort();
+  const lifters = [];
+  ohv.traverse((o) => { if (o.userData && o.userData.part === 'lifter') lifters.push(o.name); });
+  assert.deepEqual(lifters.sort(), bores,
+    `the lifters drawn in the OHV valve train (${lifters.length}: ${lifters.slice(0, 3).join(', ')}...) have to be exactly the ${bores.length} bores the block machines`);
+  assert.equal(lifters.length, owed.lifters, `the OHV build draws ${lifters.length} lifters for the ${owed.lifters} its own contract counts`);
+  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover']) {
     let hits = 0;
-    group.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
-    assert.equal(hits, 0, `the tree draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.drawn is false: `
-      + `either the OHV geometry is drawn - and then the switch has to flip in the same step as the block that houses the cam - or it is not`);
+    ohv.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
+    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: `
+      + `hardware may not appear in the scene before the iron that houses it is cast`);
   }
-  console.log(`${OHV_LAW} drawn: switch ${SPEC.build.variant} -> ${want.join(', ')}; 0 lifters, pushrods, rockers or rocker covers in the valve train; `
-    + `the ohv contract ${JSON.stringify(L.followers('ohv'))} is still owed`);
+  console.log(`${OHV_LAW} drawn: switch ${SPEC.build.variant} -> dohc ${wantDOHC.join(', ')} with buckets, ohv ${wantOHV.join(', ')} with ${lifters.length} lifters in ${bores.length} bores; `
+    + `still owed and named: ${pending.map((p) => `${p.family} (${owed[p.family]}, ${p.issue})`).join(', ')}`);
 });
 
+// ---------------------------------------------------------------------------
+// SLICE 8C-3b (issue #16 option B, GATES A1-G6 / P1-G7 / A1-G7): the followers
+// that ride the gallery slice 8C-3a machined. Written RED first: every law in
+// this block measures a part that does not exist at the commit this block is
+// committed at, and each was proven red on its own evidence before anything was
+// implemented (tmp/v8-8c3b-red1.out).
+//
+// What this block does NOT close: the 16 pushrods, 16 rockers and 2 rocker
+// covers the same contract owes (slice 8C-3c), and the drilling that feeds this
+// gallery (row A1-G4, issue #16). SPEC.variants.ohv.drawn stays false until the
+// whole train is drawn, and the laws that gate that switch say so.
+// ---------------------------------------------------------------------------
+const TRAIN = 'OHV-TRAIN';
+const CORNER = 1e-4; // a float32 vertex can only hold a float64 machined value this closely
+
+const ohvBuilt = async () => {
+  const { createValvetrain } = await import('../src/render/valvetrain.js');
+  const mats = {};
+  for (const n of ['camShaft', 'camLobe', 'bucket', 'springSteel', 'valveIntake', 'valveExhaust', 'fastenerDark', 'chainSteel'])
+    mats[n] = new THREE.MeshStandardMaterial({ name: n });
+  const built = createValvetrain(mats, 'ohv');
+  built.group.updateMatrixWorld(true);
+  return built;
+};
+
+/** Every vertex of one drawn mesh, in world cm. */
+function worldVerts(o) {
+  o.updateWorldMatrix(true, false);
+  const pos = o.geometry.attributes.position;
+  const out = new Array(pos.count);
+  for (let i = 0; i < pos.count; i++) out[i] = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+  return out;
+}
+
+
+/** One published lifter's own frame: its axis line, and how to read a point in it. */
+function lifterFrame(L, f) {
+  const d = new THREE.Vector3().fromArray(bankUp(f.bank));
+  const origin = new THREE.Vector3(0, 0, -L.ohvHousing().belowCrankCm);
+  const anchor = new THREE.Vector3(f.x, origin.y, origin.z); // the axis crosses the cam axis at x = the lobe centre
+  return {
+    d,
+    origin,
+    t: (p) => p.clone().sub(anchor).dot(d), // cm from the cam axis along the bore axis
+    perp: (p) => { const v = p.clone().sub(anchor); return v.addScaledVector(d, -v.dot(d)).length(); },
+    offCrank: (p) => Math.hypot(p.y, p.z),
+    offCam: (p) => Math.hypot(p.y - origin.y, p.z - origin.z),
+    // distance off the cylinder bore's own axis line: the liner this lifter must never enter
+    offLiner: (p) => Math.abs(p.y * d.z - p.z * d.y),
+  };
+}
+
+/**
+ * The gallery iron this block casts for one bank, read in the frame its ribs are
+ * extruded in (src/render/block.js ohvGalleryRib): x across the bank, `out` off
+ * the crank axis in this bank's own out direction, `t` along the lifter axis from
+ * the cam axis. Two prisms per rib - the mouth block at the full cast wall and
+ * the guide wall standing on the room arc - and the bore that runs through both.
+ */
+function galleryIron(L, bank) {
+  const G = L.ohvLifterGallery();
+  const g = G.banks[bank];
+  const up = bankUp(bank), outv = bankOut(bank);
+  const ribOut = g.axisOut + G.boreRadius + G.castWallCm;
+  const prisms = [
+    { t0: g.guideFrom, t1: g.stepT, in: g.ribIn },
+    { t0: g.stepT, t1: g.guideTo, in: g.wallIn },
+  ];
+  return {
+    // the rib's shape carries sgn * out and its basis carries sgn * outv, so the
+    // two signs cancel: a world point reads back as out = p . outv for BOTH banks
+    at: (p) => ({ x: p.x, t: (p.y * up[1] + p.z * up[2]) - g.axisAlong, out: p.y * outv[1] + p.z * outv[2] }),
+    inIron: (q) => prisms.find((pr) => q.t >= pr.t0 && q.t <= pr.t1 && q.out >= pr.in && q.out <= ribOut) || null,
+    inBore: (q) => (q.t < g.guideFrom - CORNER || q.t > g.guideTo + CORNER ? null
+      : g.bores.find((b) => Math.hypot(q.x - b.x, q.out - g.axisOut) <= G.boreRadius + CORNER) || null),
+    ribOut, prisms,
+  };
+}
+
+test(`${TRAIN}: the 16 bores the OHV block machines publish the 16 followers that stand in them`, async () => {
+  const L = await ohvLayout();
+  const E = await import('../src/engine/ohv.js');
+  const G = L.ohvLifterGallery();
+  const Hs = L.ohvHousing();
+  const F = L.ohvLifters();
+  const cam = E.ohvCamLayout();
+  const owed = L.followers('ohv').lifters;
+  assert.equal(F.lifters.length, owed, `the switch owes ${owed} lifters for ${SPEC.cylinders.length} valves and the gallery publishes ${F.lifters.length}`);
+  const bores = Object.values(G.banks).flatMap((b) => b.bores.map((o) => o.name)).sort();
+  assert.deepEqual(F.lifters.map((o) => o.name).sort(), bores,
+    'a lifter has to be the part the block bored a bore for, same name, nothing extra: gallery '
+    + `${bores.length} bores, followers ${F.lifters.length}`);
+  const centre = new Map(cam.lobes.map((l) => [`${l.cyl.num}-${l.valve}`, l.centre]));
+  const base = SPEC.head.camBaseRadius;
+  for (const f of F.lifters) {
+    const g = G.banks[f.bank];
+    const key = `cyl${f.cyl}-${f.valve}`;
+    assert.ok(Math.abs(f.radius - G.stemRadius) < 1e-9, `${key}: the lifter body is ${f.radius} cm, not the ${G.stemRadius} cm the bore's own running clearance leaves`);
+    assert.ok(Math.abs(f.boreRadius - G.boreRadius) < 1e-9, `${key}: its bore reads ${f.boreRadius} cm against the ${G.boreRadius} cm the gallery machines`);
+    assert.ok(Math.abs(f.radius + f.oilFilm - f.boreRadius) < 1e-9,
+      `${key}: body ${f.radius} + film ${f.oilFilm} does not equal its bore ${f.boreRadius} - the oil film has to BE the clearance between a lifter and its bore`);
+    assert.ok(Math.abs(f.x - centre.get(`${f.cyl}-${f.valve}`)) < 1e-9,
+      `${key}: the lifter stands at x ${f.x} but the lobe it rides is centred at x ${centre.get(`${f.cyl}-${f.valve}`)} - a follower has to stand over its own lobe`);
+    assert.ok(Math.abs(f.length - g.bodyLength) < 1e-9, `${key}: body length ${f.length} is not the ${g.bodyLength} cm the gallery derives`);
+    assert.ok(Math.abs(f.faceMin - base) < 1e-9,
+      `${key}: at zero lift its cam-side face stands at t ${f.faceMin}, not on the ${base} cm ground base circle it rides`);
+    assert.ok(Math.abs(f.faceMax - Hs.worstOutlineR) < 1e-9,
+      `${key}: at full lift its face stands at t ${f.faceMax}, not on the ${Hs.worstOutlineR} cm outline the cam sweeps`);
+    assert.ok(Math.abs(f.topMax - g.bodyTop) < 1e-9,
+      `${key}: at full lift its outboard end reaches t ${f.topMax}, past the ${g.bodyTop} cm station where a body this wide stands on the ${G.reliefR} cm room the crank swings are owed`);
+    assert.ok(f.faceMin < G.tunnelBoreR,
+      `${key}: its foot at t ${f.faceMin} never reaches the machined tunnel face at ${G.tunnelBoreR}, so it could not ride a lobe that turns in that tunnel`);
+    assert.ok(f.engagementMin > 0,
+      `${key}: at zero lift the body is held by only ${f.engagementMin} cm of guide, so it would come out of its bore`);
+    assert.ok(Math.abs(f.engagementMax - (f.guideTo - f.guideFrom)) < 1e-9,
+      `${key}: at full lift it is held by ${f.engagementMax} cm of a guide ${f.guideTo - f.guideFrom} cm long`);
+    assert.ok(f.crankClearR >= G.reliefR,
+      `${key}: the closest its body ever comes to the crank axis is ${f.crankClearR.toFixed(4)} cm, inside the ${G.reliefR} cm room the crank-side swings are owed`);
+    assert.ok(f.crankClearR - G.maxSweep >= G.crankSideAirCm - 1e-9,
+      `${key}: ${f.crankClearR.toFixed(4)} cm off the crank against a ${G.maxSweep.toFixed(4)} cm swing is ${(f.crankClearR - G.maxSweep).toFixed(4)} cm of air, under the ${G.crankSideAirCm} cm this variant publishes`);
+    assert.ok(f.linerClearR >= SPEC.block.boreShellRadius,
+      `${key}: its body comes within ${f.linerClearR.toFixed(4)} cm of its cylinder's bore axis, and this block casts liner iron out to ${SPEC.block.boreShellRadius} cm`);
+  }
+  const f0 = F.lifters[0];
+  console.log(`${TRAIN} derivation: ${F.lifters.length} lifters, body r ${f0.radius.toFixed(5)} in a ${f0.boreRadius.toFixed(5)} bore (film ${f0.oilFilm.toFixed(4)}), `
+    + `length ${f0.length.toFixed(5)}, face t ${f0.faceMin.toFixed(5)}..${f0.faceMax.toFixed(5)}, outboard end ${f0.topMin.toFixed(5)}..${f0.topMax.toFixed(5)}, `
+    + `guide ${f0.guideFrom.toFixed(5)}..${f0.guideTo.toFixed(5)} holding ${f0.engagementMin.toFixed(5)}..${f0.engagementMax.toFixed(5)} cm, `
+    + `nearest approach to the crank ${f0.crankClearR.toFixed(5)} (room ${G.reliefR.toFixed(4)}, sweep ${G.maxSweep.toFixed(4)}), `
+    + `off its cylinder's bore axis ${f0.linerClearR.toFixed(5)} (liner shell ${SPEC.block.boreShellRadius})`);
+});
+
+test(`${TRAIN}: the OHV build draws 16 lifters, each one inside the void its block bores for it`, async () => {
+  const L = await ohvLayout();
+  const E = await import('../src/engine/ohv.js');
+  const G = L.ohvLifterGallery();
+  const F = L.ohvLifters();
+  const built = await ohvBuilt(); // the baked pose is theta = 0, and theta = 0 is not zero lift for every lobe
+  const perBank = { L: 0, R: 0 };
+  const rows = [];
+  for (const f of F.lifters) {
+    const m = built.group.getObjectByName(f.name);
+    assert.ok(m && m.isMesh, `the block machined a lifter bore named "${f.name}" and the OHV valve train draws no such part`);
+    assert.equal(m.userData.part, 'lifter', `${f.name}: userData.part reads "${m.userData.part}" - the inspection menu has to read a lifter`);
+    assert.equal(m.userData.cyl, f.cyl, `${f.name}: userData.cyl reads ${m.userData.cyl}, not cylinder ${f.cyl}`);
+    const g = G.banks[f.bank];
+    const fr = lifterFrame(L, f);
+    const iron = galleryIron(L, f.bank);
+    const verts = worldVerts(m);
+    let rMax = -Infinity, tMin = Infinity, tMax = -Infinity;
+    let crankMin = Infinity, linerMin = Infinity, inIron = 0, faceVerts = 0, faceSpread = 0, faceR = 0;
+    for (const p of verts) {
+      const t = fr.t(p), perp = fr.perp(p);
+      if (t < tMin) tMin = t;
+      if (t > tMax) tMax = t;
+      if (perp > rMax) rMax = perp;
+      const rr = fr.offCrank(p); if (rr < crankMin) crankMin = rr;
+      const ll = fr.offLiner(p); if (ll < linerMin) linerMin = ll;
+      const q = iron.at(p);
+      if (!iron.inBore(q) && iron.inIron(q)) inIron += 1;
+      if (t <= tMin + CORNER) { faceVerts += 1; faceSpread = Math.max(faceSpread, Math.abs(t - tMin)); faceR = Math.max(faceR, perp); }
+    }
+    assert.equal(inIron, 0, `${f.name}: ${inIron} of its ${verts.length} vertices stand inside the gallery iron this block casts `
+      + `(the rib prisms from the machined tunnel face t ${g.guideFrom.toFixed(4)} to the guide end t ${g.guideTo.toFixed(4)}, `
+      + `iron out to r ${iron.ribOut.toFixed(4)} off the crank) and outside every bore it machines - a follower may only stand in a void its block bored`);
+    // a drawn prism carries its vertices on its two end faces, so the guide hold is
+    // the overlap of the body's own span with the machined bore window, not a vertex count
+    const guide = Math.min(tMax, g.guideTo) - Math.max(tMin, g.guideFrom);
+    const lift0 = E.ohvLift(SPEC.cylinders.find((c) => c.num === f.cyl), f.valve, 0);
+    const want = Math.min(f.faceMin + lift0 + f.length, g.guideTo) - Math.max(f.faceMin + lift0, g.guideFrom);
+    assert.ok(guide > 0 && Math.abs(guide - want) < CORNER,
+      `${f.name}: its body overlaps the bore this block bored for it (t ${g.guideFrom.toFixed(4)}..${g.guideTo.toFixed(4)}) by ${guide.toFixed(5)} cm, `
+      + `not the ${want.toFixed(5)} cm the guide gives a body at the ${lift0.toFixed(5)} cm lift it rides in the baked pose`);
+    assert.ok(G.boreRadius - rMax >= G.oilFilm - CORNER,
+      `${f.name}: the drawn body leaves only ${(G.boreRadius - rMax).toFixed(5)} cm inside its ${G.boreRadius.toFixed(4)} cm bore, under the ${G.oilFilm.toFixed(4)} cm oil film this tree runs every bearing on`);
+    assert.ok(Math.abs(rMax - f.radius) < CORNER,
+      `${f.name}: the drawn body measures r ${rMax.toFixed(5)} off its axis, not the published ${f.radius.toFixed(5)} cm the bore less the oil film gives`);
+    // a FLAT tappet: the cam-side face is one plane across the bore axis and it
+    // spans the whole body, or the follower is not riding the lobe face to face
+    assert.ok(faceVerts > 8 && faceSpread <= CORNER && Math.abs(faceR - f.radius) < CORNER,
+      `${f.name}: its cam-side face is ${faceVerts} vertices spread ${faceSpread.toFixed(6)} cm along the axis out to r ${faceR.toFixed(5)}, not a ${f.radius.toFixed(5)} cm flat plane across the bore`);
+    assert.ok(tMin >= f.faceMin - CORNER && tMax <= f.faceMin + F.liftMaxCm + f.length + CORNER,
+      `${f.name}: the drawn body spans t ${tMin.toFixed(5)}..${tMax.toFixed(5)}, outside the ${f.faceMin.toFixed(5)}..${(f.faceMin + F.liftMaxCm + f.length).toFixed(5)} this variant can ever occupy`);
+    assert.ok(Math.abs(tMin - (f.faceMin + lift0)) < CORNER && Math.abs(tMax - (f.faceMin + lift0 + f.length)) < CORNER,
+      `${f.name}: in the baked pose its body stands at t ${tMin.toFixed(5)}..${tMax.toFixed(5)} against the ${f.faceMin.toFixed(5)}..${(f.faceMin + f.length).toFixed(5)} the gallery publishes plus the ${lift0.toFixed(5)} cm lift its lobe gives at crank 0`);
+    assert.ok(crankMin >= G.reliefR - CORNER,
+      `${f.name}: its ${verts.length} vertices stand no nearer than ${crankMin.toFixed(4)} cm to the crank axis - inside the ${G.reliefR.toFixed(4)} cm room the crank-side swings are owed`);
+    assert.ok(linerMin >= SPEC.block.boreShellRadius - CORNER,
+      `${f.name}: its body stands ${linerMin.toFixed(4)} cm off its cylinder's bore axis, and this block casts liner iron out to ${SPEC.block.boreShellRadius} cm`);
+    perBank[f.bank] += 1;
+    rows.push(`${f.bank}${f.cyl}${f.valve[0]} r${rMax.toFixed(4)} face ${faceVerts}v/${faceSpread.toFixed(5)} t${tMin.toFixed(3)}..${tMax.toFixed(3)} guide ${guide.toFixed(4)} iron ${inIron} crank ${crankMin.toFixed(4)} liner ${linerMin.toFixed(4)}`);
+    // the inspection menu has to be able to NAME the part it picks
+    const lbl = partLabel(f.name);
+    assert.notEqual(lbl, f.name, `${f.name}: partLabel() returns the raw name, so the inspection menu drops this lifter`);
+    assert.ok(/lifter/i.test(lbl) && lbl.includes(`cylinder ${f.cyl}`) && lbl.includes(f.valve),
+      `partLabel("${f.name}") reads "${lbl}" - it has to name a lifter and the cylinder and valve it serves`);
+  }
+  for (const bank of Object.keys(SPEC.banks)) {
+    assert.equal(perBank[bank], G.banks[bank].bores.length,
+      `bank ${bank} draws ${perBank[bank]} lifters for the ${G.banks[bank].bores.length} bores its gallery machines`);
+  }
+  for (const word of ['bucket', 'shim']) {
+    let hits = 0;
+    built.group.traverse((o) => { if (o.name.toLowerCase().includes(word)) hits += 1; });
+    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}": this variant rides lifters in bores, not the DOHC build's buckets`);
+  }
+  console.log(`${TRAIN} drawn: ${perBank.L} + ${perBank.R} lifters, every one inside its own bore with the published oil film left in it, `
+    + `0 of ${rows.length} bodies standing in gallery iron, ${rows[0]}; sample ${rows.slice(1, 3).join(', ')}`);
+});
+
+test(`${TRAIN}: every lifter rides its own lobe on the flat-follower contact law and never cuts into it`, async () => {
+  const L = await ohvLayout();
+  const E = await import('../src/engine/ohv.js');
+  const F = L.ohvLifters();
+  const cam = E.ohvCamLayout();
+  const built = await ohvBuilt();
+  const camGroup = built.group.getObjectByName(L.camGroupNames('ohv')[0]);
+  assert.ok(camGroup, `the switch names "${L.camGroupNames('ohv')[0]}" and the OHV build draws no such cam`);
+  const scratch = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  let worstCut = -Infinity, worstGap = 0, cutAt = '', gapAt = '', contour = Infinity;
+  const STEPS = 180; // 720 crank degrees at 4-degree steps
+  const CUT = 1e-6;
+  for (const f of F.lifters) {
+    const own = camGroup.children.filter((o) => o.name.startsWith('lobe-'));
+    assert.equal(own.length, cam.lobes.length, `the cam draws ${own.length} lobes for the ${cam.lobes.length} ohvCamLayout() publishes`);
+    // every drawn lobe whose ground faces span this lifter's own x footprint can
+    // reach its contact face: the lifter is 2 x 0.48500 wide, a lobe 1.65000
+    const band = own.filter((o) => {
+      o.geometry.computeBoundingBox();
+      const bb = o.geometry.boundingBox;
+      return bb.min.x <= f.x + f.radius + CORNER && bb.max.x >= f.x - f.radius - CORNER;
+    });
+    assert.ok(band.length >= 1, `${f.name}: no drawn lobe spans its x footprint ${f.x.toFixed(4)} +/- ${f.radius.toFixed(4)} - the follower would ride nothing`);
+    assert.ok(band.every((o) => {
+      const bb = o.geometry.boundingBox;
+      return bb.min.x <= f.x - f.radius + CORNER && bb.max.x >= f.x + f.radius - CORNER;
+    }), `${f.name}: a lobe that reaches its footprint is narrower than the footprint, so the lifter's face would stand past the ground face it rides`);
+    // an extruded lobe carries its vertices on its two ground faces; the profile
+    // is the same on both, so one face is the whole contour
+    const lobe = camGroup.children.find((o) => o.name === `lobe-cyl${f.cyl}-${f.valve}`);
+    assert.ok(lobe, `${f.name}: the cam draws no lobe named "lobe-cyl${f.cyl}-${f.valve}" for this lifter to ride`);
+    lobe.geometry.computeBoundingBox();
+    const faceX = lobe.geometry.boundingBox.min.x;
+    const pos = lobe.geometry.attributes.position;
+    const pts = [];
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.abs(pos.getX(i) - faceX) > CORNER) continue;
+      pts.push([pos.getX(i), pos.getY(i), pos.getZ(i)]);
+    }
+    if (pts.length < contour) contour = pts.length;
+    assert.ok(pts.length >= cam.profileSamples, `${f.name}: its own lobe carries ${pts.length} contour vertices on a ground face, under the ${cam.profileSamples}-step contour ohvCamLayout() grounds it at`);
+    const d = new THREE.Vector3().fromArray(bankUp(f.bank));
+    const cyl = SPEC.cylinders.find((c) => c.num === f.cyl);
+    for (let s = 0; s < STEPS; s++) {
+      const theta = s * 4;
+      built.update(theta);
+      built.group.updateMatrixWorld(true);
+      camGroup.getWorldQuaternion(quat); // the drawn turn, not a re-derived one
+      let reach = -Infinity;
+      for (const [lx, ly, lz] of pts) {
+        scratch.set(lx, ly, lz).applyQuaternion(quat);
+        const proj = scratch.y * d.y + scratch.z * d.z; // cm off the cam axis along this lifter's axis
+        if (proj > reach) reach = proj;
+      }
+      const face = SPEC.head.camBaseRadius + E.ohvLift(cyl, f.valve, theta);
+      const cut = reach - face;
+      if (cut > worstCut) { worstCut = cut; cutAt = `${f.name} at ${theta} crank deg (the drawn lobe reaches ${reach.toFixed(5)}, the lifter face stands at ${face.toFixed(5)})`; }
+      const gap = face - reach;
+      if (gap > worstGap) { worstGap = gap; gapAt = `${f.name} at ${theta} crank deg`; }
+    }
+  }
+  // the drawn outline is a float32 vertex buffer, so a machined 3.10000 cm nose
+  // can only be held to about 2e-7 here; CUT is 1e-6 cm, a thousand times tighter
+  // than the 1e-3 cm penetration tolerance row A1-G1 gates the DOHC lobes at
+  assert.ok(worstCut <= CUT, `a lobe cuts into its follower: ${cutAt} stands ${worstCut.toFixed(7)} cm past the lifter's contact face - `
+    + `the outline is the envelope of the planes flat followers ride (src/engine/timing.js lobeFaceDistance), so no drawn lobe may cross one`);
+  assert.ok(worstGap <= 2 * cam.profileChordErrCm + CORNER,
+    `the drawn lobes stop reaching their followers: the widest gap between a drawn contour and the lifter face it rides is `
+    + `${worstGap.toFixed(5)} cm at ${gapAt}, over the ${cam.profileChordErrCm.toFixed(5)} cm a ${cam.profileSamples}-step contour sinks inside its own machined outline (twice that is the bound)`);
+  console.log(`${TRAIN} contact: 16 lifters x ${STEPS} crank poses, ${contour} contour vertices per lobe face, worst cut ${worstCut.toFixed(6)} cm (0 owed), `
+    + `worst gap ${worstGap.toFixed(6)} cm against a ${cam.profileChordErrCm.toFixed(6)} cm contour chord error, nose lift ${F.liftMaxCm.toFixed(4)} cm`);
+});
+
+test(`${TRAIN}: the OHV train poses every lifter by exactly the lift its lobe publishes, once per 720 degrees`, async () => {
+  const L = await ohvLayout();
+  const E = await import('../src/engine/ohv.js');
+  const F = L.ohvLifters();
+  const built = await ohvBuilt();
+  const base = SPEC.head.camBaseRadius;
+  const poses = [0, 30, 90, 150, 210, 270, 330, 400, 480, 560, 640, 719];
+  let worst = 0, worstAt = '';
+  for (const theta of poses) {
+    built.update(theta);
+    built.group.updateMatrixWorld(true);
+    for (const f of F.lifters) {
+      const m = built.group.getObjectByName(f.name);
+      const fr = lifterFrame(L, f);
+      const c = new THREE.Vector3();
+      m.getWorldPosition(c);
+      const lift = E.ohvLift(SPEC.cylinders.find((k) => k.num === f.cyl), f.valve, theta);
+      const want = base + lift + f.length / 2;
+      const got = fr.t(c);
+      if (Math.abs(got - want) > worst) { worst = Math.abs(got - want); worstAt = `${f.name} at ${theta} crank deg: drawn t ${got.toFixed(5)} against ${want.toFixed(5)}`; }
+    }
+  }
+  assert.ok(worst < CORNER, `the animation does not pose the followers on the published lift: ${worstAt} is off by ${worst.toFixed(6)} cm`);
+  for (const f of F.lifters) {
+    const cyl = SPEC.cylinders.find((k) => k.num === f.cyl);
+    let windows = 0, peak = 0, peakAt = 0, held = Infinity;
+    const lifts = [];
+    for (let theta = 0; theta < 720; theta++) lifts.push(E.ohvLift(cyl, f.valve, theta));
+    for (let theta = 0; theta < 720; theta++) {
+      const lift = lifts[theta];
+      // a window starts where this sample lifts and the one before it (wrapping
+      // the 720 deg seam) does not
+      if (lift > 1e-9 && lifts[(theta + 719) % 720] <= 1e-9) windows += 1;
+      if (lift > peak) { peak = lift; peakAt = theta; }
+      const top = base + lifts[theta] + f.length;
+      held = Math.min(held, Math.min(top, f.guideTo) - Math.max(base + lifts[theta], f.guideFrom));
+    }
+    assert.equal(windows, 1, `${f.name}: its lobe lifts it ${windows} times per 720 crank degrees; one valve event per cycle is what row P1-G1 gates`);
+    assert.ok(Math.abs(peak - F.liftMaxCm) < 1e-9, `${f.name}: peak lift ${peak.toFixed(5)} cm is not the ${F.liftMaxCm.toFixed(5)} cm the ground nose over the base circle gives`);
+    const mid = ((crankEvent(cyl, eventMid(f.valve)) % 720) + 720) % 720;
+    assert.ok(Math.abs(signedAngle(peakAt - mid)) <= 1,
+      `${f.name}: lift peaks at ${peakAt} crank degrees, ${signedAngle(peakAt - mid).toFixed(2)} off the ${mid} deg its valve event is published at`);
+    assert.ok(held >= f.engagementMin - 1e-9,
+      `${f.name}: the least guide hold across the cycle is ${held.toFixed(5)} cm, under the ${f.engagementMin.toFixed(5)} cm its bore publishes at zero lift`);
+  }
+  console.log(`${TRAIN} animation: ${poses.length} poses x 16 lifters, worst pose error ${worst.toFixed(6)} cm; `
+    + `1 lift window per lifter per 720 deg, peak ${F.liftMaxCm.toFixed(4)} cm at its published event, `
+    + `guide hold never under ${Math.min(...F.lifters.map((k) => k.engagementMin)).toFixed(5)} cm`);
+});
 // ---------------------------------------------------------------------------
 // A1-G2 CLOSURE CLAUSE (issue #24 dialogue, 2026-11-23): this row's own CHECK
 // has to measure BOTH halves of its own wording. The nine laws of the OHV
@@ -1333,7 +1703,16 @@ test(`${OHV_LAW}: this row's own CHECK measures the OHV drive too - it runs test
     env,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const out = `${r.stdout}\n${r.stderr}`;
+  // node stamps every reporter summary with that run's wall clock, and this law
+  // pastes the child's whole report into its own failure text. A recorded run of
+  // this law then hashes differently on every re-run - measured on two identical
+  // negative controls, tmp/v8-8c3b-nc-az-tilt.out and tmp/v8-8c3b-nc-az-tilt2.out,
+  // which differed only in the child's duration_ms line. scripts/ledger-run.sh
+  // strips those stamps for the same reason; the embedded report is stripped the
+  // same way, so a hash this row cites stays re-derivable.
+  const out = `${r.stdout}\n${r.stderr}`.split('\n')
+    .map((line) => line.replace(/ \([0-9]+\.?[0-9]*ms\)$/, ''))
+    .filter((line) => !/^\s*(?:\u2139|#) duration_ms /.test(line)).join('\n');
   // the same two reporter spellings scripts/ledger-run.sh accepts: node 24's
   // spec reporter (`ℹ pass 9`) and node 22 on a CI runner (`# pass 9`)
   const counts = (label) => Number(((out.match(new RegExp(`^(?:ℹ|#) ${label} (\\d+)$`, 'm')) || [])[1]));

@@ -6,14 +6,15 @@
 // Written RED first: every law below measures a part that did not exist at the
 // commit this file was committed at (tmp/v8-8c-red.out, tmp/v8-8c-red2.out).
 //
-// What this file does NOT draw and says so out loud: the follower train (16
-// lifters, 16 pushrods, 16 rockers, 2 rocker covers - SPEC.variants.ohv.drawn is
-// still false) and this variant's crank-to-cam chain (A1-G2's open half).
+// What this file does NOT draw and says so out loud: the rest of the follower
+// train (16 pushrods, 16 rockers, 2 rocker covers - named in
+// SPEC.variants.ohv.pendingHardware; the 16 lifters landed in slice 8C-3b) and
+// this variant's crank-to-cam chain (A1-G2's open half).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SPEC, wrap360, signedAngle } from '../src/engine/spec.js';
-import { ohvBearings, ohvHousing, camGroupNames, lobes as lobeCount, cams as camCount } from '../src/engine/layout.js';
+import { followers, ohvBearings, ohvHousing, ohvLifterGallery, camGroupNames, lobes as lobeCount, cams as camCount } from '../src/engine/layout.js';
 import {
   camAzimuth, crankEvent, eventMid, eventDuration, lobeProfileRadius, lobeHalfCamDeg, lobeMaxRadius,
 } from '../src/engine/timing.js';
@@ -136,16 +137,27 @@ test(`${LAW}: the switch builds exactly one central cam in the V, on the publish
     `the cam carries ${journals.length} journal stubs for the ${B.stations.length} front-insert rings this variant's block bores`);
   assert.equal(lobeMeshes.length, 16, `${lobeMeshes.length} lobes drawn on the central cam, not 16`);
   assert.ok(necks.length > 0, 'a cam of journals and lobes with nothing joining them is a set of discs, not a cam');
-  for (const word of ['lifter', 'pushrod', 'push-rod', 'rocker', 'cover', 'bucket', 'shim', 'spring', 'valve-']) {
+  // slice 8C-3a machined the 16 lifter bores and slice 8C-3b draws the followers
+  // that stand in them, so the cam is no longer alone in this variant's train.
+  // What is still owed is named in SPEC.variants.ohv.pendingHardware, and no part
+  // of an owed family may appear before the iron that houses it is cast.
+  const GAL = ohvLifterGallery();
+  const bores = Object.values(GAL.banks).flatMap((b) => b.bores.map((o) => o.name)).sort();
+  const lifters = [];
+  group.traverse((o) => { if (o.userData && o.userData.part === 'lifter') lifters.push(o.name); });
+  assert.deepEqual(lifters.sort(), bores,
+    `the OHV build draws ${lifters.length} lifters (${lifters.slice(0, 3).join(', ')}...) and the block machines ${bores.length} lifter bores - the two have to be the same parts`);
+  assert.equal(lifters.length, followers('ohv').lifters, `the build draws ${lifters.length} lifters for the ${followers('ohv').lifters} the switch counts`);
+  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'bucket', 'shim', 'spring', 'valve-']) {
     let hits = 0;
     group.traverse((o) => { if (o.name.toLowerCase().includes(word)) hits += 1; });
-    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.drawn is false: the follower train is owed, and drawing it here would put hardware in a block that has not machined its lifter bores`);
+    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: hardware may not appear before the iron that houses it is cast`);
   }
   const dohc = train('dohc').group;
   assert.equal(camGroupNames('dohc').filter((n) => dohc.getObjectByName(n)).length, camCount('dohc'),
     'the DOHC build has to keep its four camshafts beside this variant');
   assert.ok(!dohc.getObjectByName('cam-V-central'), 'the central cam belongs to the OHV variant only');
-  console.log(`${LAW} drawn: ${cam.name} at z ${cam.position.z.toFixed(4)}, ${journals.length} journals, ${lobeMeshes.length} lobes, ${necks.length} necks`);
+  console.log(`${LAW} drawn: ${cam.name} at z ${cam.position.z.toFixed(4)}, ${journals.length} journals, ${lobeMeshes.length} lobes, ${necks.length} necks, ${lifters.length} lifters in ${bores.length} bores`);
 });
 
 test(`${LAW}: every published bushing window carries the drawn journal at the published journal radius and nothing else`, async () => {

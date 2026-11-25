@@ -418,7 +418,7 @@ export function oilNetwork(id = SPEC.build.variant) {
       part: 'oil-gallery-lifter',
       pending: OIL.pending.lifterGallery,
       feed: null,
-      why: 'no lifter bank is cast until issue #16 chooses the 8C-3 option',
+      why: 'the gallery and its 16 bores are cast and their followers are drawn (slice 8C-3a/8C-3b); what is missing is the drilling that feeds this gallery from the main gallery (row A1-G4)',
     };
   }
 

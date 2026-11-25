@@ -1,12 +1,15 @@
 // Valvetrain: four DOHC camshafts (machined lobes, 7 bearing journals, drive
 // sprockets), 16 buckets with adjusting shims, 16 valves with retainers, 16
-// valve springs. Static geometry is baked in the theta = 0 pose; update(theta)
-// turns the cams at exactly half crank speed and poses buckets/valves/springs
-// from src/engine/timing.js - the whole train is a closed kinematic chain
-// cam -> bucket -> shim -> retainer -> spring -> fixed head seat.
+// valve springs. In the OHV variant the same file draws the one central cam and
+// the 16 lifters that ride it in the block's lifter gallery. Static geometry is
+// baked in the theta = 0 pose; update(theta) turns the cams at exactly half crank
+// speed and poses buckets/valves/springs (DOHC) or lifters (OHV) from
+// src/engine/timing.js and src/engine/ohv.js - the whole train is a closed
+// kinematic chain cam -> bucket -> shim -> retainer -> spring -> fixed head seat,
+// or cam -> lifter -> (pushrod -> rocker, owed) -> valve.
 // Pinned by test/valvetrain.test.mjs.
 import * as THREE from 'three';
-import { SPEC, DEG, signedAngle } from '../engine/spec.js';
+import { SPEC, DEG, bankUp, signedAngle } from '../engine/spec.js';
 import {
   lobeProfileRadius, lobeIndexAngle, valveLift, valveAxisDir, valveAxisPoint,
   valveSeatPoint, camAxisPoint,
@@ -14,8 +17,8 @@ import {
 import { latheX } from './parts.js';
 import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
 import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
-import { variantEntry, camGroupNames } from '../engine/layout.js';
-import { ohvCamLayout, TURNED_SEGMENTS } from '../engine/ohv.js';
+import { variantEntry, camGroupNames, ohvLifters } from '../engine/layout.js';
+import { ohvCamAxis, ohvCamLayout, ohvLift, TURNED_SEGMENTS } from '../engine/ohv.js';
 
 const H = SPEC.head;
 const V = SPEC.valves;
@@ -183,9 +186,11 @@ function buildValve(cyl, valve, materials) {
  * the published oil film; the 16 lobes are the same machined profile the DOHC
  * cams are ground from, at this variant's own lobe width and phased onto its own
  * lifter axis (src/engine/ohv.js); the necks join them at the ground base circle.
- * No follower hardware: SPEC.variants.ohv.drawn is still false until this variant
- * machines its lifter bores, and the rings are journalled by their press fit and
- * by the two faces of the tunnel, not by cam collars (issue #23).
+ * No follower hardware here: the 16 lifters that ride this cam are drawn beside
+ * it by buildOhvLifters below, in the bores slice 8C-3a machined; the pushrods,
+ * rockers and rocker covers stay undrawn until their host iron is cast, which is
+ * what SPEC.variants.ohv.drawn still says. The rings are journalled by their
+ * press fit and by the two faces of the tunnel, not by cam collars (issue #23).
  */
 function buildOhvCam(name, materials) {
   const plan = ohvCamLayout();
@@ -226,6 +231,40 @@ function buildOhvCam(name, materials) {
   return cam;
 }
 
+/**
+ * Slice 8C-3b (issue #16 option B, GATES A1-G6 / P1-G7): the 16 lifters the OHV
+ * block's lifter gallery bores. Each one is a flat-tappet body standing on its
+ * own bore axis - the axis ohvLifterGallery() derives as the line through the
+ * cam axis parallel to that cylinder's own bore - with its cam-side face a PLANE
+ * across that axis at the distance the lobe's tangent plane publishes, so the
+ * face is never cut by the profile it rides. The body radius is the bore less
+ * the published oil film, the length is the station where a body that wide stops
+ * on the room the crank-side swings are owed, and the travel is the ground base
+ * circle to the swept outline. src/engine/layout.js ohvLifters() publishes every
+ * one of those numbers; nothing is typed here.
+ */
+function buildOhvLifters(materials) {
+  const F = ohvLifters();
+  const axis = ohvCamAxis();
+  const out = [];
+  for (const f of F.lifters) {
+    const d = new THREE.Vector3().fromArray(bankUp(f.bank));
+    const mesh = new THREE.Mesh(disc(f.radius, f.radius, f.length, 32), materials.bucket);
+    mesh.name = f.name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.part = 'lifter';
+    mesh.userData.cyl = f.cyl;
+    mesh.quaternion.setFromUnitVectors(Z_AXIS, d);
+    // centred geometry: the mesh position IS the body's centroid, so the pose
+    // law can read the lift straight off it
+    const zero = new THREE.Vector3(f.x, axis.y, axis.z).addScaledVector(d, F.baseRadius + f.length / 2);
+    mesh.position.copy(zero);
+    out.push({ mesh, d, zero, cyl: SPEC.cylinders.find((c) => c.num === f.cyl), valve: f.valve });
+  }
+  return out;
+}
+
 export function createValvetrain(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'valvetrain';
@@ -233,13 +272,18 @@ export function createValvetrain(materials, variantId = SPEC.build.variant) {
 
   if (entry.centralCam) {
     const cam = buildOhvCam(camGroupNames(variantId)[0], materials);
-    group.add(cam);
+    const lifters = buildOhvLifters(materials);
+    group.add(cam, ...lifters.map((l) => l.mesh));
     // The same half-crank turn the DOHC cams get; the lobes' baked indices carry
-    // this variant's lifter axes, src/engine/ohv.js publishes them.
-    const update = (theta) => { cam.rotation.x = (theta / CAM.halfSpeedRatio) * DEG; };
+    // this variant's lifter axes, src/engine/ohv.js publishes them. Each lifter
+    // moves along its own bore axis by exactly the lift its lobe gives it.
+    const update = (theta) => {
+      cam.rotation.x = (theta / CAM.halfSpeedRatio) * DEG;
+      for (const l of lifters) l.mesh.position.copy(l.zero).addScaledVector(l.d, ohvLift(l.cyl, l.valve, theta));
+    };
     update(0);
     group.userData.family = 'valvetrain';
-    return { group, update, cams: [cam] };
+    return { group, update, cams: [cam], lifters: lifters.map((l) => l.mesh) };
   }
 
   const cams = [];

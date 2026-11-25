@@ -46,7 +46,12 @@ const scan = (re) => {
   return hits;
 };
 
-console.log(`== procedural-only audit (static), ${new Date().toISOString()} ==`);
+// No wall clock in the header: issue #43 measured that a record of this gate
+// hashed differently on every run because of this stamp alone, and a hash a GATES.md
+// row cites has to stay re-derivable (the reason scripts/ledger-run.sh strips node's
+// own duration stamps). The audit is a static scan; a timestamp says nothing about
+// its verdict.
+console.log('== procedural-only audit (static) ==');
 console.log(`files scanned: ${files.length} under src/ and public/`);
 
 let total = 0;
