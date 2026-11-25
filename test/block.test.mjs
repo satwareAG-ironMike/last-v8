@@ -15,6 +15,8 @@ import {
   MAIN_CAPS_X,
   panFlangeHalfWidth,
   bankPoint,
+  bankUp,
+  bankOut,
 } from '../src/engine/spec.js';
 import { housingInRel, housingOutRel } from '../src/engine/bearings.js';
 
@@ -382,10 +384,13 @@ test(`${OHV_CAST}: the switch casts two different blocks, and the DOHC casting t
   // the OHV census. What the OHV build may add is its own derived cam-bearing
   // family (slice 8B, src/engine/layout.js ohvBearings) and nothing else
   const extra = Object.keys(co).filter((k) => !Object.keys(cd).includes(k)).sort();
-  const ownCamFamily = (k) => /^cam-(bushing-[1-5]|retainer|retainer-bolt-[+-])$/.test(k);
-  assert.ok(extra.every(ownCamFamily),
+  // what the OHV build may add is its own derived family: the cam bearings 8B
+  // derives (slice 8B), and the lifter gallery ribs 8C-3a derives (slice 8C-3a),
+  // each rib being the mouth block plus the guide wall the crank-side room leaves
+  const ownVariantFamily = (k) => /^(cam-(bushing-[1-5]|retainer|retainer-bolt-[+-])|gallery-[RL]-[1-4](-guide)?)$/.test(k);
+  assert.ok(extra.every(ownVariantFamily),
     `the OHV build adds names the DOHC build does not cast and this variant's own laws do not derive: ${extra.join(', ')}`);
-  assert.equal(extra.length, 8, `the OHV build adds ${extra.length} of its own cam-bearing solids; the derived family is 5 bushings + 1 retainer + 2 bolts (${extra.join(', ')})`);
+  assert.equal(extra.length, 24, `the OHV build adds ${extra.length} of its own solids; the derived family is 5 bushings + 1 retainer + 2 bolts + 4 gallery ribs per bank with their guide walls (${extra.join(', ')})`);
   const missing = Object.keys(cd).filter((k) => !Object.keys(co).includes(k)).sort();
   assert.equal(missing.length, 0, `the OHV build drops the DOHC solids ${missing.join(', ')}: the switch may re-proportion the casting, not rename or delete what it casts`);
   // the DOHC casting measured against the pre-OHV record above, not against itself
@@ -1021,4 +1026,53 @@ test(`${OHV_GAL}: the gallery derives from the lobe pitch, the bored tunnel face
     console.log(`${OHV_GAL} ${bank}: pitch ${G.pitchCm.toFixed(5)} bore ${G.boreRadius.toFixed(5)} stem ${G.stemRadius.toFixed(5)} | axis (${g.axisAlong.toFixed(5)}, ${g.axisOut.toFixed(5)}) | guide ${g.guideFrom.toFixed(5)}..${g.guideTo.toFixed(5)} = ${(g.guideTo - g.guideFrom).toFixed(5)} | body ${g.bodyLength.toFixed(5)} top t ${g.bodyTop.toFixed(5)} | mouth iron ${(rAxis(g.guideFrom) - reliefR - G.boreRadius).toFixed(5)} tie r ${(rAxis(g.guideFrom) + G.boreRadius + wall).toFixed(5)} | bores ${xs.map((x) => x.toFixed(3)).join(' ')} | ribs ${g.clusters.map(([u, v]) => `${u.toFixed(3)}..${v.toFixed(3)}`).join(' ')}`);
   }
   console.log(`${OHV_GAL} relief off the crank axis ${reliefR.toFixed(4)} = maxSweep ${H.maxSweep} + crankSideAirCm ${V.tunnel.crankSideAirCm}; cast wall ${wall}; oil film ${film}`);
+});
+
+test(`${OHV_GAL}: the drawn OHV block casts those ribs and bores those lifter bores through their own iron`, async () => {
+  const { block } = await drawnBlock('ohv');
+  const L = await ohvLayout();
+  const G = L.ohvLifterGallery();
+  const ribs = block.children.filter((m) => /^gallery-[RL]-[1-4](-guide)?$/.test(m.userData.part || ''));
+  assert.equal(ribs.length, 16,
+    `the OHV casting draws ${ribs.length} gallery solids; 4 cluster ribs per bank, each the mouth block plus its guide wall, is what the derived gallery is`);
+  const bored = new Set(ribs.flatMap((r) => r.userData.bores || []));
+  assert.equal(bored.size, SPEC.cylinders.length * 2,
+    `the drawn gallery bores ${bored.size} lifter bores for the ${SPEC.cylinders.length * 2} valves of this engine`);
+  const DRAW_EPS = 1e-4; // Float32 attribute resolution on a machined face
+  for (const bank of ['R', 'L']) {
+    const up = bankUp(bank), ov = bankOut(bank), g = G.banks[bank];
+    const mine = ribs.filter((r) => r.userData.part.startsWith(`gallery-${bank}-`));
+    assert.equal(mine.length, 8, `${bank}: ${mine.length} gallery solids for this bank's 4 cluster ribs and their guide walls`);
+    let offRoom = 0, inTunnel = 0, maxR = 0, minR = Infinity, verts = 0;
+    const onBore = new Map(g.bores.map((b) => [b.name, 0]));
+    const mid = (g.guideFrom + g.guideTo) / 2, half = (g.guideTo - g.guideFrom) / 2;
+    for (const rib of mine) {
+      const pos = rib.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        verts++;
+        const y = pos.getY(i), z = pos.getZ(i);
+        const along = y * up[1] + z * up[2];
+        const out = y * ov[1] + z * ov[2];
+        const r = Math.hypot(along, out);
+        if (r < G.reliefR - DRAW_EPS) offRoom++;
+        if (Math.hypot(along - g.axisAlong, out - g.axisOut) < G.tunnelBoreR - DRAW_EPS) inTunnel++;
+        if (Math.abs(Math.abs(out - g.axisOut) - G.boreRadius) < DRAW_EPS
+          && Math.abs(along - (g.axisAlong + mid)) < half + DRAW_EPS) {
+          for (const b of g.bores) if (Math.abs(pos.getX(i) - b.x) < DRAW_EPS) onBore.set(b.name, onBore.get(b.name) + 1);
+        }
+        if (r > maxR) maxR = r;
+        if (r < minR) minR = r;
+      }
+    }
+    const bare = [...onBore].filter(([, n]) => n < 24).map(([n, c]) => `${n} (${c} face vertices)`);
+    assert.equal(bare.length, 0,
+      `${bank}: the lifter bores ${bare.join(', ')} have no bored cylinder in the drawn iron: a rib with a hole in it is not a rib with a bore machined in it`);
+    assert.equal(offRoom, 0,
+      `${bank}: ${offRoom} gallery vertices stand inside the ${G.reliefR.toFixed(4)} cm room the crank-side swings are owed (off the crank axis, closest read ${minR.toFixed(4)})`);
+    assert.equal(inTunnel, 0,
+      `${bank}: ${inTunnel} gallery vertices stand inside the bored cam tunnel ${G.tunnelBoreR.toFixed(4)} cm - the gallery would close the tunnel this variant bores`);
+    assert.ok(maxR >= ID - DRAW_EPS,
+      `${bank}: the gallery's outboard face only reaches r ${maxR.toFixed(4)} off the crank axis, short of the crankcase void wall ${ID}, so nothing ties the gallery into the casting`);
+    console.log(`${OHV_GAL} drawn ${bank}: ${mine.length} ribs, ${verts} vertices, bores ${onBore.size} x ${[...onBore.values()][0]} face vertices, iron r ${minR.toFixed(5)}..${maxR.toFixed(5)} against the room ${G.reliefR.toFixed(4)} and the void wall ${ID}, tunnel bore ${G.tunnelBoreR.toFixed(4)} clear`);
+  }
 });

@@ -432,6 +432,14 @@ export function ohvLifterGallery() {
     const guideTo = axisOut - Math.sqrt(disc); // bore surface stands on the room
     const bodyTop = axisOut - Math.sqrt((reliefR + stemRadius) ** 2 - axisOut ** 2);
     const bodyLength = bodyTop - H.worstOutlineR; // from the swept nose to the room it stops at
+    // The room does not stop at the bore: it also eats the iron the bore stands in.
+    // The published cast wall outside the bore (ribIn) stays clear of the room only
+    // up to the station where the room's own arc crosses it; past that the gallery
+    // iron has to stand on the arc itself, which is where the rib's outboard guide
+    // wall is machined. Both numbers derive from the same arc.
+    const ribIn = axisOut - boreRadius - wall;
+    const stepT = axisOut - Math.sqrt(reliefR ** 2 - ribIn ** 2);
+    const wallIn = Math.sqrt(reliefR ** 2 - (axisAlong + guideTo) ** 2);
     const bores = [];
     BL.stations.forEach((st, si) => {
       const fore = st - BR.groupHalfCm;
@@ -453,6 +461,7 @@ export function ohvLifterGallery() {
       bank, axisOut, axisAlong, guideFrom, guideTo, bodyTop, bodyLength, bores,
       clusters: clusters.map((xs) => [xs[0] - boreRadius - wall, xs.at(-1) + boreRadius + wall]),
       clusterBores: clusters,
+      ribIn, stepT, wallIn,
       ribOut: axisOut + boreRadius + wall, // the rib's outboard machined face
       mouthIron: rAxis(guideFrom) - reliefR - boreRadius,
       tieR: rAxis(guideFrom) + boreRadius + wall,
