@@ -921,3 +921,103 @@ test('A1-G6 8E: every liner is watered on both flanks and every station and both
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// A1-G6 / issue #16 option B, slice 8C-3a: the OHV block machines its lifter
+// gallery. The gallery is cast per bank and the 16 lifter bores are bored
+// through that iron (no pressed sleeve). Nothing here is a typed lifter size:
+// the lobe pitch this variant already derives sizes the bores, the bored tunnel
+// face opens them, and the room the crank swings are owed - maxSweep plus
+// tunnel.crankSideAirCm, off the CRANK axis - closes the gallery outboard.
+// Frame: lifterAzimuth(bank) = SPEC.banks[bank].az, so a lifter bore runs
+// parallel to its own cylinder bore through the cam axis, at bank-local
+// out = C|sin az| crossing that axis at along = -C cos az, for BOTH banks.
+// ---------------------------------------------------------------------------
+
+const OHV_GAL = 'A1-G6/issue #16 the OHV block machines a lifter gallery per bank';
+
+test(`${OHV_GAL}: the gallery derives from the lobe pitch, the bored tunnel face and the room the crank swings are owed`, async () => {
+  const L = await ohvLayout();
+  const H = L.ohvHousing();
+  const BR = L.ohvBearings();
+  const G = L.ohvLifterGallery();
+  const V = SPEC.variants.ohv;
+  const C = V.belowCrankCm;
+  const film = SPEC.cam.bearing.oilFilm;
+  const wall = H.castWallCm;
+  const reliefR = H.maxSweep + V.tunnel.crankSideAirCm;
+
+  // 1. the pitch is the lobe band width 8B derived, and the iron two adjacent
+  //    bores leave each other IS the published cast wall
+  assert.ok(near(G.pitchCm, BR.lobeWidthCm),
+    `the lifter pitch ${G.pitchCm} is not this variant's own lobe band width ${BR.lobeWidthCm}: a lifter stands over the lobe that drives it`);
+  assert.ok(near(G.boreRadius, (G.pitchCm - wall) / 2),
+    `the lifter bore ${G.boreRadius} is not (pitch ${G.pitchCm} - cast wall ${wall}) / 2: two adjacent bores owe each other the published wall`);
+  assert.ok(near(G.stemRadius, G.boreRadius - film),
+    `the lifter body ${G.stemRadius} inside its bore ${G.boreRadius} leaves ${G.boreRadius - G.stemRadius} cm, not the published oil film ${film}`);
+  assert.ok(near(G.pitchCm - 2 * G.boreRadius, wall),
+    `two adjacent lifter bores leave ${G.pitchCm - 2 * G.boreRadius} cm of iron between them, not the published cast wall ${wall}`);
+  const { ohvCamLayout } = await import('../src/engine/ohv.js');
+  const widths = [...new Set(ohvCamLayout().lobes.map((l) => l.x1 - l.x0))];
+  assert.equal(widths.length, 1, `the drawn cam's lobes are ${widths.length} different widths wide: the pitch has one authority`);
+  assert.ok(near(G.pitchCm, widths[0]),
+    `the gallery pitch ${G.pitchCm} does not match the ${widths[0]} cm lobe band the cam this block houses actually turns`);
+
+  for (const bank of Object.keys(SPEC.banks)) {
+    const g = G.banks[bank];
+    const az = SPEC.banks[bank].az * DEG;
+    const rAxis = (t) => Math.hypot(g.axisAlong + t, g.axisOut);
+
+    // 2. the axis: parallel to its own cylinder bore, through the cam axis
+    assert.ok(near(g.axisOut, C * Math.abs(Math.sin(az))),
+      `${bank}: the lifter axis stands out ${g.axisOut} instead of C|sin az| = ${C * Math.abs(Math.sin(az))} for a cam ${C} cm under the crank`);
+    assert.ok(near(g.axisAlong, -C * Math.cos(az)),
+      `${bank}: the lifter axis crosses the cam axis at along ${g.axisAlong}, not -C cos az = ${-C * Math.cos(az)}`);
+    const on = bankPoint(bank, g.axisAlong, g.axisOut);
+    assert.ok(near(on.y, 0, 1e-9) && near(on.z, -C, 1e-9),
+      `${bank}: that axis misses the published cam axis - bank-local (${g.axisAlong}, ${g.axisOut}) lands at world y ${on.y} z ${on.z} instead of (0, ${-C})`);
+
+    // 3. the guide: opened by the bored tunnel face, closed where the bore
+    //    surface meets the room the crank swings are owed
+    assert.ok(near(g.guideFrom, H.tunnelBoreR),
+      `${bank}: the lifter bore starts at t ${g.guideFrom}, not at the machined tunnel face ${H.tunnelBoreR} it is bored into`);
+    assert.ok(near(rAxis(g.guideTo) - G.boreRadius, reliefR, GEOM_EPS),
+      `${bank}: at the guide's outboard end t ${g.guideTo} the bore surface stands r ${rAxis(g.guideTo) - G.boreRadius} off the crank axis instead of the room ${reliefR} = maxSweep ${H.maxSweep} + crank-side air ${V.tunnel.crankSideAirCm}`);
+    assert.ok(g.guideTo - g.guideFrom >= 2 * G.stemRadius,
+      `${bank}: the guide is ${g.guideTo - g.guideFrom} cm long, shorter than the ${2 * G.stemRadius} cm lifter it has to hold`);
+    assert.ok(rAxis(g.guideFrom) - reliefR - G.boreRadius >= wall - GEOM_EPS,
+      `${bank}: at the bore mouth the iron between the crank room and the lifter bore is ${rAxis(g.guideFrom) - reliefR - G.boreRadius} cm, under the published cast wall ${wall}`);
+    assert.ok(rAxis(g.guideFrom) + G.boreRadius + wall >= ID - GEOM_EPS,
+      `${bank}: the gallery rib's outboard face stands r ${rAxis(g.guideFrom) + G.boreRadius + wall} at the bore mouth, inside the crankcase void wall ${ID}, so nothing ties the gallery into the casting`);
+
+    // 4. the body: long as the crank room allows, guided at both ends of the travel
+    assert.ok(near(rAxis(g.bodyTop) - G.stemRadius, reliefR, GEOM_EPS),
+      `${bank}: the lifter body's outboard end t ${g.bodyTop} stands r ${rAxis(g.bodyTop) - G.stemRadius} off the crank axis, not on the room ${reliefR} it may not cross`);
+    assert.ok(near(g.bodyLength, g.bodyTop - H.worstOutlineR, GEOM_EPS),
+      `${bank}: the body is ${g.bodyLength} cm, not the ${g.bodyTop - H.worstOutlineR} cm from the swept nose ${H.worstOutlineR} to the room it stops at`);
+    for (const [k, face] of [['min lift', SPEC.head.camBaseRadius], ['max lift', H.worstOutlineR]]) {
+      const eng = Math.min(face + g.bodyLength, g.guideTo) - g.guideFrom;
+      assert.ok(eng > 0,
+        `${bank}: at ${k} the body spans t ${face}..${face + g.bodyLength} against a guide at ${g.guideFrom}..${g.guideTo} and leaves it: engagement ${eng}`);
+      const air = rAxis(face + g.bodyLength) - G.stemRadius - H.maxSweep;
+      assert.ok(air >= V.tunnel.crankSideAirCm - GEOM_EPS,
+        `${bank}: at ${k} the lifter body comes within ${air} cm of the swept crank outline, owed ${V.tunnel.crankSideAirCm}`);
+    }
+
+    // 5. the bores: one per valve of this bank, on the lobe centres it rides
+    assert.equal(g.bores.length, SPEC.banks[bank].cyls.length * 2,
+      `${bank}: ${g.bores.length} lifter bores for the ${SPEC.banks[bank].cyls.length * 2} valves of this bank`);
+    const xs = g.bores.map((b) => b.x).sort((a, b) => a - b);
+    const gaps = xs.slice(1).map((x, i) => x - xs[i]);
+    assert.ok(gaps.every((d) => near(d, G.pitchCm) || near(d, 3 * G.pitchCm)),
+      `${bank}: lifter bores ${xs.join(' ')} sit ${gaps.join(' ')} apart; the lobes put them ${G.pitchCm} apart in pairs ${3 * G.pitchCm} apart between cylinders`);
+    assert.equal(g.clusters.length, SPEC.banks[bank].cyls.length,
+      `${bank}: ${g.clusters.length} gallery ribs for the ${SPEC.banks[bank].cyls.length} cylinders of this bank`);
+    for (const [u, v] of g.clusters) {
+      assert.ok(near(v - u, 2 * G.pitchCm - G.pitchCm + 2 * wall),
+        `${bank}: a gallery rib is ${v - u} cm of x, not the ${G.pitchCm + 2 * wall} cm its two bores plus one cast wall at each end need`);
+    }
+    console.log(`${OHV_GAL} ${bank}: pitch ${G.pitchCm.toFixed(5)} bore ${G.boreRadius.toFixed(5)} stem ${G.stemRadius.toFixed(5)} | axis (${g.axisAlong.toFixed(5)}, ${g.axisOut.toFixed(5)}) | guide ${g.guideFrom.toFixed(5)}..${g.guideTo.toFixed(5)} = ${(g.guideTo - g.guideFrom).toFixed(5)} | body ${g.bodyLength.toFixed(5)} top t ${g.bodyTop.toFixed(5)} | mouth iron ${(rAxis(g.guideFrom) - reliefR - G.boreRadius).toFixed(5)} tie r ${(rAxis(g.guideFrom) + G.boreRadius + wall).toFixed(5)} | bores ${xs.map((x) => x.toFixed(3)).join(' ')} | ribs ${g.clusters.map(([u, v]) => `${u.toFixed(3)}..${v.toFixed(3)}`).join(' ')}`);
+  }
+  console.log(`${OHV_GAL} relief off the crank axis ${reliefR.toFixed(4)} = maxSweep ${H.maxSweep} + crankSideAirCm ${V.tunnel.crankSideAirCm}; cast wall ${wall}; oil film ${film}`);
+});
