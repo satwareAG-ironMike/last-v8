@@ -32,7 +32,7 @@ import { alignX, circleHole, extrude } from './primitives.js';
 
 const B = SPEC.block;
 const CR = SPEC.crank;
-const LINER_OD = B.boreShellRadius + 0.15; // slips into the bore wall columns
+const LINER_OD = B.boreShellRadius + B.linerWallCm; // slips into the bore wall columns
 const X_FRONT = B.stations[0] + B.pitch / 2; // 22
 const X_REAR = B.stations[3] - B.pitch / 2; // -22
 const SHELL_IN = CR.mainRadius + 0.05; // bearing shell inner

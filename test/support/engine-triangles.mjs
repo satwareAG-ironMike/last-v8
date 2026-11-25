@@ -12,6 +12,7 @@ import { createHeads } from '../../src/render/heads.js';
 import { createManifolds } from '../../src/render/manifolds.js';
 import { createPlugs } from '../../src/render/plugs.js';
 import { createOil } from '../../src/render/oil.js';
+import { createCoolant } from '../../src/render/coolant.js';
 import { GLOW_SPECS } from '../../src/render/materials.js';
 import { SPEC } from '../../src/engine/spec.js';
 
@@ -59,6 +60,12 @@ export function engineUnits(materials, variantId = SPEC.build.variant) {
     // metal removed from a casting, so it is measured against that casting, never as
     // an obstacle standing beside it.
     oil: createOil(materials, variantId).group,
+    // The coolant assembly is static for the same reason the oil ways are: nothing in
+    // SPEC models a pump drive or a temperature (SPEC.coolant.pending), so there is no
+    // update() to pose. A member is a cavity the casting does not have, so a law that
+    // measures a casting measures the casting, never the water inside it as an
+    // obstacle beside it (slice 8E, src/render/coolant.js).
+    coolant: createCoolant(materials, variantId).group,
   };
 }
 

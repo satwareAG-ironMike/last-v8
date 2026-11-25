@@ -70,6 +70,10 @@ function buildWorld() {
   // them and the teardown table can prove a drilling stays in the casting it is
   // bored in while only the sump train leaves.
   if (units.oil) engine.add(units.oil);
+  // The coolant assembly joins the same way (slice 8E): its members are the published
+  // legs of src/engine/coolant.js, cavities the castings do not have, so the teardown
+  // table can prove each one stays in the casting it is bored in.
+  if (units.coolant) engine.add(units.coolant);
   engine.updateMatrixWorld(true);
   const scene = new THREE.Scene();
   scene.add(engine);
@@ -1580,4 +1584,92 @@ test(`${NAME_LAW}: the naming is derived from SPEC and not typed - and switching
   console.log(`${NAME_LAW} derivation: displacement ${cm3.toFixed(2)} cm3 = ${SPEC.cylinders.length} x pi x ${SPEC.block.boreRadius}^2 x ${2 * SPEC.crank.radius} -> ${L.displacementLabel()}; `
     + `bank angle ${bankDeg} deg from SPEC.banks; ${SPEC.cylinders.length} cylinders from SPEC.cylinders; `
     + `titles ${L.hudTitle('dohc')} / ${L.hudTitle('ohv')}; badges ${L.badge('dohc')} / ${L.badge('ohv')}`);
+});
+
+// =========== A1-G6 slice 8E: coolant passages are inspectable, in both views ====
+// Issue #8 addendum item 1 plus row A1-G6: the jackets and passages are procedural
+// parts of the scene - on the menu, labelled, sectioned by CUTAWAY, and they stay
+// with the casting they were bored in through EXPLODED / ASSEMBLE.
+
+const coolantMembers = async (why) => {
+  let mod;
+  try {
+    mod = await import('../src/engine/coolant.js');
+  } catch (e) {
+    throw new Error(`A1-G6 8E: src/engine/coolant.js is not in the tree (${why}): ${e.message}`);
+  }
+  if (!SPEC.coolant) throw new Error(`A1-G6 8E: SPEC.coolant is not published (${why})`);
+  return mod.coolantNetwork(SPEC.build.variant);
+};
+
+test('inspection: every coolant passage is on the menu with a label naming what it cools', async () => {
+  const net = await coolantMembers('nothing publishes the coolant members the menu has to carry');
+  const w = buildWorld();
+  if (!w.units.coolant) {
+    throw new Error('A1-G6 8E: the scene builds no coolant assembly (engineUnits/view does not draw src/render/coolant.js), so no passage is inspectable');
+  }
+  if (!w.engine.children.includes(w.units.coolant)) w.engine.add(w.units.coolant);
+  w.engine.updateMatrixWorld(true);
+  const v = w.view ?? createViewControls({ engine: w.engine, materials: w.materials, rig: w.rig, camera: w.camera, scene: w.scene, stand: w.stand });
+  const menu = new Set(v.inspectables().map((e) => e.name));
+  const missing = net.members.filter((n) => !menu.has(n));
+  assert.ok(missing.length === 0,
+    `${missing.length} of ${net.members.length} published coolant members are not on the PART INSPECTION menu: ${missing.slice(0, 8).join(', ')}`);
+  const nameless = [];
+  for (const n of net.members) {
+    const focus = v.focusPart(n);
+    if (!focus || !focus.label || focus.label === n) nameless.push(`${n} -> ${focus?.label ?? 'no focus'}`);
+  }
+  assert.ok(nameless.length === 0, `coolant members with no human label: ${nameless.slice(0, 8).join(', ')}`);
+  // a label that does not say which casting and which flank teaches nobody
+  const vague = net.members.filter((n) => !/jacket|riser|gallery|passage|link/i.test(v.focusPart(n).label));
+  assert.ok(vague.length === 0, `labels that do not name the jacket / riser / gallery they are: ${vague.slice(0, 6).join(', ')}`);
+});
+
+test('explode and cutaway: coolant stays in the casting it was bored in, and the section cuts it', async () => {
+  const net = await coolantMembers('the teardown table has no published coolant members to keep in place');
+  const w = buildWorld();
+  if (!w.units.coolant) {
+    throw new Error('A1-G6 8E: the scene builds no coolant assembly, so the row cannot claim EXPLODED / ASSEMBLE / CUTAWAY work for its passages');
+  }
+  if (!w.engine.children.includes(w.units.coolant)) w.engine.add(w.units.coolant);
+  w.engine.updateMatrixWorld(true);
+  const v = w.view ?? createViewControls({ engine: w.engine, materials: w.materials, rig: w.rig, camera: w.camera, scene: w.scene, stand: w.stand });
+  // a drilling or a cavity is metal removed from a casting: it travels with that
+  // casting and gets no teardown rule of its own (the same rule the oil ways follow)
+  const moved = net.members.filter((n) => explodeRuleFor(n));
+  assert.ok(moved.length === 0, `coolant members ruled out of their casting in EXPLODED: ${moved.join(', ')}`);
+  const before = new Map();
+  for (const n of net.members) {
+    const m = w.engine.getObjectByName(n);
+    before.set(n, m ? [m.position.toArray().map((x) => x.toFixed(9)), m.parent?.name ?? ''] : null);
+  }
+  v.explode();
+  const drifted = [];
+  for (const [n, was] of before) {
+    assert.ok(was, `${n}: no member of that name in the scene`);
+    const m = w.engine.getObjectByName(n);
+    const now = [m.position.toArray().map((x) => x.toFixed(9)), m.parent?.name ?? ''];
+    if (now.join('|') !== was.join('|')) drifted.push(n);
+  }
+  v.assemble();
+  assert.ok(drifted.length === 0, `coolant members moved during EXPLODED instead of staying with their casting: ${drifted.join(', ')}`);
+  // CUTAWAY has to reach them: the section law in section 2 holds for every engine
+  // mesh, so a coolant material that setClipping skips would leave an uncut volume
+  const clipped = [];
+  for (const n of net.members) {
+    const m = w.engine.getObjectByName(n);
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    if (!mats.some((mm) => mm.clippingPlanes?.length > 0)) clipped.push(`${n} (${mats.map((mm) => mm.name).join(',')})`);
+  }
+  assert.equal(v.setCutaway(true), true, 'the section could not be switched on');
+  const clippedAfter = [];
+  for (const n of net.members) {
+    const m = w.engine.getObjectByName(n);
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    if (!mats.some((mm) => mm.clippingPlanes?.length > 0)) clippedAfter.push(`${n} (${mats.map((mm) => mm.name).join(',')})`);
+  }
+  assert.ok(clippedAfter.length === 0, `coolant members no section plane cuts: ${clippedAfter.slice(0, 8).join(', ')}`);
+  void clipped;
+  assert.equal(v.setCutaway(false), false);
 });

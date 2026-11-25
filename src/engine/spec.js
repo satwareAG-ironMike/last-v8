@@ -67,6 +67,10 @@ export const SPEC = {
     boreStartA: 5.5, // bottom of the bore tunnel
     boreRadius: 5.1,
     boreShellRadius: 5.3,
+    // the press-fit interference a cylinder liner slips into the bore wall columns
+    // with: the liner's OD is the bore shell plus this (row A1-G6 slice 8E gates the
+    // water jacket's cast land off this number, so it is published once here)
+    linerWallCm: 0.15,
     stations: [16.5, 5.5, -5.5, -16.5], // front -> rear
     pitch: 11.0,
     crankcaseRadius: 9.4,
@@ -795,5 +799,79 @@ SPEC.oil = {
     lifterGallery: '#16', // no lifter gallery is cast until 8C-3 picks an option
     ohvMains: '#28', // the OHV fore/aft mains stand off the wall band with no iron route
     ohvInboardGallery: '#28', // nothing bridges the banks at its crown plane
+  },
+};
+
+/**
+ * The cooling of both builds (issue #8 addendum item 1, GATES row A1-G6 slice 8E):
+ * the walls a water jacket is cast in and the planes its passages are bored between.
+ * Like SPEC.oil, this table routes and dimensions the cavities; it adds no geometry
+ * of its own, and src/render/coolant.js draws exactly what src/engine/coolant.js
+ * publishes from it.
+ *
+ * Every value below is either a published casting dimension read off this file or a
+ * cast wall the row claims, and the geometry they place was proven against the drawn
+ * iron before it was written: tmp/8e-warrant3.mjs samples every leg of every passage
+ * in both variants (WARRANT OK, 394952 samples, 0 offender kinds, 0 leg-joint gaps).
+ * The walls the row *claims* are the conservative ones (wallMinCm, floorWallCm); the
+ * placement walls (skinCm, landCm, bayClrCm, deckBandCm, railClrCm) are where the
+ * cavity sits, and test/support/coolant-iron.mjs measures both against the tree.
+ */
+SPEC.coolant = {
+  // ---- the walls the jacket is closed by ----
+  landCm: 0.4, // cast land between the press-fit liner OD and the water
+  skinCm: 0.35, // cast skin between the water and the block's outer casting face
+  webCm: 0.1, // cast web between the water and any bore the oil network drills
+  tunnelWebCm: 0.2, // cast web between the water and the machined cylinder bore
+  boltWebCm: 0.1, // cast web between the water and a head bolt shank
+  bayClrCm: 0.3, // cast end wall between the jacket and a counter bay mouth
+  deckBandCm: 2.6, // iron between the jacket crown and the machined deck face
+  railClrCm: 0.125, // between the head's coolant roof and the cam feed gallery it passes under
+  floorClrCm: 0.4, // between the jacket floor plane and the crankcase drum it stands over
+  // the closure claims row A1-G6 measures: iron this thick must stand behind a face
+  wallMinCm: 0.25,
+  floorWallCm: 4.0,
+  // the narrowest coolant way this row is willing to call a passage
+  bandMinCm: 0.2,
+  // ---- the planes the passages are bored between ----
+  linerOdCm: SPEC.block.boreShellRadius + SPEC.block.linerWallCm, // 5.45
+  waterInCm: SPEC.block.boreShellRadius + SPEC.block.linerWallCm + 0.4, // 5.85 off the bore axis
+  waterOutCm: SPEC.block.deckHalfWidth - 0.35, // 6.65, under the casting skin
+  feedLegInCm: SPEC.oil.railOut - SPEC.oil.feedDrillR, // 6.15: this build's outboard feed drilling
+  feedLegOutCm: SPEC.oil.railOut + SPEC.oil.feedDrillR, // 6.35
+  jacketFloorA: SPEC.block.caseOuterRadius + 0.4, // 12.0 up the bore axis
+  jacketCrownA: SPEC.block.deckA - 2.6, // 21.5, below the deck band
+  jacketXHalfCm: SPEC.block.counterBayHalfX - 0.3, // 21.7, inside the counter bays
+  endPortWidthCm: 0.7, // the outermost slab of each jacket rises through the deck at each end
+  deckA: SPEC.block.deckA, // 24.1: the block face a riser is bored up to
+  headFloorA: SPEC.block.deckA + SPEC.head.gasketT, // 24.25: the head deck face
+  headCrownA: SPEC.oil.railBand - SPEC.oil.feedDrillR - 0.125, // 25.4, under the cam feed gallery
+  crossX0Cm: 23.0, // the head end cross gallery is bored from here...
+  crossX1Cm: 27.0, // ...to here, outboard of the block's counter bay mouth
+  linkIntoGalleryCm: 0.4, // how deep each end link is bored into that gallery, so the
+  // two windows share water instead of just touching at a plane
+  crossFloorClrCm: 0.35, // the cast floor this gallery stands on: out over the block's
+  // end there is no deck under it, so it is bored as a bore in the head's end wall
+  crossFloorA: SPEC.block.deckA + SPEC.head.gasketT + 0.35, // 24.6
+  portHalfXcm: 1.7, // a deck riser is as wide as the head stay standing over it
+  boltA0Cm: SPEC.block.deckA, // the drawn head bolts occupy a 24.1..28.0 along the bore axis
+  boltA1Cm: 28.0,
+  // ---- the bands each bank carries water in ----
+  // the valley side of the wall band, then the two flanks the cast boss holding
+  // this build's outboard feed drilling splits it into
+  bands: [
+    { id: 'in', o0: -(SPEC.block.deckHalfWidth - 0.35), o1: -(SPEC.block.boreShellRadius + SPEC.block.linerWallCm + 0.4) },
+    { id: 'out-in', o0: SPEC.block.boreShellRadius + SPEC.block.linerWallCm + 0.4, o1: SPEC.oil.railOut - SPEC.oil.feedDrillR - 0.1 },
+    { id: 'out-out', o0: SPEC.oil.railOut + SPEC.oil.feedDrillR + 0.1, o1: SPEC.block.deckHalfWidth - 0.35 },
+  ],
+  // what this row does NOT model, stated so the open gates are read for what they
+  // are missing: nothing here moves water, and no external loop exists.
+  pending: {
+    drawnHoles: [],
+    open: [
+      'water pump', 'thermostat', 'radiator and hose routes', 'jacket drain',
+      'coolant flow or pressure (nothing in SPEC models a pump drive or a temperature)',
+    ],
+    issues: { pump: '#8', externalLoop: '#8' },
   },
 };

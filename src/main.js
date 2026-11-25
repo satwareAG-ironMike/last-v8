@@ -14,6 +14,7 @@ import { createHeads } from './render/heads.js';
 import { createManifolds } from './render/manifolds.js';
 import { createPlugs } from './render/plugs.js';
 import { createOil } from './render/oil.js';
+import { createCoolant } from './render/coolant.js';
 import { createStand } from './render/stand.js';
 import { createEngineState } from './engine/animation.js';
 import { createCameraRig } from './ui/cameraRig.js';
@@ -114,6 +115,13 @@ engine.add(plugs.group);
 // once at construction.
 const oil = createOil(materials);
 engine.add(oil.group);
+// The cooling is drawn as the cavity network src/engine/coolant.js publishes: one mesh
+// per published leg - jacket bands in the block wall, deck risers through both castings,
+// the head end links and the cross galleries. It is static for the same reason the oil
+// ways are: SPEC.coolant.pending names the pump, thermostat and external loop this build
+// does not model.
+const coolant = createCoolant(materials);
+engine.add(coolant.group);
 
 // The camera and its rig. The pose is NOT written here: SPEC.view carries the
 // swept boot framing (engine, manifolds and the whole test stand uncropped in a
