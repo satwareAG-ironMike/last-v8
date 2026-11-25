@@ -958,10 +958,10 @@ test(`${OHV_GAL}: the gallery derives from the lobe pitch, the bored tunnel face
   assert.ok(near(G.pitchCm - 2 * G.boreRadius, wall),
     `two adjacent lifter bores leave ${G.pitchCm - 2 * G.boreRadius} cm of iron between them, not the published cast wall ${wall}`);
   const { ohvCamLayout } = await import('../src/engine/ohv.js');
-  const widths = [...new Set(ohvCamLayout().lobes.map((l) => l.x1 - l.x0))];
-  assert.equal(widths.length, 1, `the drawn cam's lobes are ${widths.length} different widths wide: the pitch has one authority`);
-  assert.ok(near(G.pitchCm, widths[0]),
-    `the gallery pitch ${G.pitchCm} does not match the ${widths[0]} cm lobe band the cam this block houses actually turns`);
+  const widths = ohvCamLayout().lobes.map((l) => l.x1 - l.x0);
+  const off = widths.filter((w) => !near(w, G.pitchCm, 1e-9));
+  assert.equal(off.length, 0,
+    `${off.length} of the ${widths.length} lobes the cam this block houses turns are ${[...new Set(off.map((w) => w.toFixed(6)))].join(' ')} cm wide instead of the ${G.pitchCm} cm gallery pitch: a lifter stands over the lobe that drives it`);
 
   for (const bank of Object.keys(SPEC.banks)) {
     const g = G.banks[bank];
@@ -1009,13 +1009,14 @@ test(`${OHV_GAL}: the gallery derives from the lobe pitch, the bored tunnel face
       `${bank}: ${g.bores.length} lifter bores for the ${SPEC.banks[bank].cyls.length * 2} valves of this bank`);
     const xs = g.bores.map((b) => b.x).sort((a, b) => a - b);
     const gaps = xs.slice(1).map((x, i) => x - xs[i]);
-    assert.ok(gaps.every((d) => near(d, G.pitchCm) || near(d, 3 * G.pitchCm)),
-      `${bank}: lifter bores ${xs.join(' ')} sit ${gaps.join(' ')} apart; the lobes put them ${G.pitchCm} apart in pairs ${3 * G.pitchCm} apart between cylinders`);
+    const between = B.pitch - G.pitchCm; // the next cylinder's group starts a full pitch later
+    assert.ok(gaps.every((d) => near(d, G.pitchCm, 1e-9) || near(d, between, 1e-9)),
+      `${bank}: lifter bores ${xs.map((x) => x.toFixed(3)).join(' ')} sit ${gaps.map((d) => d.toFixed(3)).join(' ')} apart; the lobes put them ${G.pitchCm.toFixed(3)} apart in a cylinder pair and ${between.toFixed(3)} apart between cylinders`);
     assert.equal(g.clusters.length, SPEC.banks[bank].cyls.length,
       `${bank}: ${g.clusters.length} gallery ribs for the ${SPEC.banks[bank].cyls.length} cylinders of this bank`);
     for (const [u, v] of g.clusters) {
-      assert.ok(near(v - u, 2 * G.pitchCm - G.pitchCm + 2 * wall),
-        `${bank}: a gallery rib is ${v - u} cm of x, not the ${G.pitchCm + 2 * wall} cm its two bores plus one cast wall at each end need`);
+      assert.ok(near(v - u, G.pitchCm + 2 * (G.boreRadius + wall), 1e-9),
+        `${bank}: a gallery rib is ${v - u} cm of x, not the ${G.pitchCm + 2 * (G.boreRadius + wall)} cm its two bores ${G.pitchCm} apart plus one cast wall ${wall} outside each bore need`);
     }
     console.log(`${OHV_GAL} ${bank}: pitch ${G.pitchCm.toFixed(5)} bore ${G.boreRadius.toFixed(5)} stem ${G.stemRadius.toFixed(5)} | axis (${g.axisAlong.toFixed(5)}, ${g.axisOut.toFixed(5)}) | guide ${g.guideFrom.toFixed(5)}..${g.guideTo.toFixed(5)} = ${(g.guideTo - g.guideFrom).toFixed(5)} | body ${g.bodyLength.toFixed(5)} top t ${g.bodyTop.toFixed(5)} | mouth iron ${(rAxis(g.guideFrom) - reliefR - G.boreRadius).toFixed(5)} tie r ${(rAxis(g.guideFrom) + G.boreRadius + wall).toFixed(5)} | bores ${xs.map((x) => x.toFixed(3)).join(' ')} | ribs ${g.clusters.map(([u, v]) => `${u.toFixed(3)}..${v.toFixed(3)}`).join(' ')}`);
   }

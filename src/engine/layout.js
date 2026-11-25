@@ -10,7 +10,7 @@
 // SPEC already publishes. A renderer, the HTML shell or the README may not
 // type any of these facts beside it.
 // ---------------------------------------------------------------------------
-import { SPEC, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
+import { SPEC, DEG, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
 import {
   boreR as lineBoreR, boltCircumR, castOdR, noseR, housingInRel, housingOutRel,
 } from './bearings.js';
@@ -365,6 +365,105 @@ export function ohvBearings() {
     plateCornerR, throwAirCm,
     boltHoleR: P.boltHoleR, boltAcrossR: P.boltAcrossR, boltCircumR,
     crownAirCm, noseAirCm, swungIn,
+  };
+}
+
+/**
+ * A1-G6 / issue #16 option B (slice 8C-3a): the gallery this variant's block
+ * casts for its 16 lifters, and the bore each lifter runs in.
+ *
+ * Option B (issue #16): the gallery is cast per bank and the bore is machined
+ * through that iron, so it is block geometry, not a sleeve pressed into a hole.
+ * Nothing here is typed. Four published facts decide every number:
+ *
+ * 1. A lifter stands over the lobe that drives it, so the lifter pitch IS this
+ *    variant's own lobe band width (ohvBearings derives it from
+ *    tunnel.lobeAxialAirCm). The bands abut: 16 lobes fill each cylinder group
+ *    edge to edge, so the pitch is one band wide and the bores come in pairs,
+ *    one per valve of a cylinder, 3 bands apart between neighbouring cylinders.
+ * 2. Two adjacent bores owe each other the published cast wall
+ *    (SPEC.cam.bearing.housingWall), which caps the bore at
+ *    (pitch - wall) / 2. The lifter body is that bore less the published oil
+ *    film, so the running clearance of a lifter in its gallery is the same film
+ *    every bearing shell of this tree runs on.
+ * 3. lifterAzimuth(bank) = SPEC.banks[bank].az (src/engine/ohv.js), so a lifter
+ *    bore runs PARALLEL to its own cylinder bore and THROUGH the cam axis: in
+ *    bank-local terms the line out = C|sin az|, crossing the cam axis at
+ *    along = -C cos az, for both banks. Distance off the crank axis along that
+ *    line is hypot(along + t, out) and it varies with the travel t; the tangent
+ *    minimum C|sin az| is not a clearance, and deriving a lifter size from it
+ *    was withdrawn on issue #16.
+ * 4. The room the crank-side swings are owed is measured off the CRANK axis:
+ *    no cast iron nearer than maxSweep + tunnel.crankSideAirCm (the same law
+ *    ohvHousing publishes off the cam axis as crankRoomR, and
+ *    test/block.test.mjs gates as castOdR <= crankRoomR - crankSideAirCm).
+ *    That room opens the gallery inboard at the bored tunnel face and closes it
+ *    outboard where the bore surface meets it, and it is what limits how long a
+ *    lifter body may be.
+ *
+ * The rib this leaves ties into the casting at its inboard end - the iron at
+ * the bore mouth stands outside the crankcase void wall - and stands in the
+ * open crankcase bay outboard, the precedent the interior main cap towers set.
+ */
+export function ohvLifterGallery() {
+  const H = ohvHousing();
+  const BR = ohvBearings();
+  const T = variantEntry('ohv').tunnel;
+  const P = SPEC.cam.bearing;
+  const BL = SPEC.block;
+  const C = H.belowCrankCm;
+  const wall = H.castWallCm;
+  const reliefR = H.maxSweep + T.crankSideAirCm; // off the CRANK axis
+  const pitchCm = BR.lobeWidthCm;
+  const boreRadius = (pitchCm - wall) / 2;
+  const stemRadius = boreRadius - P.oilFilm;
+  const lines = ['R', 'L'].flatMap((bank) => ['intake', 'exhaust'].map((valve) => ({ bank, valve })));
+  const banks = {};
+  for (const [bank, b] of Object.entries(SPEC.banks)) {
+    const az = b.az * DEG;
+    const axisOut = C * Math.abs(Math.sin(az));
+    const axisAlong = -C * Math.cos(az);
+    const rAxis = (t) => Math.hypot(axisAlong + t, axisOut);
+    const guideFrom = H.tunnelBoreR; // the bore opens at the machined tunnel face
+    const disc = (reliefR + boreRadius) ** 2 - axisOut ** 2;
+    if (disc < 0) {
+      throw new Error(`a lifter axis ${axisOut.toFixed(4)} cm outboard of the crank in bank ${bank} never comes clear of the ${reliefR.toFixed(4)} cm room the crank swings are owed, so this variant cannot bore a lifter gallery at all (cam ${C} cm under the crank, bore radius ${boreRadius.toFixed(4)})`);
+    }
+    const guideTo = axisOut - Math.sqrt(disc); // bore surface stands on the room
+    const bodyTop = axisOut - Math.sqrt((reliefR + stemRadius) ** 2 - axisOut ** 2);
+    const bodyLength = bodyTop - H.worstOutlineR; // from the swept nose to the room it stops at
+    const bores = [];
+    BL.stations.forEach((st, si) => {
+      const fore = st - BR.groupHalfCm;
+      lines.forEach((line, k) => {
+        if (line.bank !== bank) return;
+        const cyl = SPEC.cylinders.find((c) => c.bank === line.bank && c.station === si);
+        const x = fore + k * pitchCm + pitchCm / 2; // the lobe centre this lifter rides
+        bores.push({ name: `lifter-cyl${cyl.num}-${line.valve}`, cyl: cyl.num, valve: line.valve, x });
+      });
+    });
+    bores.sort((p, q) => p.x - q.x);
+    const clusters = [];
+    for (const bore of bores) {
+      const last = clusters.at(-1);
+      if (last && Math.abs(bore.x - last.at(-1) - pitchCm) < 1e-9) last.push(bore.x);
+      else clusters.push([bore.x]);
+    }
+    banks[bank] = {
+      bank, axisOut, axisAlong, guideFrom, guideTo, bodyTop, bodyLength, bores,
+      clusters: clusters.map((xs) => [xs[0] - boreRadius - wall, xs.at(-1) + boreRadius + wall]),
+      clusterBores: clusters,
+      ribOut: axisOut + boreRadius + wall, // the rib's outboard machined face
+      mouthIron: rAxis(guideFrom) - reliefR - boreRadius,
+      tieR: rAxis(guideFrom) + boreRadius + wall,
+      rAxis,
+    };
+  }
+  return {
+    pitchCm, boreRadius, stemRadius, oilFilm: P.oilFilm, castWallCm: wall,
+    reliefR, maxSweep: H.maxSweep, crankSideAirCm: T.crankSideAirCm,
+    tunnelBoreR: H.tunnelBoreR, worstOutlineR: H.worstOutlineR, belowCrankCm: C,
+    arcStepRad: H.arcStepRad, banks,
   };
 }
 
