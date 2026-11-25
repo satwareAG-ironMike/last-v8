@@ -1703,7 +1703,16 @@ test(`${OHV_LAW}: this row's own CHECK measures the OHV drive too - it runs test
     env,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const out = `${r.stdout}\n${r.stderr}`;
+  // node stamps every reporter summary with that run's wall clock, and this law
+  // pastes the child's whole report into its own failure text. A recorded run of
+  // this law then hashes differently on every re-run - measured on two identical
+  // negative controls, tmp/v8-8c3b-nc-az-tilt.out and tmp/v8-8c3b-nc-az-tilt2.out,
+  // which differed only in the child's duration_ms line. scripts/ledger-run.sh
+  // strips those stamps for the same reason; the embedded report is stripped the
+  // same way, so a hash this row cites stays re-derivable.
+  const out = `${r.stdout}\n${r.stderr}`.split('\n')
+    .map((line) => line.replace(/ \([0-9]+\.?[0-9]*ms\)$/, ''))
+    .filter((line) => !/^\s*(?:\u2139|#) duration_ms /.test(line)).join('\n');
   // the same two reporter spellings scripts/ledger-run.sh accepts: node 24's
   // spec reporter (`ℹ pass 9`) and node 22 on a CI runner (`# pass 9`)
   const counts = (label) => Number(((out.match(new RegExp(`^(?:ℹ|#) ${label} (\\d+)$`, 'm')) || [])[1]));
