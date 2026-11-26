@@ -38,15 +38,30 @@ export const LIVE_POSE = ['running'];
  *  `[.WebGL-0xafc00379a00]` against `[.WebGL-0x134400e6de00]` for one run pair). */
 const PROCESS_HANDLE = /0x[0-9a-f]{6,}/gi;
 
-/** The stable shot line: buffer, lit coverage, luminance floor/ceiling/contrast,
- *  lit span, sample count - the exact numbers the gate's own laws compare. For a
- *  shot captured at a live rpm the luminance trio is dropped: it is not a
- *  measurement of a pose, and a record carrying it is not re-derivable. */
-export const shotLine = (name, s) => {
-  const base = `shot ${name.padEnd(9)} ${s.pixels.w}x${s.pixels.h} buffer, ${s.pixels.samples} samples, lit ${(s.pixels.litFraction * 100).toFixed(1)}%`;
-  if (LIVE_POSE.includes(name)) return `${base}, lit span ${s.pixels.litSpan.rows}x${s.pixels.litSpan.cols} (live rpm, pose not pinned)`;
-  return format('%s, luminance %s..%s contrast %s, lit span %dx%d',
-    base, s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
+/**
+ * The stable shot line: buffer, sample count, and for a pinned pose the lit coverage,
+ * luminance floor/ceiling/contrast and lit span - the exact numbers the gate's own laws
+ * compare.
+ *
+ * A shot taken at a live rpm has no pose, so none of those four measures anything a law
+ * can re-derive: the shutter opens wherever the animation stood. The luminance trio was
+ * dropped for that reason in 8F-1; a re-derived pair of the fixed gate then measured the
+ * other two moving as well (tmp/nc8f3b-restored-a.out `lit 27.6%` against
+ * tmp/nc8f3b-restored-b.out `lit 27.7%`). A live-rpm line therefore states the verdict its
+ * laws reach against the published floors - the shape compareLine publishes - and nothing
+ * else. The floors come from the caller, which is where the gate holds them.
+ */
+export const shotLine = (name, s, floors = {}) => {
+  const base = `shot ${name.padEnd(9)} ${s.pixels.w}x${s.pixels.h} buffer, ${s.pixels.samples} samples`;
+  if (LIVE_POSE.includes(name)) {
+    const cleared = [];
+    if (floors.samplesMin !== undefined) cleared.push(`at least ${floors.samplesMin} pixels sampled`);
+    if (floors.litMin !== undefined) cleared.push(`at least ${(floors.litMin * 100).toFixed(0)}% lit`);
+    assert(cleared.length, 'shotLine was given a live-rpm shot and no published floor to state');
+    return `${base}, clears the published floors (${cleared.join(', ')}) (live rpm, pose not pinned)`;
+  }
+  return format('%s, lit %s%%, luminance %s..%s contrast %s, lit span %dx%d',
+    base, (s.pixels.litFraction * 100).toFixed(1), s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
 };
 
 /** The volatile extras, for a human reading the gate rather than for a record. */

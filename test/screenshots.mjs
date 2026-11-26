@@ -1083,7 +1083,14 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   await sleep(700);
   shots.running = { ...(await shot('10-running.png')), pixels: await evalJs(`(${PIXELS})`) };
   await evalJs('window.__v8.stop(); "ok"');
-
+  // src/ui/viewControls.js:477-490 frames the camera on explodedBounds(), and :440-462
+  // builds that box from worldBox(engine) plus every member's live worldBox - the pistons,
+  // rods and valves stand where the crank angle puts them. Pinning first is what makes the
+  // EXPLODED framing a measurement of a pose instead of the angle this page's 1800 rpm run
+  // happened to stop at (measured on two runs: lit 17.1% against 17.0%, same buffer, same
+  // samples, same luminance ceiling, same lit span - tmp/nc8f3b-restored-a.out against
+  // tmp/nc8f3b-restored-b.out).
+  await pin(0);
   await evalJs('window.__v8.explode(); "ok"');
   await settle();
   const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
@@ -1151,7 +1158,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     // the draw-call count moved between two runs of one pose, so a row citing a
     // record of this gate would cite a snapshot of a rasteriser. They stay
     // readable behind --detail.
-    console.log(shotLine(name, s));
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
     if (process.argv.includes('--detail')) console.log(detailLine(name, s));
   }
 
@@ -1334,7 +1341,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
     if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
     if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
-    console.log(shotLine(name, s));
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
     if (process.argv.includes('--detail')) console.log(detailLine(name, s));
   }
   if (warnings.length) console.log(`ohv warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
