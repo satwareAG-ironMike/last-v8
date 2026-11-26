@@ -599,6 +599,24 @@ const takeShot = (capture) => async (file) => {
   writeFileSync(path, png);
   return { path, bytes: png.length };
 };
+/**
+ * Pin the crank angle and let the loop repaint the poses from it. The wait is a measured
+ * frame count, never a wall clock: the OHV home shot printed `lit 27.7%` in one run and
+ * `lit 27.2%` in the next (tmp/v8-8f3-shots3.out against tmp/v8-8f3-shots4.out) while every
+ * other line matched, because the capture followed `sleep(1400)` on a page measured at 1.6
+ * fps under software rasterisation - the number of repaints that had landed varied, which is
+ * exactly the stopwatch dependency issue #43 is about.
+ */
+const takePin = (evalJs) => async (theta) => {
+  const from = await evalJs('window.__v8.frameCount()');
+  await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
+  await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
+  for (let i = 0; i < 90; i++) {
+    await sleep(120);
+    if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
+  }
+  throw new Error('the page produced no animation frames after pinning crank ' + theta);
+};
 const finish = () => {
   if (bad.length) {
     console.log('\nSHOTS INCOMPLETE:');
@@ -620,17 +638,7 @@ const finish = () => {
 // of the gate rather than below it. No measured threshold in any law changed.
 await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
   const shot = takeShot(capture);
-  /** Pin the crank angle and let the loop repaint the poses from it. */
-  const pin = async (theta) => {
-    const from = await evalJs('window.__v8.frameCount()');
-    await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
-    await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
-    for (let i = 0; i < 90; i++) {
-      await sleep(120);
-      if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
-    }
-    throw new Error('the page produced no animation frames after pinning crank ' + theta);
-  };
+  const pin = takePin(evalJs);
   // The measurement walks live vertices of 136 members plus 8 cylinders x 37 piston
   // poses inside one evaluate, which is heavier than any other call this gate makes.
   // It gets a per-call timeout instead of the harness default, so a slow SwiftShader
@@ -1221,6 +1229,7 @@ const OHV_READ = `(() => {
 
 await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
   const shot = takeShot(capture);
+  const pin = takePin(evalJs);
   const want = standDatums('ohv');
   const published = {
     lifters: ohvLifters().lifters,
@@ -1284,11 +1293,12 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
   if (!(ohv.lowestEngineZ > want.floorZ))
     bad.push(`ohv: the engine reaches ${ohv.lowestEngineZ} cm, below the ${+want.floorZ.toFixed(4)} cm floor plate this build's stand is built on`);
 
-  await evalJs('window.__v8.setRpm(0); window.__v8.start(); window.__v8.state.theta = 0; window.__v8.settleView(); "ok"');
-  await sleep(1400);
+  // Every OHV picture is taken after a measured number of repaints from a pinned crank
+  // angle, the same guard the default build's shots use (see takePin above for why).
+  await pin(0);
   shots.ohv = { ...(await shot('14-ohv.png')), pixels: await evalJs(`(${PIXELS})`) };
   await evalJs('window.__v8.cutaway(true); "ok"');
-  await sleep(700);
+  await pin(0);
   shots['ohv-cutaway'] = { ...(await shot('15-ohv-cutaway.png')), pixels: await evalJs(`(${PIXELS})`) };
   if (shots['ohv-cutaway'].pixels.hash === shots.ohv.pixels.hash)
     bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one');
@@ -1302,6 +1312,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
   }
   if (!(ohvView.moved > 0))
     bad.push(`ohv: EXPLODED left the OHV build where it stood (${JSON.stringify(ohvView)})`);
+  await pin(0);
   shots['ohv-exploded'] = { ...(await shot('16-ohv-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
   if (shots['ohv-exploded'].pixels.hash === shots.ohv.pixels.hash)
     bad.push('ohv: the separated OHV build produced the same picture as the assembled one');

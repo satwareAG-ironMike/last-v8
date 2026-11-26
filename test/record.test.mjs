@@ -264,6 +264,10 @@ test('the screenshot gate boots the OHV build through the address, not only the 
   assert.ok(/standDatums\('ohv'\)/.test(src), 'the OHV pass never reads this build\'s own floor datum from src/engine/layout.js, so nothing measures what the OHV stand is built on');
   for (const f of ['14-ohv.png', '15-ohv-cutaway.png', '16-ohv-exploded.png'])
     assert.ok(src.includes(f), `the gate writes no ${f}: the OHV build is never pictured in CUTAWAY or EXPLODED`);
+  // every OHV count has to come from the module that publishes it, never from a number
+  // typed into the gate: a typed 16 would keep passing while the engine changed underneath
+  for (const [call, what] of [['ohvLifters(', 'the 16 lifters and their bores'], ['ohvCamLayout(', 'the central cam\'s journals, lobes and necks'], ['ohvLifterGallery(', 'the cast gallery ribs']])
+    assert.ok(src.includes(call), `the OHV pass never calls ${call}, so ${what} is a typed number in the gate rather than a published one`);
 });
 
 test('the OHV pass prints its valvetrain census and names the valve and spring gap it measures', () => {
@@ -279,4 +283,23 @@ test('the OHV pass prints its valvetrain census and names the valve and spring g
   assert.ok(/SPEC\.variants\.ohv\.pendingHardware/.test(src), 'the OHV pass never reads the pending hardware this build publishes');
   assert.ok(/ohv undeclared gap/.test(src), 'the gate does not name the valve and spring gap it measured');
   assert.ok(/pendingOhv\.some\(\(f\) => \/valve\|spring\/i\.test\(f\)\)/.test(src), 'the gap clause does not check the published pending list for a valve or spring family');
+});
+
+test('every OHV shot follows a pinned crank pose, never a wall clock', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  const at = src.indexOf("query: '?variant=ohv'");
+  assert.ok(at > 0, 'there is no OHV page to check');
+  const block = src.slice(at);
+  // Measured: the OHV home shot printed `lit 27.7%` in tmp/v8-8f3-shots3.out and
+  // `lit 27.2%` in tmp/v8-8f3-shots4.out - every other line byte-identical - because the
+  // capture followed sleep(1400) on a page measured at 1.6 fps. A wall clock is not a pose.
+  for (const f of ['14-ohv.png', '15-ohv-cutaway.png', '16-ohv-exploded.png']) {
+    const i = block.indexOf(`'${f}'`);
+    assert.ok(i > 0, `no ${f} shot to check`);
+    const before = block.slice(Math.max(0, i - 90), i);
+    assert.ok(/await pin\(0\);/.test(before), `${f} is captured without a pinned pose right before it:\n  ${before.slice(-120)}`);
+    assert.equal(/await sleep\(\d+\);/.test(before), false, `${f} follows a wall-clock sleep instead of a measured frame count:\n  ${before.slice(-120)}`);
+  }
+  assert.ok(/const takePin = /.test(src), 'the frame-count pin guard is not a shared helper, so the two builds can drift apart');
+  assert.equal((src.match(/const pin = takePin\(evalJs\);/g) || []).length, 2, 'the pin guard is not taken by both builds from the same helper');
 });
