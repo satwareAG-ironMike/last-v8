@@ -38,12 +38,21 @@ export function lobes(id = SPEC.build.variant) {
   return SPEC.cylinders.length * 2;
 }
 
-/** follower train the variant owes per valve: DOHC rides buckets, OHV owes lifters + pushrods + rockers */
+/** valvetrain families the variant owes per valve: DOHC rides buckets, OHV owes lifters + pushrods + rockers;
+ *  both variants owe the valves and springs their head seats (issue #51: the OHV build draws none of
+ *  them, and a gap a gate counts has to be a family the spec names) */
 export function followers(id = SPEC.build.variant) {
   const v = variantEntry(id);
   const valves = SPEC.cylinders.length * 2;
-  if (!v.centralCam) return { lifters: 0, pushrods: 0, rockers: 0, covers: 0 };
-  return { lifters: valves, pushrods: valves, rockers: valves, covers: Object.keys(SPEC.banks).length };
+  if (!v.centralCam) return { lifters: 0, pushrods: 0, rockers: 0, covers: 0, valves, springs: valves };
+  return {
+    lifters: valves,
+    pushrods: valves,
+    rockers: valves,
+    covers: Object.keys(SPEC.banks).length,
+    valves,
+    springs: valves,
+  };
 }
 
 /** the camshaft group names the variant draws */
