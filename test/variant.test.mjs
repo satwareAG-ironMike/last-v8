@@ -26,6 +26,10 @@ import * as THREE from 'three';
 import { SPEC } from '../src/engine/spec.js';
 import { standDatums, panPlanes, hudTitle, badge, engineName, plateLines } from '../src/engine/layout.js';
 import { createStand } from '../src/render/stand.js';
+import { createDrive } from '../src/render/drive.js';
+import { createPlugs } from '../src/render/plugs.js';
+import { createCameraRig } from '../src/ui/cameraRig.js';
+import { createViewControls } from '../src/ui/viewControls.js';
 import { engineUnits, proxyMaterials } from './support/engine-triangles.mjs';
 import { focusLimits, minElevation } from '../src/ui/cameraRig.js';
 import { explodeLift, explodeSpecs } from '../src/engine/view.js';
@@ -175,6 +179,61 @@ test('the switch reaches the factories: each build draws its own valvetrain on i
     return `${id}: ${lifters} lifters, ${buckets} buckets, ${camshafts} camshafts, ${journals} cam journals, stand feet on ${lowest.toFixed(4)}`;
   });
   console.log(`factory switch: ${rows.join(' | ')}`);
+});
+
+test('both builds assemble into the shell: no two drawn members share the name the shell addresses them by', async () => {
+  const { shellDatums } = await authority('the assembled shell');
+  const materials = proxyMaterials();
+  const rows = ['dohc', 'ohv'].map((id) => {
+    // The engine exactly as src/main.js hangs it together: the casting as the group the
+    // assemblies join, the stand beside it, the rig on the published home pose.
+    const units = engineUnits(materials, id);
+    const engine = units.block;
+    engine.name = 'v8-block';
+    engine.add(units.cranktrain);
+    engine.add(units.valvetrain);
+    engine.add(createDrive(materials, id).group);
+    engine.add(units.heads);
+    engine.add(units.manifolds);
+    engine.add(createPlugs(materials).group);
+    engine.add(units.oil);
+    engine.add(units.coolant);
+    const scene = new THREE.Scene();
+    scene.add(engine);
+    const { group: stand } = createStand(materials, id);
+    stand.updateMatrixWorld(true);
+    scene.add(stand);
+    const camera = new THREE.PerspectiveCamera(SPEC.view.fov, 16 / 9, 0.5, 3000);
+    const rig = createCameraRig(camera);
+    rig.update(0);
+
+    // PART INSPECTION and the explode chain address a member by its name, so a name two
+    // drawn solids carry is not a cosmetic clash: src/ui/viewControls.js buildMembers
+    // refuses the whole engine, src/main.js never reaches its render loop, and the page
+    // boots into a black canvas.
+    const seen = new Map();
+    for (const c of engine.children) seen.set(String(c.name), (seen.get(String(c.name)) ?? 0) + 1);
+    const dup = [...seen].filter(([, k]) => k > 1).map(([n, k]) => `${n} drawn ${k} times`);
+    assert.deepEqual(dup, [], `${id}: ${dup.join('; ')} - two drawn members carry one name, so the shell cannot address them apart`);
+
+    let view = null;
+    try {
+      view = createViewControls({ engine, materials, rig, camera, scene, stand });
+    } catch (e) {
+      assert.fail(`${id}: createViewControls threw "${e.message}", so src/main.js stops before its first frame and the page this build is asked for never renders`);
+    }
+    const insp = view.inspectables();
+    assert.ok(insp.length > 0, `${id}: PART INSPECTION offers ${insp.length} members for this build`);
+    for (const probe of ['main-shell-x11', 'oil-pan', 'liner-cyl1']) {
+      const hit = insp.find((p) => p.name === probe);
+      assert.ok(hit, `${id}: PART INSPECTION does not offer "${probe}", which this build draws`);
+      const focused = view.focusPart(hit.name);
+      assert.ok(focused, `${id}: inspecting "${probe}" through the shell's own focusPart produced ${JSON.stringify(focused)}`);
+      view.clearInspect();
+    }
+    return `${id}: ${seen.size} distinct member names, ${insp.length} inspectable members, floor ${shellDatums(id).floorZ.toFixed(4)}`;
+  });
+  console.log(`shell assembly: ${rows.join(' | ')}`);
 });
 
 test('the explode hoist lifts off the floor of the variant it draws, so the same chain needs the same lift', async () => {
