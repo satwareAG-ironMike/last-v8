@@ -303,3 +303,37 @@ test('every OHV shot follows a pinned crank pose, never a wall clock', () => {
   assert.ok(/const takePin = /.test(src), 'the frame-count pin guard is not a shared helper, so the two builds can drift apart');
   assert.equal((src.match(/const pin = takePin\(evalJs\);/g) || []).length, 2, 'the pin guard is not taken by both builds from the same helper');
 });
+
+// issue #43, measured on slice 8F-3's own re-derivation pair at 500d800:
+//   tmp/v8-8f3-shots5.out  shot ohv-cutaway 1280x713 buffer, 101626 samples, lit 26.7%, luminance 0..245.4 contrast 245.4, lit span 666x795
+//   tmp/v8-8f3-shots6.out  shot ohv-cutaway 1280x713 buffer, 101626 samples, lit 26.8%, luminance 0..245.4 contrast 245.4, lit span 666x795
+// (2bcd9a5c255536dce24154bde1ed5034252fb543beafc24366e095ac0aac3ca0 against
+//  f0f97549a3b337a382f68e4943fc5e9af0f98e4f20753c05474b3a2eeceb2781, diff = 2 lines). The
+// frame-count pin from the previous commit fixed the assembled shot; the CUTAWAY shot still
+// moved. The cause is in the product's own view code, read from src/ui/viewControls.js:
+// line 296 builds the section from `cutawaySpecs({ lift: lift * fraction })` and line 525
+// re-derives `plane.constant` from `lift * fraction`, while line 511-513 approach
+// `fraction` to its goal one frame at a time (`fraction += (goal - fraction) * k`). So a
+// section built or captured while the transition is still in flight stands at a height that
+// depends on how much wall clock elapsed - a different cut of the casting, a different lit
+// fraction, the same buffer and the same lit span.
+test('a view transition is settled before a pinned capture, and a pinned capture follows no wall clock', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  assert.ok(/const takeSettle = /.test(src), 'there is no shared settle guard: the gate waits for a stopwatch instead of for the view transition to reach its published goal');
+  assert.equal((src.match(/const settle = takeSettle\(evalJs\);/g) || []).length, 2, 'the settle guard is not taken by both builds from the same helper');
+
+  // 1. every capture of a pinned pose is preceded by a pin and by nothing measured in ms
+  for (const m of src.matchAll(/await pin\((?:[^)]*)\);\n\s*shots\.[^\n]*= \{[^\n]*\('(\d[^']+\.png)'/g)) {
+    const file = m[1];
+    const before = src.slice(Math.max(0, m.index - 260), m.index);
+    assert.equal(/await sleep\(\d+\);/.test(before), false, `${file} is captured after a wall-clock sleep inside the pinned window:\n  ${before.slice(-160)}`);
+  }
+
+  // 2. every CUTAWAY switch is followed by the settle guard before the next capture
+  for (const m of src.matchAll(/cutaway\(true\)/g)) {
+    const after = src.slice(m.index, m.index + 700);
+    assert.ok(/await settle\(\)/.test(after), `a cutaway switch at offset ${m.index} captures without settling the view transition first, and src/ui/viewControls.js:296 builds the section from lift * fraction:\n  ${after.slice(0, 220)}`);
+    const untilCapture = after.slice(0, after.indexOf("await shot(") > 0 ? after.indexOf("await shot(") : after.length);
+    assert.equal(/await sleep\(\d+\);/.test(untilCapture), false, `a cutaway switch waits on a wall clock before its capture:\n  ${untilCapture.slice(0, 220)}`);
+  }
+});
