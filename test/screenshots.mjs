@@ -1491,12 +1491,24 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const slow = slowRead.tips.find((t) => t.cyl === sparkCyl.num);
   shots.sparkSlow = { ...(await shot('18-cutaway-spark-50.png')), pixels: await evalJs(`(${PIXELS})`) };
 
-  // Same pinned crank pose, two frame rates: the picture has to be the same picture. A flash
-  // that answered the wall clock instead of the crank angle would land at a different point of
-  // its decay here and hash differently (issue #43).
-  if (shots.sparkLit.pixels.hash !== shots.sparkSlow.pixels.hash)
-    bad.push(`the same pinned pose at slowmo 1/10 and 1/50 produced different pictures (${shots.sparkLit.pixels.hash} against ${shots.sparkSlow.pixels.hash}): the flash would depend on the frame rate and not on the crank angle`);
-  if (Math.abs(lit.theta - slow.theta) > 1e-6 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
+  // Same pinned crank pose, two frame rates. The picture is compared sample to sample against
+  // the floors this gate already publishes for one pose read twice: tmp/spark-probe20.mjs
+  // measured 21 of 101626 sampled pixels differing (worst luminance delta 35) between two
+  // renders of ONE pose at ONE speed, so a hash equality would gate the software rasteriser
+  // rather than the flash. The flash itself is held to equality of its measured light.
+  const sparkPair = shots.sparkSlow.pixels.diff;
+  if (!sparkPair) bad.push('the 1/10 and the 1/50 spark pictures were never compared sample to sample');
+  else {
+    console.log(compareLine('spark pair 1/10 vs 1/50 at one pinned pose', sparkPair, { pctMax: 0.5, maxDeltaMax: 60 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('spark pair 1/10 vs 1/50 at one pinned pose', sparkPair));
+    if (sparkPair.pct > 0.5)
+      bad.push(`${sparkPair.differing} of ${sparkPair.of} sampled pixels (${sparkPair.pct}%) differ between the 1/10 and the 1/50 frame of one pinned pose: the picture would depend on the frame rate and not on the crank angle`);
+    if (sparkPair.maxDelta > 60)
+      bad.push(`the worst luminance delta between the 1/10 and the 1/50 frame of one pinned pose is ${sparkPair.maxDelta}: a flash that decays on the wall clock would land at a different point of its burn window here`);
+  }
+  if (Math.abs(lit.disc.mean - slow.disc.mean) > 0.01 || Math.abs(lit.disc.ringMean - slow.disc.ringMean) > 0.01)
+    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} against ring ${lit.disc.ringMean} at 1/10 and ${slow.disc.mean} against ${slow.disc.ringMean} at 1/50: the flash's light depends on the frame rate and not on the crank angle`);
+  if (Math.abs(lit.theta - slow.theta) > 1e-9 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
     bad.push(`plug-cyl${sparkCyl.num} sat at crank ${lit.theta} opacity ${lit.opacity} at 1/10 and crank ${slow.theta} opacity ${slow.opacity} at 1/50: the two pictures were not the same pose`);
 
   // The same tip past its burn window.
