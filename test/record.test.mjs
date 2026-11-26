@@ -266,8 +266,15 @@ test('the screenshot gate boots the OHV build through the address, not only the 
     assert.ok(src.includes(f), `the gate writes no ${f}: the OHV build is never pictured in CUTAWAY or EXPLODED`);
   // every OHV count has to come from the module that publishes it, never from a number
   // typed into the gate: a typed 16 would keep passing while the engine changed underneath
+  // The calls have to sit in the block that READS the published lists. Measured by the
+  // control driver: a poke that replaced ohvLifters().lifters with a typed array still
+  // passed this law, because the same name also appears in the refusal message - a law
+  // that searches the whole file gates nothing.
+  const at = src.indexOf('const published = {');
+  assert.ok(at > 0, 'the OHV pass has no single block where the published lists are read, so a count can be typed anywhere and no law sees it');
+  const read = src.slice(at, src.indexOf('};', at));
   for (const [call, what] of [['ohvLifters(', 'the 16 lifters and their bores'], ['ohvCamLayout(', 'the central cam\'s journals, lobes and necks'], ['ohvLifterGallery(', 'the cast gallery ribs']])
-    assert.ok(src.includes(call), `the OHV pass never calls ${call}, so ${what} is a typed number in the gate rather than a published one`);
+    assert.ok(read.includes(call), `the OHV pass never calls ${call} where it reads the published lists, so ${what} is a typed number in the gate rather than a published one:\n  ${read}`);
 });
 
 test('the OHV pass prints its valvetrain census and names the valve and spring gap it measures', () => {
