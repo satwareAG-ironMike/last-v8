@@ -320,7 +320,12 @@ test('every OHV shot follows a pinned crank pose, never a wall clock', () => {
     assert.equal(/await sleep\(\d+\);/.test(before), false, `${f} follows a wall-clock sleep instead of a measured frame count:\n  ${before.slice(-120)}`);
   }
   assert.ok(/const takePin = /.test(src), 'the frame-count pin guard is not a shared helper, so the two builds can drift apart');
-  assert.equal((src.match(/const pin = takePin\(evalJs\);/g) || []).length, 2, 'the pin guard is not taken by both builds from the same helper');
+  // The count is not typed: it is the number of page blocks this gate opens, so a block
+  // added later has to take the guard too (slice 8F-4 opens a third block for the spark
+  // pictures; the law used to name "both builds" and could not see a third one).
+  const pages = (src.match(/await withPage\(/g) || []).length;
+  const pinned = (src.match(/const pin = takePin\(evalJs\);/g) || []).length;
+  assert.equal(pinned, pages, `the frame-count pin guard is taken by ${pinned} of ${pages} page blocks: every block that captures a picture has to take it from the shared helper`);
 });
 
 // issue #43, measured on slice 8F-3's own re-derivation pair at 500d800:
@@ -339,7 +344,9 @@ test('every OHV shot follows a pinned crank pose, never a wall clock', () => {
 test('a view transition is settled before a pinned capture, and a pinned capture follows no wall clock', () => {
   const src = readFileSync('test/screenshots.mjs', 'utf8');
   assert.ok(/const takeSettle = /.test(src), 'there is no shared settle guard: the gate waits for a stopwatch instead of for the view transition to reach its published goal');
-  assert.equal((src.match(/const settle = takeSettle\(evalJs\);/g) || []).length, 2, 'the settle guard is not taken by both builds from the same helper');
+  const pagesSettle = (src.match(/await withPage\(/g) || []).length;
+  const settled = (src.match(/const settle = takeSettle\(evalJs\);/g) || []).length;
+  assert.equal(settled, pagesSettle, `the settle guard is taken by ${settled} of ${pagesSettle} page blocks: every block that captures a picture has to wait for the view transition from the shared helper`);
 
   // 1. every capture of a pinned pose is preceded by a pin and by nothing measured in ms
   for (const m of src.matchAll(/await pin\((?:[^)]*)\);\n\s*shots\.[^\n]*= \{[^\n]*\('(\d[^']+\.png)'/g)) {

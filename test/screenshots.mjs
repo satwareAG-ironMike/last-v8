@@ -27,6 +27,8 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC } from '../src/engine/spec.js';
 import { crankEvent, eventMid } from '../src/engine/timing.js';
+import { firingProgress } from '../src/engine/timing.js';
+import { sparkAngle, totalAdvance } from '../src/engine/ignition.js';
 // The authority for the one exemption the PBR law below grants: the product's own
 // published table of additive light families. Read from the module rather than
 // typed here, so the gate and the renderer cannot drift apart.
@@ -1356,6 +1358,179 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
   if (warnings.length) console.log(`ohv warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
   console.log(`ohv console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
   if (errors.length) bad.push(`ohv: ${errors.length} console/CDP error(s) while the gate rendered its OHV pictures`);
+});
+
+// ---- row P1-G6: the spark in CUTAWAY at 1/10 and 1/50, and past its burn window ----------
+// The authorities this pass reads are the product's own: src/engine/timing.js:92 publishes the
+// burn window (0 at the spark, 1 at `advance + burnDeg` past it), src/engine/ignition.js:62
+// publishes the crank angle a cylinder sparks at, src/engine/animation.js:54-56 clamps the
+// frame-rate factor to 0.02..1 so 1/50 is the slowest picture this product can draw, and
+// src/render/plugs.js:119 writes opacity = progress < 0 ? 0 : 1 - progress from
+// src/main.js:282 with state.advance().total, which src/engine/animation.js:68 takes from
+// totalAdvance(). The measured region is the published glow sphere (SPEC.plug.glowR) projected
+// through this page's own camera - radius in pixels glowR * (bufferHeight / 2) /
+// (distance * tan(fov / 2)) - and the ring around it is the reference the flash has to beat.
+// No pixel box is invented here.
+const SPARK_RPM = 0, SPARK_THROTTLE = 50;
+const TIP_NAME = /^plug-cyl(\d+)-flash$/; // src/render/plugs.js:102 names the tip mesh
+
+const SPARK_READ = `(() => {
+  const v = window.__v8, THREE = v.THREE;
+  v.renderer.render(v.scene, v.camera); // no preserveDrawingBuffer: the read has to follow a render
+  const gl = v.renderer.getContext();
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const px = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const L = (x, y) => { const i = (y * w + x) * 4; return 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; };
+  const st = v.view.state();
+  const plane = st.cutawayPlane ? new THREE.Plane(new THREE.Vector3(st.cutawayPlane.normal[0], st.cutawayPlane.normal[1], st.cutawayPlane.normal[2]), st.cutawayPlane.constant) : null;
+  const tanHalfFov = Math.tan((v.camera.fov * Math.PI / 180) / 2);
+  const tips = [];
+  for (const c of v.SPEC.cylinders) {
+    const o = v.scene.getObjectByName('plug-cyl' + c.num + '-flash');
+    if (!o) { tips.push({ cyl: c.num, missing: true }); continue; }
+    o.updateWorldMatrix(true, false);
+    const p = o.getWorldPosition(new THREE.Vector3());
+    const n = p.clone().project(v.camera);
+    const dist = v.camera.position.distanceTo(p);
+    const r = Math.max(1, Math.round(v.SPEC.plug.glowR * (h / 2) / (dist * tanHalfFov)));
+    const cx = Math.round((n.x * 0.5 + 0.5) * w), cy = Math.round((n.y * 0.5 + 0.5) * h); // row 0 is the bottom
+    const box = (lo, hi) => {
+      let nn = 0, sum = 0, peak = 0;
+      for (let dy = -r - 3; dy <= r + 3; dy++) for (let dx = -r - 3; dx <= r + 3; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const rr = Math.hypot(dx, dy);
+        if (rr < lo || rr > hi) continue;
+        nn += 1; const l = L(x, y); sum += l; if (l > peak) peak = l;
+      }
+      return { mean: +(sum / Math.max(1, nn)).toFixed(2), peak: +peak.toFixed(2), samples: nn };
+    };
+    const inner = box(0, r), outer = box(r + 1, r + 3);
+    tips.push({
+      cyl: c.num, name: o.name,
+      opacity: +o.material.opacity.toFixed(6),
+      slowmo: v.state.slowmo, theta: +v.state.theta.toFixed(6),
+      cutaway: st.cutaway, fraction: +st.fraction.toFixed(3),
+      planeDist: plane ? +plane.distanceToPoint(p).toFixed(2) : null,
+      clip: (o.material.clippingPlanes || []).length,
+      radiusPx: r, px: [cx, cy],
+      disc: {
+        mean: inner.mean, peak: inner.peak, samples: inner.samples,
+        ringMean: outer.mean, ringPeak: outer.peak, ringSamples: outer.samples,
+      },
+    });
+  }
+  return { tips, cutaway: st.cutaway, plane: st.cutawayPlane || null };
+})()`;
+
+await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
+  const shot = takeShot(capture);
+  const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
+  const readSpark = async () => JSON.parse(await evalJs(`(async () => JSON.stringify(await (${SPARK_READ})))()`, { timeoutMs: 180000 }));
+  const adv = totalAdvance(SPARK_RPM, SPARK_THROTTLE);
+
+  /** Every live tip against the window and the decay the modules publish. */
+  const poseLaw = (reads, label) => {
+    let lit = 0;
+    for (const t of reads.tips) {
+      if (t.missing) { bad.push(`spark ${label}: the live tree has no plug-cyl${t.cyl}-flash tip to read`); continue; }
+      if (!TIP_NAME.test(t.name))
+        bad.push(`spark ${label}: the read came from "${t.name}", not from the name src/render/plugs.js:102 gives the tip glow`);
+      const cyl = SPEC.cylinders.find((c) => c.num === t.cyl);
+      const progress = firingProgress(cyl, t.theta, adv);
+      const want = progress < 0 ? 0 : 1 - progress;
+      if (Math.abs(t.opacity - want) > 1e-6)
+        bad.push(`spark ${label}: plug-cyl${t.cyl} carries opacity ${t.opacity} at crank ${t.theta} while firingProgress() says ${progress.toFixed(6)}, so src/render/plugs.js:119 would write ${want}`);
+      if (t.opacity > 0) lit += 1;
+    }
+    return lit;
+  };
+  const slowmoLaw = (got, want, label) => {
+    if (Math.abs(got - want) > 1e-12)
+      bad.push(`spark ${label}: the page is running slowmo ${got} although the gate asked for ${want} (src/engine/animation.js:54 clamps to 0.02..1)`);
+  };
+  const tipLine = (label, t) => `${label} plug-cyl${t.cyl} op ${t.opacity} at crank ${t.theta} slowmo ${t.slowmo} plane ${String(t.planeDist).padStart(7)} r ${t.radiusPx}px | disc ${t.disc.mean} (${t.disc.peak}, ${t.disc.samples} px) ring ${t.disc.ringMean} (${t.disc.ringPeak}, ${t.disc.ringSamples} px) | ${t.disc.mean > t.disc.ringMean ? 'READS' : 'dark'}`;
+
+  await evalJs(`window.__v8.setThrottle(${SPARK_THROTTLE}); window.__v8.setRpm(${SPARK_RPM}); "ok"`);
+  await evalJs('window.__v8.setSlowmo(1 / 10); "ok"');
+  slowmoLaw(await evalJs('window.__v8.state.slowmo'), 1 / 10, 'at 1/10');
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await settle();
+
+  // Which plugs the published section keeps is measured off the live plane, not typed here:
+  // the section is what removes the four far-side plugs, and a flash on that side is dark by
+  // design (test/view.test.mjs:1332-1372 requires every tip to be clipped by the plane).
+  await pin(0);
+  const home = await readSpark();
+  const kept = home.tips.filter((t) => !t.missing && t.planeDist !== null && t.planeDist > 0);
+  const cut = home.tips.filter((t) => !t.missing && t.planeDist !== null && t.planeDist <= 0);
+  console.log(`spark cutaway: the published plane keeps ${kept.length} of ${home.tips.length} plugs (${kept.map((t) => `cyl${t.cyl} +${t.planeDist}`).join(', ')}) and removes ${cut.length} (${cut.map((t) => `cyl${t.cyl} ${t.planeDist}`).join(', ')})`);
+  if (kept.length === 0) {
+    bad.push('spark cutaway: the published section keeps no plug, so no tip flash can be pictured in CUTAWAY at all');
+    return;
+  }
+
+  const sparkCyl = SPEC.cylinders.find((c) => c.num === kept[0].cyl);
+  const sparkAt = sparkAngle(sparkCyl, SPARK_RPM, SPARK_THROTTLE);
+  const sparkOff = crankEvent(sparkCyl, SPEC.ignition.burnDeg + 1);
+  console.log(`spark pose: cyl${sparkCyl.num} sparks at crank ${sparkAt.toFixed(4)} (totalAdvance ${adv.toFixed(6)} deg before its power TDC at ${sparkCyl.powerTDC}) and its window closes at ${sparkOff.toFixed(4)}`);
+
+  await pin(sparkAt);
+  const litRead = await readSpark();
+  const litTips = poseLaw(litRead, 'lit at 1/10');
+  const lit = litRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkLit = { ...(await shot('17-cutaway-spark-10.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  // The same pose at the clamp floor src/engine/animation.js:54-56 names.
+  await evalJs('window.__v8.setSlowmo(1 / 50); "ok"');
+  slowmoLaw(await evalJs('window.__v8.state.slowmo'), 1 / 50, 'at 1/50');
+  await pin(sparkAt);
+  const slowRead = await readSpark();
+  const slowTips = poseLaw(slowRead, 'lit at 1/50');
+  const slow = slowRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkSlow = { ...(await shot('18-cutaway-spark-50.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  // Same pinned crank pose, two frame rates: the picture has to be the same picture. A flash
+  // that answered the wall clock instead of the crank angle would land at a different point of
+  // its decay here and hash differently (issue #43).
+  if (shots.sparkLit.pixels.hash !== shots.sparkSlow.pixels.hash)
+    bad.push(`the same pinned pose at slowmo 1/10 and 1/50 produced different pictures (${shots.sparkLit.pixels.hash} against ${shots.sparkSlow.pixels.hash}): the flash would depend on the frame rate and not on the crank angle`);
+  if (Math.abs(lit.theta - slow.theta) > 1e-6 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
+    bad.push(`plug-cyl${sparkCyl.num} sat at crank ${lit.theta} opacity ${lit.opacity} at 1/10 and crank ${slow.theta} opacity ${slow.opacity} at 1/50: the two pictures were not the same pose`);
+
+  // The same tip past its burn window.
+  await pin(sparkOff);
+  const offRead = await readSpark();
+  const offTips = poseLaw(offRead, 'past the window');
+  const off = offRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkOff = { ...(await shot('19-cutaway-spark-off.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  console.log(`spark tips lit: ${litTips} of ${home.tips.length} at the spark instant, ${slowTips} at 1/50, ${offTips} past the window`);
+  console.log('  ' + tipLine('lit 1/10 ', lit));
+  console.log('  ' + tipLine('lit 1/50 ', slow));
+  console.log('  ' + tipLine('off      ', off));
+
+  if (!(lit.disc.mean > lit.disc.ringMean))
+    bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}: the flash is not visible in CUTAWAY`);
+  if (!(lit.disc.mean > off.disc.mean))
+    bad.push(`plug-cyl${sparkCyl.num} reads ${lit.disc.mean} at its spark instant and ${off.disc.mean} past its burn window: a glow that simply stands there lit would pass this row otherwise`);
+  if (!(slow.disc.mean > off.disc.mean))
+    bad.push(`plug-cyl${sparkCyl.num} at 1/50 reads ${slow.disc.mean} against ${off.disc.mean} past the window: the flash does not read at the clamp floor either`);
+  if (shots.sparkLit.pixels.hash === shots.sparkOff.pixels.hash)
+    bad.push('the lit spark frame and the frame past the burn window produced the same picture: the flash changed nothing on screen');
+
+  for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('spark'))) {
+    if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
+    if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
+    if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
+  }
+  if (warnings.length) console.log(`spark warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
+  console.log(`spark console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
+  if (errors.length) bad.push(`spark: ${errors.length} console/CDP error(s) while the gate rendered its spark pictures`);
 });
 
 finish();
