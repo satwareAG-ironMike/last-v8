@@ -1469,7 +1469,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const SPARK_DISC_FLOOR = 185;
   const SPARK_DISC_TOLERANCE = 1.0;
   const tipLine = (label, t) => `${label} plug-cyl${t.cyl} op ${t.opacity} at crank ${t.theta} slowmo ${t.slowmo} plane ${String(t.planeDist).padStart(7)} r ${t.radiusPx}px | disc peak ${t.disc.peak} over ${t.disc.samples} px, ring peak ${t.disc.ringPeak} over ${t.disc.ringSamples} px | ${t.disc.mean > t.disc.ringMean ? 'READS' : 'dark'} | ${t.opacity > 0 ? (t.disc.mean >= SPARK_DISC_FLOOR ? `clears the ${SPARK_DISC_FLOOR} floor` : `BELOW the ${SPARK_DISC_FLOOR} floor`) : 'flash off, floor not applicable'}`;
-  const tipDetail = (label, t) => `detail${label}disc mean ${t.disc.mean} over ${t.disc.samples} px, ring mean ${t.disc.ringMean} over ${t.disc.ringSamples} px, disc against ring ${t.disc.mean > t.disc.ringMean}`;
+  const tipDetail = (label, t) => `detail ${label}disc mean ${t.disc.mean} over ${t.disc.samples} px, ring mean ${t.disc.ringMean} over ${t.disc.ringSamples} px, disc against ring ${t.disc.mean > t.disc.ringMean}`;
 
   await evalJs(`window.__v8.setThrottle(${SPARK_THROTTLE}); window.__v8.setRpm(${SPARK_RPM}); "ok"`);
   await evalJs('window.__v8.setSlowmo(1 / 10); "ok"');
