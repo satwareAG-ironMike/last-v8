@@ -33,6 +33,7 @@ import { plugStack, segRadius, stackRadius } from './support/plug-stack.mjs';
 import { createCranktrain } from '../src/render/cranktrain.js';
 import { createStand } from '../src/render/stand.js';
 import { createValvetrain } from '../src/render/valvetrain.js';
+import { GLOW_SPECS } from '../src/render/materials.js';
 import { camCapBoltSpecs } from '../src/render/heads.js';
 
 const V = SPEC.view;
@@ -1444,6 +1445,41 @@ test('plugs: every tip owns its own material, and the flash reads correctly in C
   assert.ok(mid2.distanceTo(gapPoint(cyl1)) <= 1e-6, `after ASSEMBLE cyl 1's glow centre stands ${mid2.distanceTo(gapPoint(cyl1)).toFixed(6)} cm away from its published spark gap - the teardown is not exactly reversible for the plug assembly`);
   t.diagnostic(`tips ${tips.length} distinct materials assembled, ${sections.size} distinct in CUTAWAY; plugs leave in family/stage ${[...new Set(SPEC.cylinders.map((c) => `${explodeRuleFor(`plug-cyl${c.num}`).family}/${explodeRuleFor(`plug-cyl${c.num}`).stage}`))].join(', ')}`);
   resetFlash();
+});
+
+// The law above gates the flash's MATERIAL and its opacity in EXPLODED. Whether the light
+// reaches the picture is a separate question, and measured, it did not. tmp/spark-probe17.mjs
+// -> tmp/spark-probe17.out reads, at each cylinder's own spark instant (ignition.js:62), the
+// mean luminance of the projected SPEC.plug.glowR sphere against the ring of pixels around
+// it: with the spark family depth-tested as published, 3 of 8 tips read brighter than their
+// ring in EXPLODED - cyl 1 23.22 against 28.99, cyl 4 35.77 against 41.4, cyl 6 25.93
+// against 32.91, cyl 7 22.82 against 24.22, cyl 8 26.56 against 31.36 - and with
+// depthTest:false on the spark family alone all 8 read (cyl 1 180.65, cyl 4 123.13,
+// cyl 6 87.92, cyl 7 134.84, cyl 8 99.78, their rings unmoved at 28.99 / 41.79 / 36.66 /
+// 25.62 / 32.62). The glow sphere stands on the spark gap, the stack's lowest point
+// (src/render/plugs.js:95-105), and that point is enclosed by the plug's own nose and
+// electrode segments, so a depth test rejects every fragment of the additive light: the
+// flash was a correct number on a material nobody could see. In CUTAWAY the four tips on
+// the kept side of the published plane read already (153.52..172.60 against rings
+// 36.11..41.42) because the section removes the metal that stood in front of them, and the
+// four on the cut side are dark because the section removes those plugs entirely - which is
+// what a section does, and what the CUTAWAY half of this law's sibling above already gates.
+// The fix is therefore the published family, not the section: an additive glow is light,
+// and this file's own words (test/view.test.mjs:1305) - "an additive glow must not occlude the parts it glows
+// over" - are the same claim about depthWrite. The spark family is exempted from the depth
+// test; flame and exhaustGlow are internal effects and stay depth-tested.
+test('plugs: the published spark family is not depth-tested, so the tip glow reads in EXPLODED instead of standing inside its own plug', (t) => {
+  const published = GLOW_SPECS.spark;
+  assert.equal(published.depthTest, false, 'the published spark family is depth-tested: the tip glow stands on the spark gap, enclosed by the plug\'s own nose and electrode, so every fragment of it fails the depth test and the flash is invisible in EXPLODED (measured 3 of 8 tips reading, tmp/spark-probe17.out)');
+  const unit = plugUnit();
+  assert.ok(unit, 'no spark-plug unit, so there is no live tip to read the exemption off');
+  for (const c of SPEC.cylinders) {
+    const f = flashMesh(c.num);
+    assert.ok(f, `plug-cyl${c.num} has no tip mesh to read the exemption off`);
+    assert.equal(f.material.depthTest, false, `in EXPLODED-ready state plug-cyl${c.num}'s glow material "${f.material.name}" still answers the depth test: the additive light is culled by the metal it stands inside`);
+    assert.equal(f.material.depthWrite, false, `plug-cyl${c.num}'s glow material "${f.material.name}" writes depth: exempting a glow from the depth test while it writes depth would let it hide the parts behind it`);
+  }
+  t.diagnostic(`glow families as published: ${Object.keys(GLOW_SPECS).map((k) => `${k} depthTest=${GLOW_SPECS[k].depthTest ?? true}`).join(', ')}`);
 });
 
 test('plugs: the flash is a map of crank pose, not of frame rate - 1x, 1/4, 1/10 and 1/50 agree', (t) => {
