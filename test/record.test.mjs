@@ -253,3 +253,15 @@ test('test/screenshots.mjs prints its recorded stream through this formatter, th
   // the raw per-process handle must not reach the recorded stream
   assert.ok(!/warnings\.slice\(0, 3\)\.join/.test(src), 'the gate still pastes raw warnings into its output');
 });
+
+test('the screenshot gate boots the OHV build through the address, not only the default', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // Rows A1-G5 ("... in DOHC and in OHV") and P1-G6 ("the OHV valvetrain in CUTAWAY and
+  // EXPLODED") name a build this gate has never booted. Its CHECK string is pinned by
+  // gate-sig=c5527127c3f7ff77, so the pass has to live in this same file and reach the
+  // other build the way a reader does: the address.
+  assert.ok(/query:\s*'\?variant=ohv'/.test(src), 'the gate never boots /?variant=ohv, so row P1-G6\'s OHV clause and row A1-G5\'s "in DOHC and in OHV" are ungated by its own CHECK');
+  assert.ok(/standDatums\('ohv'\)/.test(src), 'the OHV pass never reads this build\'s own floor datum from src/engine/layout.js, so nothing measures what the OHV stand is built on');
+  for (const f of ['14-ohv.png', '15-ohv-cutaway.png', '16-ohv-exploded.png'])
+    assert.ok(src.includes(f), `the gate writes no ${f}: the OHV build is never pictured in CUTAWAY or EXPLODED`);
+});
