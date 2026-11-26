@@ -22,6 +22,7 @@
 // The pixel laws are relational on purpose: identical vs different, wider vs narrower,
 // non-blank. No invented brightness magnitude is asserted.
 import { ROOT, withPage } from './support/browser.mjs';
+import { detailLine, normalizeWarning, shotLine } from './support/record.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC } from '../src/engine/spec.js';
@@ -840,7 +841,10 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (twice.tree !== thrice.tree)
     bad.push(`the rendered tree changed between two reads of the same pinned pose (${twice.tree} -> ${thrice.tree}): the assembly is not a function of the crank angle`);
   const px = thrice.diff;
-  console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, pixels ${twice.hash} vs ${thrice.hash}, sampled ${thrice.samples}: ${px ? px.differing + ' differing, worst luminance delta ' + px.maxDelta : 'no comparison'}`);
+  // The verdict, not the two raw pixel hashes: the hashes are the rasteriser's own
+  // numbers and a record of them is not re-derivable (issue #43). The comparison
+  // stays exactly the same measurement.
+  console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, pixels ${twice.hash === thrice.hash ? 'identical' : 'differ'} between two reads, sampled ${thrice.samples}: ${px ? px.differing + ' differing, worst luminance delta ' + px.maxDelta : 'no comparison'}`);
   if (!px) bad.push('the determinism measurement produced no pixel comparison');
   else {
     if (px.pct > 0.5)
@@ -917,10 +921,13 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
     if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
     if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
-    console.log(
-      `shot ${name.padEnd(9)} ${s.bytes} bytes  buffer ${s.pixels.w}x${s.pixels.h}  lit ${(s.pixels.litFraction * 100).toFixed(1)}%  ` +
-        `mean ${s.pixels.mean}  min ${s.pixels.min} max ${s.pixels.max}  span ${s.pixels.litSpan.rows}x${s.pixels.litSpan.cols}  calls ${s.pixels.drawCalls}  hash ${s.pixels.hash}`
-    );
+    // The recorded stream carries only what the laws above compare (issue #43):
+    // the PNG byte count, the rasteriser's own pixel hash, the mean luminance and
+    // the draw-call count moved between two runs of one pose, so a row citing a
+    // record of this gate would cite a snapshot of a rasteriser. They stay
+    // readable behind --detail.
+    console.log(shotLine(name, s));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
   }
 
   // contact numbers measured here, printed so the thresholds above are auditable
@@ -948,7 +955,10 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // A picture rendered by a page that logged an error is not a working simulation: the
   // harness (test/support/browser.mjs) collects every console.error, page exception, CDP
   // log entry of level error and target crash, and this gate reads them into a law too.
-  if (warnings.length) console.log(`warnings: ${warnings.length} (${warnings.slice(0, 3).join(' | ')})`);
+  // A driver warning carries a per-process handle: the same warning in two runs of
+  // one gate printed different text (issue #43), so the handles are normalized
+  // before the line reaches a record.
+  if (warnings.length) console.log(`warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
   console.log(`console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
   if (errors.length) bad.push(`${errors.length} console/CDP error(s) while the gate rendered its pictures`);
 
