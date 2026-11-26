@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-import { LIVE_POSE, VOLATILE, detailLine, normalizeWarning, shotLine } from './support/record.mjs';
+import { LIVE_POSE, VOLATILE, compareDetail, compareLine, detailLine, normalizeWarning, shotLine } from './support/record.mjs';
 
 /** The two real handles issue #43 measured in two runs of the same gate. */
 const HANDLE_A = 'log[rendering]: [.WebGL-0xafc00379a00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall on vendor plugin';
@@ -42,9 +42,11 @@ test('the default shot line carries only what a law compares, and two runs of on
   const a = shotLine('cutaway', SHOT_A);
   const b = shotLine('cutaway', SHOT_B);
   assert.equal(a, b, `the recorded shot line moved between two runs of the same pose:\n  ${a}\n  ${b}`);
-  for (const field of VOLATILE) {
-    const raw = field === 'bytes' ? SHOT_A.bytes : field === 'hash' ? SHOT_A.pixels.hash : field === 'mean' ? SHOT_A.pixels.mean : SHOT_A.pixels.drawCalls;
-    assert.ok(!a.includes(String(raw)), `the default shot line prints the volatile ${field} (${raw}):\n  ${a}`);
+  const shotField = { bytes: (s) => s.bytes, hash: (s) => s.pixels.hash, mean: (s) => s.pixels.mean, drawCalls: (s) => s.pixels.drawCalls };
+  for (const field of Object.keys(shotField)) {
+    assert.ok(VOLATILE.includes(field), `VOLATILE no longer names the shot field ${field}`);
+    const raw = String(shotField[field](SHOT_A));
+    assert.ok(!a.includes(raw), `the default shot line prints the volatile ${field} (${raw}):\n  ${a}`);
   }
   // the numbers the shot laws actually compare stay in the line
   for (const part of ['1278x798', '34.5%', '6.4', '244.1', '237.7', '640x1100', '339624'])
@@ -110,6 +112,10 @@ test('the screenshot gate carries a capture pass for the published fluid network
   assert.ok(/import\('\/src\/engine\/drive\.js'\)/.test(src), 'the gate never reads src/engine/drive.js in the page, so no law measures the drawn chain against its published pitch');
   for (const clause of ['coolant', 'oil', 'drive'])
     assert.ok(src.includes(`bad.push(\`${clause}: `), `the gate prints no verdict line for the ${clause} capture pass`);
+  // the fluid picture frames on the bounds the published networks report, not on a
+  // typed point a reader cannot trace to a module
+  assert.ok(/fluidBounds/.test(src), 'the gate never reads where the published fluids actually are');
+  assert.ok(/focusCameraOn\([^)]*fb\.center/.test(src), 'the fluid capture frames on a typed point instead of the bounds the fluid members report');
   // the volatile set stays behind the guard at every call site
   const lines = src.split('\n');
   const calls = [];
@@ -121,6 +127,115 @@ test('the screenshot gate carries a capture pass for the published fluid network
     assert.ok(guarded, `detailLine is called without a --detail guard at line ${i + 1}:\n  ${lines[i - 1]}\n  ${lines[i]}`);
   }
   assert.ok(calls.length > 0, 'the gate never calls detailLine');
+});
+
+test('a page read the gate parses must be stringified in the page: the harness already decodes what evaluate returns', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // test/support/browser.mjs evaluates with returnByValue, so an object the page returns
+  // arrives in Node already decoded. JSON.parse(await evalJs(...)) on such a read hands
+  // JSON.parse the string "[object Object]": measured on this gate, it threw
+  // `SyntaxError: "[object Object]" is not valid JSON` at the fluid census and the gate
+  // died before it could print a verdict (tmp/v8-8f2-shots1.out, exit 1).
+  const lines = src.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.includes('JSON.parse(await evalJs(')) continue;
+    assert.ok(l.includes('JSON.stringify('), `line ${i + 1} parses a page read the harness already decoded, and the page never stringifies it:\n  ${l.trim()}`);
+  }
+});
+
+test('a page-read template that already invokes itself is never called a second time', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // Every page-read template in this gate is a self-invoking IIFE (`const X = `(() => {
+  // ... })()`;`), so the harness composition must pass it through, not call it again.
+  // Measured: `(async () => JSON.stringify(await (${FLUIDS})()))()` evaluated in the page
+  // as `Promise(...)` and threw `TypeError: (intermediate value)(...) is not a function`
+  // at test/screenshots.mjs:953 (tmp/v8-8f2-shots2.out, exit 1, no verdict printed).
+  const templates = [];
+  for (const m of src.matchAll(/^const ([A-Z][A-Z0-9_]+) = `/gm)) {
+    const open = m.index + m[0].length;
+    const close = src.indexOf('`', open);
+    assert.ok(close > 0, `the page template ${m[1]} is never closed`);
+    templates.push({ name: m[1], invoked: /\)\s*$/.test(src.slice(open, close).trimEnd()) });
+  }
+  assert.ok(templates.length >= 3, `the gate holds ${templates.length} page templates, expected at least MEASURE, PIXELS and FLUIDS`);
+  const lineOf = (at) => src.slice(0, at).split('\n').length;
+  for (const t of templates.filter((x) => x.invoked)) {
+    const needle = '${' + t.name + '}';
+    for (let at = src.indexOf(needle); at >= 0; at = src.indexOf(needle, at + 1)) {
+      const after = src.slice(at + needle.length, at + needle.length + 6);
+      assert.ok(
+        !/^\)\(/.test(after),
+        `line ${lineOf(at)} calls the already-invoked page template ${t.name} a second time: ` +
+        `${needle}${after}\n  ${t.name} is defined as a self-invoking IIFE, so the composition ` +
+        'must not append another call',
+      );
+    }
+  }
+});
+
+test('a pixel comparison records its verdict against the published floors, not the counts it measured', () => {
+  // Two runs of this gate, one pinned pose each: the crank 0 -> 180 pair printed
+  // `1619 of 101626 sampled pixels differ (1.5931%), mean delta 16.44` in
+  // tmp/v8-8f-shots-fix3.out and `1663 ... (1.6364%) ... 16.1` in tmp/v8-8f2-shots2.out;
+  // the round trip printed 1619 against 1763; two reads of one pinned pose printed
+  // `0 differing, worst luminance delta 0` against `120 differing, worst luminance delta
+  // 23`. Every one of those is inside the published tolerances, so none of them is a
+  // fact about the pose - and a row citing a record carrying them cannot re-derive it.
+  for (const field of ['differing', 'pct', 'maxDelta', 'meanDelta'])
+    assert.ok(VOLATILE.includes(field), `VOLATILE does not name "${field}", which two runs of this gate measured moving`);
+
+  const PAIR_A = { differing: 1619, of: 101626, pct: 1.5931, maxDelta: 201, meanDelta: 16.44 };
+  const PAIR_B = { differing: 1663, of: 101626, pct: 1.6364, maxDelta: 201, meanDelta: 16.1 };
+  const a = compareLine('cutaway pair 0deg->180deg', PAIR_A, { maxDeltaMin: 40 });
+  const b = compareLine('cutaway pair 0deg->180deg', PAIR_B, { maxDeltaMin: 40 });
+  assert.equal(a, b, `the recorded comparison line moved between two runs of one pose:\n  ${a}\n  ${b}`);
+  for (const raw of ['1619', '1663', '1.5931', '1.6364', '16.44', '16.1', '201'])
+    assert.ok(!a.includes(raw), `the recorded comparison line prints the measured ${raw}:\n  ${a}`);
+  assert.ok(a.includes('101626'), `the recorded comparison line dropped the stable sample count:\n  ${a}`);
+  assert.ok(a.includes('at least 40'), `the recorded comparison line does not name the floor it clears:\n  ${a}`);
+  const held = compareLine('same pose twice', { differing: 0, of: 101626, pct: 0, maxDelta: 0, meanDelta: 0 }, { pctMax: 0.5, maxDeltaMax: 60 });
+  assert.ok(held.includes('at most 0.5%') && held.includes('at most 60'), `the ceiling law's floors are not stated:\n  ${held}`);
+  // the numbers stay readable behind compareDetail
+  const d = compareDetail('cutaway pair 0deg->180deg', PAIR_A);
+  for (const raw of ['1619', '1.5931', '201', '16.44'])
+    assert.ok(d.includes(raw), `compareDetail dropped ${raw}:\n  ${d}`);
+
+  // and the gate itself must not print a measured comparison number outside a --detail guard
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  const lines = src.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const guarded = l.includes("process.argv.includes('--detail')")
+      || (i > 0 && lines[i - 1].includes("process.argv.includes('--detail')"));
+    if (l.includes('console.log(') && /\.(differing|pct|maxDelta|meanDelta)\b/.test(l))
+      assert.ok(guarded, `line ${i + 1} prints a measured pixel-comparison number into the recorded stream:\n  ${l.trim()}`);
+    if (l.includes('compareDetail('))
+      assert.ok(guarded, `line ${i + 1} prints the measured comparison detail without a --detail guard:\n  ${l.trim()}`);
+  }
+  assert.ok(src.includes('compareLine('), 'the gate prints no comparison verdict through the formatter');
+});
+
+test('a page eval names only what the page really has: THREE is not a global there', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // The gate's page reads run in the page's global scope, where the module import is not
+  // visible: THREE lives as window.__v8.THREE. Measured: `evalJs('window.__v8.focusCameraOn(
+  // new THREE.Vector3(0, 0, -10.5), 34)')` threw `ReferenceError: THREE is not defined` and
+  // the gate died before printing a verdict (tmp/v8-8f2-shots3.out, exit 1, after the fluid
+  // census had already printed 94 of 94 coolant members and 4 chains).
+  for (const [i, l] of src.split('\n').entries())
+    assert.ok(
+      !l.includes('evalJs(') || !/\bnew THREE\./.test(l),
+      `line ${i + 1} builds "new THREE." inside a page eval, where THREE is not a global: ${l.trim().slice(0, 140)}`,
+    );
+  // a page template may use THREE only when it aliases it from the app surface first
+  for (const m of src.matchAll(/^const ([A-Z][A-Z0-9_]+) = `/gm)) {
+    const open = m.index + m[0].length;
+    const close = src.indexOf('`', open);
+    const body = src.slice(open, close);
+    if (!/\bTHREE\./.test(body)) continue;
+    assert.ok(/=\s*(v|window\.__v8)\.THREE/.test(body), `${m[1]} uses THREE without aliasing it from window.__v8`);
+  }
 });
 
 test('test/screenshots.mjs prints its recorded stream through this formatter, the volatile set behind --detail', () => {

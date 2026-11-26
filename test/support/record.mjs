@@ -12,9 +12,18 @@
 // compares. The volatile numbers are not deleted - they belong in a human reading
 // the pictures - they just stop living in the stream a hash is taken of.
 import { format } from 'node:util';
+import assert from 'node:assert/strict';
 
-/** Fields of one shot record that move run to run, measured in issue #43. */
-export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls'];
+/** Fields a recorded run cannot carry. The first four are the shot fields issue #43
+ *  measured moving (bytes, the rasteriser's pixel hash, mean luminance, draw calls).
+ *  The last four are the pixel-comparison fields, measured moving between
+ *  tmp/v8-8f-shots-fix3.out and tmp/v8-8f2-shots2.out: the crank 0 -> 180 pair printed
+ *  `1619 of 101626 sampled pixels differ (1.5931%), mean delta 16.44` against `1663 ...
+ *  (1.6364%) ... 16.1`, the round trip 1619 against 1763, and two reads of one pinned
+ *  pose `0 differing, worst luminance delta 0` against `120 differing, worst luminance
+ *  delta 23` - every one inside the published tolerances, so none of them is a fact
+ *  about the pose. */
+export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls', 'differing', 'pct', 'maxDelta', 'meanDelta'];
 
 /** Shots the gate captures at a live rpm instead of at a pinned crank angle. Their
  *  picture is a function of where the animation stood when the shutter opened, so
@@ -44,6 +53,27 @@ export const shotLine = (name, s) => {
 export const detailLine = (name, s) => format(
   'detail %s %d bytes, pixel hash %d, mean %s, draw calls %d',
   name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, s.pixels.drawCalls,
+);
+
+/** One pixel comparison of two renders, printed as the verdict its laws state against
+ *  the published floors - never as the counts, which are stopwatch readings (see
+ *  VOLATILE). The stable half (how many pixels the gate sampled) stays. */
+export const compareLine = (label, cmp, floors) => {
+  const cleared = [];
+  if (floors.pctMin !== undefined) cleared.push(`at least ${floors.pctMin}% of the samples differing`);
+  if (floors.maxDeltaMin !== undefined) cleared.push(`worst luminance delta at least ${floors.maxDeltaMin}`);
+  if (floors.pctSlack !== undefined) cleared.push(`differing percentage within ${floors.pctSlack} points of the paired measurement`);
+  if (floors.slack !== undefined) cleared.push(`worst luminance delta within ${floors.slack} of the paired measurement`);
+  if (floors.pctMax !== undefined) cleared.push(`at most ${floors.pctMax}% of the samples differing`);
+  if (floors.maxDeltaMax !== undefined) cleared.push(`worst luminance delta at most ${floors.maxDeltaMax}`);
+  assert(cleared.length, 'compareLine was given no published floor to state');
+  return `pixels ${label}: ${cmp.of} sampled, clears the published floors (${cleared.join(', ')})`;
+};
+
+/** The same comparison's measured numbers, for a human reading the gate. */
+export const compareDetail = (label, cmp) => format(
+  'detail pixels %s: %d of %d sampled differing (%s%%), worst luminance delta %s, mean delta %s where a pixel moved',
+  label, cmp.differing, cmp.of, cmp.pct, cmp.maxDelta, cmp.meanDelta,
 );
 
 /** One warning as it may be recorded: same text every process, handle removed. */

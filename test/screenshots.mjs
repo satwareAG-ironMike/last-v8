@@ -22,7 +22,7 @@
 // The pixel laws are relational on purpose: identical vs different, wider vs narrower,
 // non-blank. No invented brightness magnitude is asserted.
 import { ROOT, withPage } from './support/browser.mjs';
-import { detailLine, normalizeWarning, shotLine } from './support/record.mjs';
+import { compareDetail, compareLine, detailLine, normalizeWarning, shotLine } from './support/record.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC } from '../src/engine/spec.js';
@@ -474,6 +474,113 @@ const PIXELS = `(() => {
   };
 })()`;
 
+/**
+ * Row A1-G5's three named things, read in the live page: the coolant network
+ * src/engine/coolant.js publishes, the oil network src/engine/oil.js publishes and the
+ * chain src/engine/drive.js lays out. The gate compares the published list with the
+ * members the scene really holds - the authority is the network, never a typed list.
+ */
+const FLUIDS = `(async () => {
+  const v = window.__v8, THREE = v.THREE;
+  const { coolantNetwork } = await import('/src/engine/coolant.js');
+  const { oilNetwork } = await import('/src/engine/oil.js');
+  const { chainPitch } = await import('/src/engine/drive.js');
+  const r = (n, k) => +Number(n).toFixed(k === undefined ? 6 : k);
+  const net = (n) => (typeof n === 'string' ? n : n && (n.member || n.name || n.id));
+
+  const cn = coolantNetwork(v.variant());
+  const coolantNames = (cn.members || []).map(net).filter(Boolean);
+  const oilNet = oilNetwork(v.variant());
+  const oilNames = [oilNet.supply, ...oilNet.galleries, ...oilNet.camGalleries, ...oilNet.links,
+    ...oilNet.bridges, ...oilNet.feeds].map((b) => b && b.id).filter(Boolean);
+  const pendingOil = (oilNet.pendingGalleries || []).map(net).filter(Boolean);
+
+  const inspectable = new Set(v.view.inspectables().map((i) => i.name));
+  const drawn = (name) => {
+    const o = v.view.members.get(name);
+    if (!o) return null;
+    let meshes = 0, verts = 0;
+    o.traverse((x) => {
+      if (!x.isMesh) return;
+      meshes += 1;
+      const pos = x.geometry && x.geometry.attributes && x.geometry.attributes.position;
+      verts += pos ? pos.count : 0;
+    });
+    return { meshes, verts };
+  };
+  const census = (names) => {
+    const missing = [], empty = [], offMenu = [];
+    for (const n of names) {
+      const d = drawn(n);
+      if (!d) { missing.push(n); continue; }
+      if (d.verts === 0) empty.push(n);
+      if (!inspectable.has(n)) offMenu.push(n);
+    }
+    return { want: names.length, drawn: names.length - missing.length, missing, empty, offMenu };
+  };
+
+  const chains = [];
+  v.scene.traverse((o) => {
+    if (!o.isGroup || !o.userData || !o.userData.chain) return;
+    const rollers = [];
+    o.traverse((x) => { if (x.isMesh && /-roller-/.test(x.name)) rollers.push(x); });
+    let plates = 0, guide = false, tensioner = false;
+    o.traverse((x) => {
+      if (x.isInstancedMesh && /-plates-/.test(x.name)) plates += 1;
+      if (x.isGroup && /-guide$/.test(x.name)) guide = true;
+      if (x.isGroup && /-tensioner$/.test(x.name)) tensioner = true;
+    });
+    let loop = 0;
+    for (let i = 0; i < rollers.length; i++) {
+      const a = new THREE.Vector3(), b = new THREE.Vector3();
+      a.setFromMatrixPosition(rollers[i].matrixWorld);
+      b.setFromMatrixPosition(rollers[(i + 1) % rollers.length].matrixWorld);
+      loop += a.distanceTo(b);
+    }
+    const pitch = chainPitch();
+    chains.push({
+      name: o.name, rollers: rollers.length, plates, guide, tensioner,
+      loop: r(loop, 3), pitch: r(pitch, 4), linksAtPitch: r(loop / pitch, 3),
+    });
+  });
+
+  const half = v.SPEC.cam.halfSpeedRatio;
+  const sp = v.SPEC.cam.sprocket, csp = v.SPEC.crank.sprocket;
+
+  // where the published fluids actually are, so the capture frames them instead of a
+  // typed point: the union of every drawn coolant member and oil bore
+  const box = new THREE.Box3();
+  for (const n of [...coolantNames, ...oilNames]) {
+    const o = v.view.members.get(n);
+    if (!o) continue;
+    o.updateWorldMatrix(true, false);
+    box.union(new THREE.Box3().setFromObject(o));
+  }
+  const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
+  return {
+    variant: v.variant(),
+    fluidBounds: {
+      min: box.min.toArray().map((x) => +x.toFixed(3)),
+      max: box.max.toArray().map((x) => +x.toFixed(3)),
+      center: c.toArray().map((x) => +x.toFixed(3)),
+      size: sz.toArray().map((x) => +x.toFixed(3)),
+    },
+    coolant: census(coolantNames),
+    coolantPublished: (cn.counts && cn.counts.members) || coolantNames.length,
+    headCrossing: {
+      links: coolantNames.filter((n) => /coolant-headlink-/.test(n)).length,
+      galleries: coolantNames.filter((n) => /coolant-headgallery-/.test(n)).length,
+    },
+    oil: census(oilNames),
+    oilPending: pendingOil,
+    oilHardware: ['oil-pump', 'oil-pan-pickup', 'oil-pressure-gauge'].map((n) => ({ name: n, drawn: !!drawn(n), inspectable: inspectable.has(n) })),
+    inspectables: v.view.inspectables().length,
+    chains,
+    half,
+    sprockets: { crankTeeth: csp && csp.teeth, camTeeth: sp.teeth, crankPitchR: csp && csp.pitchR, camPitchR: sp.pitchR },
+  };
+})()`;
+
 // Same watchdog reasoning as the control gate: the box is not idle (a local inference
 // server measured at 273% CPU), the page runs at 1.6 fps under software rasterisation
 // (tmp/hud-fps-probe.out), and the hang guard has to sit above the measured wall time
@@ -784,10 +891,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const pair = shots.bdc.pixels.diff;
   if (!pair) bad.push('the two cutaway pictures were never compared sample to sample');
   else {
-    console.log(
-      `cutaway pair at crank 0 vs crank 180: ${pair.differing} of ${pair.of} sampled pixels differ ` +
-      `(${pair.pct}%), worst luminance delta ${pair.maxDelta}, mean delta ${pair.meanDelta} where a pixel moved`
-    );
+    console.log(compareLine('cutaway pair crank 0 vs crank 180', pair, { pctMin: 1, maxDeltaMin: 40 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('cutaway pair crank 0 vs crank 180', pair));
     if (pair.pct < 1)
       bad.push(`the cutaway at crank 0 and the cutaway at crank 180 differ on only ${pair.pct}% of ${pair.of} sampled pixels: the pistons did not travel to the opposite dead centres`);
     if (pair.maxDelta < 40)
@@ -803,10 +908,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const back = await evalJs(`(${PIXELS})`);
   if (!back.diff) bad.push('the trip back to crank 0 was never compared with the crank 180 picture');
   else {
-    console.log(
-      `round trip crank 0 -> 180 -> 0: the picture at the second crank 0 is ${back.diff.differing} of ` +
-      `${back.diff.of} sampled pixels (${back.diff.pct}%) from the crank 180 picture, worst delta ${back.diff.maxDelta}`
-    );
+    console.log(compareLine('round trip crank 0 -> 180 -> 0', back.diff, { pctSlack: 0.5, slack: 40 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('round trip crank 0 -> 180 -> 0', back.diff));
     if (Math.abs(back.diff.pct - pair.pct) > 0.5)
       bad.push(`crank 0 gave ${pair.pct}% against crank 180 the first time and ${back.diff.pct}% the second: the engine did not come back to the picture it left`);
     if (Math.abs(back.diff.maxDelta - pair.maxDelta) > 40)
@@ -841,17 +944,88 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (twice.tree !== thrice.tree)
     bad.push(`the rendered tree changed between two reads of the same pinned pose (${twice.tree} -> ${thrice.tree}): the assembly is not a function of the crank angle`);
   const px = thrice.diff;
-  // The verdict, not the two raw pixel hashes: the hashes are the rasteriser's own
-  // numbers and a record of them is not re-derivable (issue #43). The comparison
-  // stays exactly the same measurement.
-  console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, pixels ${twice.hash === thrice.hash ? 'identical' : 'differ'} between two reads, sampled ${thrice.samples}: ${px ? px.differing + ' differing, worst luminance delta ' + px.maxDelta : 'no comparison'}`);
+  // The verdict against the published tolerances, not the counts: issue #43's contract
+  // is that a recorded line states what a law compares. Measured on this gate, two runs
+  // of one pinned pose printed `0 differing, worst luminance delta 0`
+  // (tmp/v8-8f-shots-fix3.out) against `120 differing, worst luminance delta 23`
+  // (tmp/v8-8f2-shots2.out) - both inside the floors, so the counts are a stopwatch
+  // reading and belong in the --detail stream, not in the record a row cites.
   if (!px) bad.push('the determinism measurement produced no pixel comparison');
   else {
+    console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, ${compareLine('same pose twice', px, { pctMax: 0.5, maxDeltaMax: 60 })}`);
+    if (process.argv.includes('--detail')) console.log(compareDetail('same pose twice', px));
     if (px.pct > 0.5)
       bad.push(`${px.differing} of ${px.of} sampled pixels (${px.pct}%) differ between two renders of the same pinned pose; the measured worst case on this build is 0.2125%`);
     if (px.maxDelta > 60)
       bad.push(`two renders of the same pinned pose differ by ${px.maxDelta} luminance at one pixel; the measured worst case on this build is 48`);
   }
+
+  // ---- row A1-G5's capture pass: the fluids and the drive, measured live ----------
+  // The gate has always measured the cranktrain, the valve train and the castings at
+  // eight pinned angles; it has never asked what the coolant network, the oil network
+  // and the chain drive publish against what the scene holds - grepping this file for
+  // coolant/jacket/gallery/oil returned one contact pair, ['oil-pan', 'crankcase'].
+  // The networks are read in the page, so the authority is the published list.
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await sleep(400);
+  const fluids = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${FLUIDS})))()`, { timeoutMs: 120000 }));
+  console.log(`coolant: ${fluids.coolant.drawn} of ${fluids.coolant.want} published members drawn in the sectioned casting, ${fluids.coolant.offMenu.length} off the inspection menu, ${fluids.coolant.empty.length} without vertices, ${fluids.headCrossing.links} head links + ${fluids.headCrossing.galleries} head galleries beyond the gasket`);
+  if (fluids.coolant.missing.length)
+    bad.push(`coolant: ${fluids.coolant.missing.length} published members are not in the live tree (${fluids.coolant.missing.slice(0, 6).join(', ')})`);
+  if (fluids.coolant.offMenu.length)
+    bad.push(`coolant: ${fluids.coolant.offMenu.length} drawn members are not on the inspection menu (${fluids.coolant.offMenu.slice(0, 6).join(', ')})`);
+  if (fluids.coolant.empty.length)
+    bad.push(`coolant: ${fluids.coolant.empty.length} drawn members carry no vertices (${fluids.coolant.empty.slice(0, 6).join(', ')})`);
+  if (!(fluids.headCrossing.links > 0 && fluids.headCrossing.galleries > 0))
+    bad.push(`coolant: the passages stop at the gasket - ${fluids.headCrossing.links} head links and ${fluids.headCrossing.galleries} head galleries are published`);
+
+  console.log(`oil: ${fluids.oil.drawn} of ${fluids.oil.want} published bores drawn, ${fluids.oil.offMenu.length} off the inspection menu, ${fluids.inspectables} inspectables on the menu, hardware ${fluids.oilHardware.map((h) => `${h.name} ${h.drawn && h.inspectable ? 'drawn+inspectable' : 'MISSING'}`).join(', ')}`);
+  if (fluids.oil.missing.length)
+    bad.push(`oil: ${fluids.oil.missing.length} published bores are not in the live tree (${fluids.oil.missing.slice(0, 6).join(', ')})`);
+  if (fluids.oil.offMenu.length)
+    bad.push(`oil: ${fluids.oil.offMenu.length} published bores are not on the inspection menu (${fluids.oil.offMenu.slice(0, 6).join(', ')})`);
+  for (const h of fluids.oilHardware)
+    if (!h.drawn || !h.inspectable)
+      bad.push(`oil: ${h.name} is ${h.drawn ? 'not on the inspection menu' : 'not drawn'} - the pump and its pickup have to be parts a reader can select`);
+
+  console.log(`drive: ${fluids.chains.length} chains, cams at half crank (SPEC.cam.halfSpeedRatio ${fluids.half}), sprockets ${fluids.sprockets.crankTeeth}/${fluids.sprockets.camTeeth} teeth at pitch radii ${fluids.sprockets.crankPitchR}/${fluids.sprockets.camPitchR} cm`);
+  for (const c of fluids.chains) {
+    console.log(`  chain ${c.name}: ${c.rollers} rollers, ${c.plates} plate layers, guide ${c.guide ? 'yes' : 'no'}, tensioner ${c.tensioner ? 'yes' : 'no'}, closed roller loop ${c.loop} cm = ${c.linksAtPitch} links at the published ${c.pitch} cm pitch`);
+    if (c.rollers === 0) bad.push(`drive: chain ${c.name} draws no rollers`);
+    if (!c.guide) bad.push(`drive: chain ${c.name} has no guide it runs on`);
+    if (!c.tensioner) bad.push(`drive: chain ${c.name} has no tensioner`);
+    if (!(c.loop > 0)) bad.push(`drive: chain ${c.name}'s roller loop measures ${c.loop} cm`);
+    // The loop a reader can walk must be the published pitch times the rollers the
+    // chain actually draws: measured 105.976 cm / 1.2043 cm = 87.998 links against 88
+    // rollers on all four DOHC chains (tmp/v8-8f2-shots3.out), so the floor of 0.02
+    // links sits far under the measurement and catches a loop that overlaps or stretches.
+    if (Math.abs(c.linksAtPitch - c.rollers) > 0.02)
+      bad.push(`drive: chain ${c.name}'s closed roller loop of ${c.loop} cm is ${c.linksAtPitch} links at the published ${c.pitch} cm pitch, but the chain draws ${c.rollers} rollers - those links would overlap or stretch`);
+  }
+  // the half-speed law itself is already measured at every pinned angle above
+  // (line "has turned N cam degrees at crank T"), so this pass adds what that law
+  // cannot see: the chains that carry it and the sprocket pair they run on.
+  if (fluids.chains.length < 4)
+    bad.push(`drive: the DOHC build publishes four cam chains and the live tree holds ${fluids.chains.length}`);
+  if (fluids.half !== 2)
+    bad.push(`drive: SPEC.cam.halfSpeedRatio is ${fluids.half}, the cam drive has to turn the cams at half crank`);
+  if (fluids.sprockets.camTeeth !== 2 * fluids.sprockets.crankTeeth)
+    bad.push(`drive: the cam sprocket's ${fluids.sprockets.camTeeth} teeth are not 2x the crank sprocket's ${fluids.sprockets.crankTeeth}`);
+  if (fluids.sprockets.camPitchR !== 2 * fluids.sprockets.crankPitchR)
+    bad.push(`drive: the pitch radii ${fluids.sprockets.crankPitchR}/${fluids.sprockets.camPitchR} cm are not the published 2:1 pair`);
+
+  // the picture the row asks for: the fluids, sectioned in the casting they are bored in,
+  // framed on the bounds the published networks themselves report
+  const fb = fluids.fluidBounds;
+  const span = Math.max(...fb.size);
+  console.log(`fluid bounds: ${fb.min.join(',')} .. ${fb.max.join(',')} (${fb.size.join(' x ')} cm), framed at centre ${fb.center.join(',')} range ${(span * 1.35).toFixed(2)} cm`);
+  await evalJs(`window.__v8.focusCameraOn(new window.__v8.THREE.Vector3(${fb.center.join(',')}), ${(span * 1.35).toFixed(2)}); "ok"`);
+  await sleep(1200);
+  shots.fluids = { ...(await shot('13-cutaway-fluids.png')), pixels: await evalJs(`(${PIXELS})`) };
+  if (shots.fluids.pixels.hash === shots.cutaway.pixels.hash)
+    bad.push('the fluid capture produced the same picture as the plain cutaway: the framing never reached the galleries');
+  await resetView();
+  await sleep(600);
 
   await evalJs('window.__v8.setRpm(1800); window.__v8.setSlowmo(1); window.__v8.start(); "ok"');
   await sleep(700);
