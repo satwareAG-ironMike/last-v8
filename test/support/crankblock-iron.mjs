@@ -43,7 +43,9 @@ const segDist = (px, py, ax, ay, bx, by) => {
 
 /**
  * The exact distance from the crank axis to one drawn triangle: 0 when the axis line
- * pierces the face, otherwise the nearest point on its three edges.
+ * pierces the face, otherwise the nearest point on its three edges. A triangle whose
+ * projection on the (y, z) plane is collinear with the axis - a wall standing in the
+ * y = 0 symmetry plane - has no interior to pierce, so it is measured by its edges.
  */
 export function triAxisR(pos, i, j, k) {
   const a = [pos.getY(i), pos.getZ(i)];
@@ -51,7 +53,8 @@ export function triAxisR(pos, i, j, k) {
   const c = [pos.getY(k), pos.getZ(k)];
   const cr = (u, v) => u[0] * v[1] - u[1] * v[0];
   const s1 = cr(a, b), s2 = cr(b, c), s3 = cr(c, a);
-  if ((s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0)) return 0;
+  const area2 = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  if (area2 !== 0 && ((s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0))) return 0;
   return Math.min(segDist(0, 0, ...a, ...b), segDist(0, 0, ...b, ...c), segDist(0, 0, ...c, ...a));
 }
 

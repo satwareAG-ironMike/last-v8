@@ -63,8 +63,9 @@ test('no cast iron stands inside a main bearing seat bore (both builds)', async 
       const rows = seatIron(iron, c);
       assert.ok(rows.length, `${variant} x ${c}: no cast iron at all stands in the main's own ${SHELL_HALF} cm shell band, so this main has no housing`);
       const bad = rows.filter((e) => !BEARING_SURFACE.test(e.part) && e.r < S.boreCm - IRON_EPS);
-      assert.equal(bad.length, 0,
-        `${variant} x ${c}: ${bad.length} cast-iron face(s) stand inside the ${S.boreCm.toFixed(4)} cm main seat bore, the closest ${bad[0].part} at ${bad[0].r.toFixed(4)} cm off the crank axis - that is ${(S.boreCm - bad[0].r).toFixed(4)} cm of bearing seat the casting occupies (issue #18 Measured 1)`);
+      if (bad.length) {
+        assert.fail(`${variant} x ${c}: ${bad.length} cast-iron face(s) stand inside the ${S.boreCm.toFixed(4)} cm main seat bore, the closest ${bad[0].part} at ${bad[0].r.toFixed(4)} cm off the crank axis - that is ${(S.boreCm - bad[0].r).toFixed(4)} cm of bearing seat the casting occupies (issue #18 Measured 1)`);
+      }
       closest.push(`${variant} x ${c} ${rows[0].part} ${rows[0].r.toFixed(4)}`);
     }
   }
