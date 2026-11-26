@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SPEC, wrap360, signedAngle } from '../src/engine/spec.js';
-import { followers, ohvBearings, ohvHousing, ohvLifterGallery, camGroupNames, lobes as lobeCount, cams as camCount } from '../src/engine/layout.js';
+import { followers, ohvBearings, ohvHousing, ohvLifterGallery, ohvLifters, camGroupNames, lobes as lobeCount, cams as camCount } from '../src/engine/layout.js';
 import {
   camAzimuth, crankEvent, eventMid, eventDuration, lobeProfileRadius, lobeHalfCamDeg, lobeMaxRadius,
 } from '../src/engine/timing.js';
@@ -447,4 +447,97 @@ test(`${LAW}: a cam clearance law that reads the base circle instead of the swep
   for (const o of cam.children) for (const p of surfaceOf(o)) maxR = Math.max(maxR, radiusOf(p, axis));
   assert.ok(Math.abs(maxR - swept) <= FACET, `the drawn cam presents ${maxR.toFixed(4)} cm, not the swept outline ${swept.toFixed(4)} the bore is sized around`);
   console.log(`${LAW} oracle: a base-circle law claims ${claimed.toFixed(4)} cm past the cam, the drawn nose of ${maxR.toFixed(4)} leaves ${(bore - maxR).toFixed(4)}`);
+});
+
+// ---- slice 8I (issue #45 decision, 2026-11-26): the OHV cam is ground to the
+// lift its rockers restore. Written RED first against the tree as landed: the
+// rocker ratio was not published and both variants shared one 1.1 cm grind,
+// which is what the #45 measurement refused (tmp/v8-8c3c-fit.out: a 1:1 intake
+// rocker pivots 0.1563 cm into the spark-plug boot, a 1.5:1 pivot stands
+// 1.4224 cm clear of it). Every clause below measures a number that does not
+// exist at the commit this file is committed at.
+
+test(`${LAW}: the rocker ratio is published and this variant's grind derives from it, while the DOHC grind stays the committed one`, async () => {
+  const E = await eng();
+  const R = SPEC.variants.ohv.rockerRatio;
+  assert.ok(Number.isFinite(R) && R > 1,
+    `SPEC.variants.ohv.rockerRatio is ${JSON.stringify(R)}: issue #45 measured that a 1:1 intake rocker pivots at out 1.3063, 0.1563 cm into the plug's own 0.70 boot, so this variant has to publish a ratio above 1 before its cam grind can derive from it`);
+  const lift = E.ohvCamLiftCm();
+  assert.ok(Number.isFinite(lift) && lift > 0,
+    `ohvCamLiftCm() publishes ${JSON.stringify(lift)}: the lift this variant's cam is ground to has to be derived from the published ratio, not typed`);
+  assert.ok(Math.abs(lift - V.maxLift / R) < 1e-12,
+    `this variant's cam is ground to ${lift.toFixed(6)} cm at the follower; the published ${V.maxLift} cm of valve lift over a ${R}:1 rocker is ${(V.maxLift / R).toFixed(6)} cm`);
+  assert.ok(lift < V.maxLift,
+    `a rocker ratio above 1 has to mean a smaller nose on the cam: measured ${lift.toFixed(4)} against the ${V.maxLift} cm the DOHC buckets ride directly`);
+  // The other variant is not part of this decision: its buckets ride maxLift.
+  for (const valve of ['intake', 'exhaust']) {
+    const nose = lobeMaxRadius(valve);
+    assert.ok(Math.abs(nose - (SPEC.head.camBaseRadius + V.maxLift)) < 1e-9,
+      `${valve}: re-grinding the OHV cam moved the DOHC lobe to ${nose.toFixed(4)} cm; row A1-G3 closed the DOHC grind at base circle ${SPEC.head.camBaseRadius} plus ${V.maxLift} cm`);
+  }
+  console.log(`${LAW} grind: rocker ratio ${R}:1, OHV cam ground to ${lift.toFixed(4)} cm at the follower, DOHC lobes still ${lobeMaxRadius('intake').toFixed(4)} cm at their buckets`);
+});
+
+test(`${LAW}: all 16 drawn lobes carry the re-ground nose on the unchanged base circle, and the drawn lifters stop at it`, async () => {
+  const E = await eng();
+  const lift = E.ohvCamLiftCm();
+  const base = SPEC.head.camBaseRadius;
+  const nose = base + lift;
+  const { cam } = ohvTrain();
+  const axis = axisPoint(E);
+  let hi = 0, lo = Infinity, hiWho = null;
+  for (const cyl of SPEC.cylinders) {
+    for (const valve of ['intake', 'exhaust']) {
+      const mesh = cam.getObjectByName(`lobe-cyl${cyl.num}-${valve}`);
+      assert.ok(mesh, `lobe-cyl${cyl.num}-${valve} is not drawn on the central cam`);
+      for (const { p, kind } of bandPoints(mesh)) {
+        if (kind !== 'c') continue; // a chord sinks inside the outline by design
+        const r = radiusOf(p, axis);
+        if (r > hi) { hi = r; hiWho = mesh.name; }
+        if (r < lo) lo = r;
+      }
+    }
+  }
+  assert.ok(Math.abs(hi - nose) <= FACET,
+    `the 16 drawn lobes peak at ${hi.toFixed(4)} cm (${hiWho}) against the ${nose.toFixed(4)} cm this variant's cam is ground to: base circle ${base} plus ${lift.toFixed(4)} cm of lift from the ${SPEC.variants.ohv.rockerRatio}:1 rocker`);
+  assert.ok(Math.abs(lo - base) <= FACET,
+    `the drawn lobes' tightest outline reads ${lo.toFixed(4)} cm: the re-grind moves the nose, not the ${base} cm base circle its followers ride`);
+  const L = ohvLifters();
+  assert.ok(Math.abs(L.liftMaxCm - lift) < 1e-9,
+    `ohvLifters() publishes ${L.liftMaxCm.toFixed(4)} cm of lifter travel against a ${lift.toFixed(4)} cm grind`);
+  for (const l of L.lifters) {
+    assert.ok(Math.abs(l.faceMax - nose) < 1e-9, `${l.name}: its face tops out at ${l.faceMax.toFixed(4)}, not on the ${nose.toFixed(4)} cm outline`);
+    assert.ok(Math.abs(l.faceMin - base) < 1e-9, `${l.name}: at zero lift its face stands at ${l.faceMin.toFixed(4)}, not on the ${base} cm base circle`);
+  }
+  console.log(`${LAW} re-ground: 16 lobes peak at ${hi.toFixed(4)} cm on ${lo.toFixed(4)} cm of base circle, lifter travel ${L.liftMaxCm.toFixed(4)} cm, tunnel bore ${H.tunnelBoreR.toFixed(4)} cm`);
+});
+
+test(`${LAW}: the re-ground cam still times the published valve lift - follower lift x rocker ratio = maxLift, duration untouched`, async () => {
+  const E = await eng();
+  const T = await import('../src/engine/timing.js');
+  const R = SPEC.variants.ohv.rockerRatio;
+  const rows = [];
+  for (const cyl of SPEC.cylinders) {
+    for (const valve of ['intake', 'exhaust']) {
+      let peak = 0, open = 0, dohcOpen = 0, dohcPeak = 0;
+      for (let th = 0; th < 720; th += 1) {
+        const l = E.ohvLift(cyl, valve, th);
+        const d = T.valveLift(cyl, valve, th);
+        if (l > 1e-9) open += 1;
+        if (d > 1e-9) dohcOpen += 1;
+        if (l > peak) peak = l;
+        if (d > dohcPeak) dohcPeak = d;
+      }
+      assert.ok(Math.abs(peak * R - V.maxLift) <= 1e-6,
+        `cyl ${cyl.num} ${valve}: the train this variant draws delivers ${peak.toFixed(4)} x ${R} = ${(peak * R).toFixed(4)} cm of valve lift, not the ${V.maxLift} cm the head's crown-clearance law is measured at`);
+      assert.ok(Math.abs(open - eventDuration(valve)) <= 3,
+        `cyl ${cyl.num} ${valve}: the re-ground lobe holds its lifter off the base circle for ${open} crank deg, not the published ${eventDuration(valve)}`);
+      assert.ok(Math.abs(open - dohcOpen) <= 1,
+        `cyl ${cyl.num} ${valve}: the OHV lobe is open ${open} crank deg while the DOHC lobe of the same valve is open ${dohcOpen}: a re-grind moves the nose, not the timing`);
+      assert.ok(Math.abs(dohcPeak - V.maxLift) <= 1e-6,
+        `cyl ${cyl.num} ${valve}: the DOHC peak moved to ${dohcPeak.toFixed(4)} cm while this variant was re-ground`);
+      rows.push(`cyl ${cyl.num} ${valve[0]} ${peak.toFixed(3)}x${R}=${(peak * R).toFixed(3)} @${open} deg`);
+    }
+  }
+  console.log(`${LAW} restored lift: ${rows.slice(0, 4).join('; ')} ... ${rows.length} lobes, every one restoring ${V.maxLift} cm at the valve`);
 });
