@@ -76,15 +76,24 @@ test('scripts/procedural-audit.mjs records byte-identically, the wall-clock half
 
 test('a shot taken at a live rpm prints only what its laws compare, because its pose is not pinned', () => {
   assert.ok(LIVE_POSE.includes('running'), 'the formatter does not name the gate\'s live-rpm shot');
-  // the two real records of the fixed gate (tmp/v8-8f-shots-fix1.out / fix2.out):
-  // the only line that still moved was the running shot's luminance ceiling
-  const a = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.276, min: 0, max: 250.9, contrast: 250.9, litSpan: { rows: 672, cols: 1011 } } });
-  const b = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.276, min: 0, max: 249.1, contrast: 249.1, litSpan: { rows: 672, cols: 1011 } } });
+  // Measured on two runs of the restored gate (tmp/nc8f3b-restored-a.out against
+  // tmp/nc8f3b-restored-b.out): the line that moved was
+  //   shot running 1280x713 buffer, 101626 samples, lit 27.6%, lit span 672x1011 (live rpm, pose not pinned)
+  //   shot running 1280x713 buffer, 101626 samples, lit 27.7%, lit span 672x1011 (live rpm, pose not pinned)
+  // The earlier version of this law held litFraction and litSpan equal in its fixture and
+  // then required them in the line, so it could not see the leak. At a live rpm the shutter
+  // opens wherever the animation happened to be, so the lit coverage and the lit span are
+  // stopwatch readings in exactly the sense the luminance trio already is.
+  const floors = { litMin: 0.05, samplesMin: 1000 };
+  const a = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.276, min: 0, max: 250.9, contrast: 250.9, litSpan: { rows: 672, cols: 1011 } } }, floors);
+  const b = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.277, min: 0, max: 249.1, contrast: 249.1, litSpan: { rows: 673, cols: 1012 } } }, floors);
   assert.equal(a, b, `the live-rpm shot line moved between two runs of the gate:\n  ${a}\n  ${b}`);
-  for (const part of ['250.9', '249.1', '250.9 contrast'])
+  for (const part of ['250.9', '249.1', '250.9 contrast', '27.6%', '27.7%', '672x1011', '673x1012'])
     assert.ok(!a.includes(part), `the live-rpm shot line prints the pose-dependent ${part}:\n  ${a}`);
-  for (const part of ['1280x713', '101626', '27.6%', '672x1011'])
+  for (const part of ['1280x713', '101626'])
     assert.ok(a.includes(part), `the live-rpm shot line dropped the measured ${part}:\n  ${a}`);
+  assert.ok(/at least 5% lit/.test(a) && /at least 1000 pixels sampled/.test(a),
+    `the live-rpm shot line states no published floor, so it records a number no law can re-derive and no verdict either:\n  ${a}`);
   // and a pinned pose keeps its full set
   const p = shotLine('cutaway', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.271, min: 0, max: 241.2, contrast: 241.2, litSpan: { rows: 672, cols: 1011 } } });
   assert.ok(p.includes('luminance 0..241.2 contrast 241.2'), `the pinned shot line dropped its luminance trio:\n  ${p}`);
@@ -374,4 +383,24 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   assert.ok(src.includes('shots.sparkLit.pixels.hash !== shots.sparkSlow.pixels.hash'), 'the gate does not compare the 1/10 picture with the 1/50 picture, so a flash that depends on the wall clock instead of the crank angle would pass');
   assert.ok(/\.disc\.mean > /.test(src) && src.includes('.disc.ringMean'), 'the gate never compares the lit tip against the ring around it, so "visible in CUTAWAY" is never measured');
   assert.ok(src.includes('off.disc.mean'), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
+});
+
+// src/ui/viewControls.js:477-490: explode() frames the camera on explodedBounds(), and
+// explodedBounds() (:440-462) unions worldBox(engine) with every member's live worldBox -
+// the pistons, rods and valves stand where the crank angle puts them. So a camera framing
+// taken from those bounds is a measurement of the pose the crank is at. Measured: the gate
+// ran the engine at 1800 rpm for 10-running.png, stopped, and called explode() with no pin
+// in between, which set the whole 11-exploded.png picture by the angle the animation
+// happened to stop at - tmp/nc8f3b-restored-a.out printed `shot exploded ... lit 17.1%`
+// against tmp/nc8f3b-restored-b.out `lit 17.0%`, same buffer, same samples, same luminance
+// ceiling 0..242.9, same lit span 567x1077.
+test('a view framing taken from live part boxes is computed at a pinned pose, not at the angle a live run left the crank at', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  for (const m of src.matchAll(/window\.__v8\.explode\(\)/g)) {
+    const at = src.lastIndexOf('await pin(', m.index);
+    assert.ok(at > 0, `explode() at offset ${m.index} has no pinned pose anywhere before it`);
+    const between = src.slice(at, m.index);
+    assert.equal(/window\.__v8\.setRpm\(|window\.__v8\.start\(\)/.test(between), false,
+      `explode() at offset ${m.index} frames the camera on explodedBounds() - live world boxes of the pistons, rods and valves - after the gate ran the animation again, so the framing is set by the angle a live run left the crank at:\n  ${between.slice(0, 400)}`);
+  }
 });
