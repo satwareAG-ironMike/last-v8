@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-import { VOLATILE, shotLine, detailLine, normalizeWarning } from './support/record.mjs';
+import { LIVE_POSE, VOLATILE, detailLine, normalizeWarning, shotLine } from './support/record.mjs';
 
 /** The two real handles issue #43 measured in two runs of the same gate. */
 const HANDLE_A = 'log[rendering]: [.WebGL-0xafc00379a00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall on vendor plugin';
@@ -70,6 +70,33 @@ test('scripts/procedural-audit.mjs records byte-identically, the wall-clock half
   assert.equal(one.status, 0, `the audit exited ${one.status}`);
   assert.equal(`${one.stdout}\n${one.stderr}`, `${two.stdout}\n${two.stderr}`, 'two runs of the static audit printed different text');
   assert.ok(!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(one.stdout), `the audit header still stamps a wall clock:\n${one.stdout.split('\n')[0]}`);
+});
+
+test('a shot taken at a live rpm prints only what its laws compare, because its pose is not pinned', () => {
+  assert.ok(LIVE_POSE.includes('running'), 'the formatter does not name the gate\'s live-rpm shot');
+  // the two real records of the fixed gate (tmp/v8-8f-shots-fix1.out / fix2.out):
+  // the only line that still moved was the running shot's luminance ceiling
+  const a = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.276, min: 0, max: 250.9, contrast: 250.9, litSpan: { rows: 672, cols: 1011 } } });
+  const b = shotLine('running', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.276, min: 0, max: 249.1, contrast: 249.1, litSpan: { rows: 672, cols: 1011 } } });
+  assert.equal(a, b, `the live-rpm shot line moved between two runs of the gate:\n  ${a}\n  ${b}`);
+  for (const part of ['250.9', '249.1', '250.9 contrast'])
+    assert.ok(!a.includes(part), `the live-rpm shot line prints the pose-dependent ${part}:\n  ${a}`);
+  for (const part of ['1280x713', '101626', '27.6%', '672x1011'])
+    assert.ok(a.includes(part), `the live-rpm shot line dropped the measured ${part}:\n  ${a}`);
+  // and a pinned pose keeps its full set
+  const p = shotLine('cutaway', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.271, min: 0, max: 241.2, contrast: 241.2, litSpan: { rows: 672, cols: 1011 } } });
+  assert.ok(p.includes('luminance 0..241.2 contrast 241.2'), `the pinned shot line dropped its luminance trio:\n  ${p}`);
+  // the live-rpm set must be exactly the shots the gate takes with the animation
+  // running: the nearest preceding pin() is followed by a start() for a live shot
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  for (const name of LIVE_POSE) {
+    const at = src.indexOf(`shots.${name} =`);
+    assert.ok(at > 0, `the formatter names live shot "${name}", the gate never takes it`);
+    const pinAt = src.lastIndexOf('await pin(', at);
+    const between = src.slice(Math.max(0, pinAt), at);
+    assert.ok(/start\(\)/.test(between), `the gate never starts the animation before shot "${name}", so it is not a live-rpm shot`);
+    assert.ok(!/setSlowmo\((?!1\))/.test(between), `the gate slows the animation down before shot "${name}"`);
+  }
 });
 
 test('test/screenshots.mjs prints its recorded stream through this formatter, the volatile set behind --detail', () => {

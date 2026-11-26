@@ -16,19 +16,29 @@ import { format } from 'node:util';
 /** Fields of one shot record that move run to run, measured in issue #43. */
 export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls'];
 
+/** Shots the gate captures at a live rpm instead of at a pinned crank angle. Their
+ *  picture is a function of where the animation stood when the shutter opened, so
+ *  even the luminance ceiling is a stopwatch reading: measured on two runs of the
+ *  fixed gate, `shot running` printed `luminance 0..250.9 contrast 250.9` against
+ *  `0..249.1 contrast 249.1` while every pinned-pose line was byte-identical.
+ *  A line for one of these shots carries only what its laws compare. */
+export const LIVE_POSE = ['running'];
+
 /** A per-process handle the GL driver prints into a console warning: identical
  *  warning text, a different number in every process (issue #43 measured
  *  `[.WebGL-0xafc00379a00]` against `[.WebGL-0x134400e6de00]` for one run pair). */
 const PROCESS_HANDLE = /0x[0-9a-f]{6,}/gi;
 
 /** The stable shot line: buffer, lit coverage, luminance floor/ceiling/contrast,
- *  lit span, sample count - the exact numbers the gate's own laws compare. */
-export const shotLine = (name, s) => format(
-  'shot %s %dx%d buffer, %d samples, lit %s%%, luminance %s..%s contrast %s, lit span %dx%d',
-  name.padEnd(9), s.pixels.w, s.pixels.h, s.pixels.samples,
-  (s.pixels.litFraction * 100).toFixed(1), s.pixels.min, s.pixels.max, s.pixels.contrast,
-  s.pixels.litSpan.rows, s.pixels.litSpan.cols,
-);
+ *  lit span, sample count - the exact numbers the gate's own laws compare. For a
+ *  shot captured at a live rpm the luminance trio is dropped: it is not a
+ *  measurement of a pose, and a record carrying it is not re-derivable. */
+export const shotLine = (name, s) => {
+  const base = `shot ${name.padEnd(9)} ${s.pixels.w}x${s.pixels.h} buffer, ${s.pixels.samples} samples, lit ${(s.pixels.litFraction * 100).toFixed(1)}%`;
+  if (LIVE_POSE.includes(name)) return `${base}, lit span ${s.pixels.litSpan.rows}x${s.pixels.litSpan.cols} (live rpm, pose not pinned)`;
+  return format('%s, luminance %s..%s contrast %s, lit span %dx%d',
+    base, s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
+};
 
 /** The volatile extras, for a human reading the gate rather than for a record. */
 export const detailLine = (name, s) => format(
