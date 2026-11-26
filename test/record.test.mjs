@@ -103,12 +103,14 @@ test('test/screenshots.mjs prints its recorded stream through this formatter, th
   const src = readFileSync('test/screenshots.mjs', 'utf8');
   assert.match(src, /import \{[^}]*shotLine[^}]*\} from '\.\/support\/record\.mjs'/, 'the gate does not print its shot lines through the formatter');
   assert.ok(src.includes('shotLine('), 'the gate prints no formatted shot line');
-  const guard = /--detail/.exec(src);
-  assert.ok(guard, 'the gate names no --detail flag for its volatile numbers');
-  const at = src.indexOf('detailLine(');
-  assert.ok(at > 0, 'the gate never calls detailLine');
-  const window = src.slice(Math.max(0, at - 400), at);
-  assert.ok(/--detail/.test(window), `detailLine is called without a --detail guard near it:\n${window.slice(-200)}`);
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => l.includes('detailLine('));
+  assert.ok(at >= 0, 'the gate never calls detailLine');
+  // the volatile set may only reach the printed stream on the line that calls it,
+  // or the one guarding it: a wider window would let an unguarded call slip in
+  const guarded = lines[at].includes("process.argv.includes('--detail')")
+    || (at > 0 && lines[at - 1].includes("process.argv.includes('--detail')"));
+  assert.ok(guarded, `detailLine is called without a --detail guard on its line or the one above it:\n  ${lines[at - 1]}\n  ${lines[at]}`);
   // the raw per-process handle must not reach the recorded stream
   assert.ok(!/warnings\.slice\(0, 3\)\.join/.test(src), 'the gate still pastes raw warnings into its output');
 });
