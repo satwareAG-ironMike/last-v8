@@ -49,8 +49,29 @@ test('the default shot line carries only what a law compares, and two runs of on
     assert.ok(!a.includes(raw), `the default shot line prints the volatile ${field} (${raw}):\n  ${a}`);
   }
   // the numbers the shot laws actually compare stay in the line
-  for (const part of ['1278x798', '34.5%', '6.4', '244.1', '237.7', '640x1100', '339624'])
+  for (const part of ['1278x798', '6.4', '244.1', '237.7', '640x1100', '339624'])
     assert.ok(a.includes(part), `the default shot line dropped the measured ${part}:\n  ${a}`);
+
+  // Amended after measuring (issue #43 slice 8F-5). The fixture above moves litFraction in
+  // the fifth decimal, which the printed line rounds away, so this law could not see the
+  // leak - the same blind spot this file already names for the live-rpm law. Two re-derivation
+  // pairs of a PINNED pose moved:
+  //   tmp/v8-8f-pair-a.out  shot inspect      1280x713 buffer, 101626 samples, lit 38.0% ... lit span 711x1278
+  //   tmp/v8-8f-pair-b.out  shot inspect      1280x713 buffer, 101626 samples, lit 38.1% ... lit span 711x1278
+  //   tmp/v8-8f3-shots5.out shot ohv-cutaway  ... lit 26.7%      (against tmp/v8-8f3-shots6.out `lit 26.8%`)
+  // A lit coverage percentage is a reading of a rendered frame, and this gate's own
+  // determinism law measures up to 120 of 101626 sampled pixels flipping between two renders
+  // of ONE pose (tmp/v8-8f2-shots2.out). The verdict its coverage laws reach is the fact.
+  const floors = { samplesMin: 1000, litMin: 0.05 };
+  const pinned = (lit) => ({ pixels: { w: 1280, h: 713, samples: 101626, litFraction: lit, min: 0, max: 255, contrast: 255, mean: 40.1, hash: 2501190001, litSpan: { rows: 711, cols: 1278 }, drawCalls: 300 } });
+  const one = shotLine('inspect', pinned(0.38), floors);
+  const two = shotLine('inspect', pinned(0.381), floors);
+  assert.equal(one, two, `the pinned shot line printed the lit coverage of two renders of one pose:\n  ${one}\n  ${two}`);
+  assert.ok(/at least 1000 pixels sampled/.test(one) && /at least 5% lit/.test(one) && /not flat/.test(one),
+    `the pinned shot line states no verdict for the coverage its laws compare, so the record carries a number no run reproduces and no law reads either:\n  ${one}`);
+  for (const part of ['1280x713', '101626', '0..255', '255 contrast', '711x1278'])
+    assert.ok(one.includes(part), `the pinned shot line dropped the measured ${part}:\n  ${one}`);
+  assert.ok(!/38%/.test(one) && !/38\.1%/.test(one), `the pinned shot line still prints the lit coverage:\n  ${one}`);
 });
 
 test('the volatile numbers stay readable, behind detailLine only', () => {
@@ -413,7 +434,18 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   // tmp/v8-8f4-shots2.out) - so only the disc, the flash's own light, is held to equality, and
   // "disc > ring" alone is a relative test a dimmed flash passes: the lit disc also has to
   // clear the floor this row publishes from the fixed build's measured 187.92.
-  assert.ok(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)/.test(src), "the gate never requires the flash's own measured light to be the same number at 1/10 as at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes");
+  // Amended a second time after measuring (slice 8F-5). The disc was held to a 0.01-point
+  // equality on the belief that the flash's own light is bit-exact. It is not: five recorded
+  // runs of one pinned pose at one head read 187.92 / 187.92 (tmp/v8-8f4-shots2.out),
+  // 187.92 / 187.92 (tmp/8f4-live-floor.log), 187.93 / 187.92 (tmp/v8-8f-pair-a.out) and
+  // 188.15 / 187.92 (tmp/v8-8f-pair-b.out) - a 0.23-point spread between the 1/10 and the
+  // 1/50 frame of the SAME pose, and the equality clause made this row's own CHECK refuse a
+  // correct build twice on that spread (exit 1, "the flash's own light depends on the frame
+  // rate"). Same class as the ring clause below: the number is a reading of a rendered frame.
+  const cmp = src.match(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)\s*(>|<=)\s*([A-Za-z_][\w]*)/);
+  assert.ok(cmp, 'the gate never compares the flash\'s measured light at 1/10 against its light at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes');
+  assert.equal(cmp[2], 'SPARK_DISC_TOLERANCE', `the two frame rates are held to ${cmp[2]} instead of to a published tolerance this row can name and re-derive`);
+  assert.ok(/const SPARK_DISC_TOLERANCE = \d+(?:\.\d+)?;/.test(src), 'there is no published tolerance for the flash\'s light between frame rates, so the number is typed at the comparison');
   assert.ok(!/lit\.disc\.ringMean - slow\.disc\.ringMean/.test(src), 'the gate holds the ring around the glow sphere to equality too, and the ring is background the rasteriser does not reproduce bit-exactly (measured: 41.42 against 41.37 for one pose, tmp/v8-8f4-shots1.out against tmp/v8-8f4-shots2.out) - the clause would gate the rasteriser rather than the flash');
   assert.ok(/SPARK_DISC_FLOOR/.test(src) && /lit\.disc\.mean >= SPARK_DISC_FLOOR/.test(src), 'the lit tip is never held to an absolute published floor, so a flash the metal culls down to 172.6 still prints READS against a 41-point ring (tmp/v8-8f4-nc-live.out)');
   // Same scoping for the three comparisons that make "visible", "decays" and "the flash
@@ -425,6 +457,41 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   assert.ok(/lit\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
   assert.ok(/slow\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never requires the flash to read at the clamp floor 1/50 as well as at 1/10, so a flash that only survives at one frame rate would pass');
   assert.ok(/shots\.sparkLit\.pixels\.hash === shots\.sparkOff\.pixels\.hash/.test(src), 'the gate never compares the lit picture with the picture past the burn window, so a flash that changes nothing on screen would pass');
+});
+
+// Slice 8F-5, measured on the same pair the law above names. The tip line printed the disc and
+// ring MEANS, and the means are what this rasteriser does not reproduce: 187.92 / 187.92 /
+// 187.93 / 188.15 for the disc and 41.37 / 41.12 / 41.16 for the ring, for one pinned pose at
+// one head (tmp/v8-8f4-shots2.out, tmp/8f4-live-floor.log, tmp/v8-8f-pair-a.out,
+// tmp/v8-8f-pair-b.out). What every one of those runs did reproduce is the peak luminance and
+// the pixel count of the measured region (255 over 13 px, 203.24 over 56 px), the plane
+// distance, the projected radius, the opacity and the crank angle. The means stay readable,
+// behind the same guard detailLine sits behind.
+test('the recorded spark tip line carries the region and its verdicts, and the means only behind the guard', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  const at = src.indexOf('const tipLine = ');
+  assert.ok(at > 0, 'the gate has no tipLine, so the spark region has one printed form and it cannot be split in two');
+  const def = src.slice(at, src.indexOf('`;', at));
+  assert.ok(def.length > 80, `tipLine is not a line builder:\n  ${def}`);
+  for (const leak of ['${t.disc.mean}', '${t.disc.ringMean}'])
+    assert.ok(!def.includes(leak), `the recorded tip line prints ${leak}: five runs of one pinned pose measured the disc between 187.92 and 188.15 and the ring between 41.12 and 41.37, so a hash of that transcript is a snapshot of the rasteriser (issue #43)`);
+  for (const keep of ['${t.cyl}', '${t.opacity}', '${t.theta}', '${t.slowmo}', '${t.planeDist}', '${t.radiusPx}', '${t.disc.peak}', '${t.disc.samples}', '${t.disc.ringPeak}', '${t.disc.ringSamples}'])
+    assert.ok(def.includes(keep), `the recorded tip line dropped ${keep}, which every one of those five runs reproduced:\n  ${def}`);
+  assert.ok(/READS/.test(def) && /SPARK_DISC_FLOOR/.test(def), `the recorded tip line states no verdict against the published floor, so the record carries drifting numbers instead of the facts the laws reach:\n  ${def}`);
+  const dAt = src.indexOf('const tipDetail = ');
+  assert.ok(dAt > 0, 'the gate has no --detail form of the tip reading, so the means measured here would not be readable anywhere');
+  const dDef = src.slice(dAt, src.indexOf('`;', dAt));
+  for (const part of ['${t.disc.mean}', '${t.disc.ringMean}'])
+    assert.ok(dDef.includes(part), `tipDetail dropped ${part}:\n  ${dDef}`);
+  const lines = src.split('\n');
+  let calls = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].includes('tipDetail(')) continue;
+    calls++;
+    const guarded = lines[i].includes("process.argv.includes('--detail')") || (i > 0 && lines[i - 1].includes("process.argv.includes('--detail')"));
+    assert.ok(guarded, `tipDetail is called without a --detail guard at line ${i + 1}:\n  ${lines[i]}`);
+  }
+  assert.ok(calls >= 3, `the gate prints the tip detail for ${calls} of its three tip readings:\n  ${src.slice(at, at + 200)}`);
 });
 
 // src/ui/viewControls.js:477-490: explode() frames the camera on explodedBounds(), and
