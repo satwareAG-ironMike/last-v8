@@ -405,7 +405,17 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   // against ring 41.42 at 1/10 and the same numbers at 1/50 (tmp/v8-8f4-shots1.out).
   assert.ok(src.includes('shots.sparkSlow.pixels.diff'), 'the gate does not compare the 1/10 picture with the 1/50 picture sample to sample, so a flash that depends on the wall clock instead of the crank angle would pass');
   assert.ok(/compareLine\('spark pair 1\/10 vs 1\/50/.test(src), 'the spark pair is compared without a published floor to state, so the record would print counts a reviewer cannot re-derive (issue #43)');
-  assert.ok(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)/.test(src), "the gate never requires the flash's measured light to be the same number at 1/10 as at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes");
+  // Amended after the live control (tmp/8f4-live-control.sh -> tmp/v8-8f4-nc-live.out): with
+  // the depth test put back on the published spark family the flash dims from 187.92 to 172.6
+  // and the gate still printed READS, refusing only on the RING (41.42 against 41.37 in one
+  // run). The ring is background around the glow sphere and is not bit-exact between renders -
+  // the fixed build itself printed 41.42 and 41.37 for one pose (tmp/v8-8f4-shots1.out,
+  // tmp/v8-8f4-shots2.out) - so only the disc, the flash's own light, is held to equality, and
+  // "disc > ring" alone is a relative test a dimmed flash passes: the lit disc also has to
+  // clear the floor this row publishes from the fixed build's measured 187.92.
+  assert.ok(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)/.test(src), "the gate never requires the flash's own measured light to be the same number at 1/10 as at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes");
+  assert.ok(!/lit\.disc\.ringMean - slow\.disc\.ringMean/.test(src), 'the gate holds the ring around the glow sphere to equality too, and the ring is background the rasteriser does not reproduce bit-exactly (measured: 41.42 against 41.37 for one pose, tmp/v8-8f4-shots1.out against tmp/v8-8f4-shots2.out) - the clause would gate the rasteriser rather than the flash');
+  assert.ok(/SPARK_DISC_FLOOR/.test(src) && /lit\.disc\.mean >= SPARK_DISC_FLOOR/.test(src), 'the lit tip is never held to an absolute published floor, so a flash the metal culls down to 172.6 still prints READS against a 41-point ring (tmp/v8-8f4-nc-live.out)');
   // Same scoping for the three comparisons that make "visible", "decays" and "the flash
   // changed the picture" measurements. Measured in the loose control phase: deleting the
   // ring comparison stayed green because `lit.disc.mean > off.disc.mean` still matched
