@@ -22,8 +22,11 @@
 // to keep clear of the floor plate.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { SPEC } from '../src/engine/spec.js';
 import { standDatums, panPlanes, hudTitle, badge, engineName, plateLines } from '../src/engine/layout.js';
+import { createStand } from '../src/render/stand.js';
+import { engineUnits, proxyMaterials } from './support/engine-triangles.mjs';
 import { focusLimits, minElevation } from '../src/ui/cameraRig.js';
 import { explodeLift, explodeSpecs } from '../src/engine/view.js';
 
@@ -35,6 +38,11 @@ const FLOOR_MARGIN = explodeSpecs().floorMargin;
 // not as bit patterns.
 const NEAR = 1e-9;
 const same = (a, b) => Math.abs(a - b) < NEAR;
+// The stand is built from rounded boxes, and a drawn vertex is not the plane itself:
+// measured here, the OHV stand's lowest vertex lands 7.6e-7 cm under the published
+// -19.7000. A pairing law about a plane a part sits on is therefore held to a machining
+// slack, not to a bit pattern.
+const STAND_EPS = 1e-3;
 
 /** The variant authority this slice publishes, or this law's own named failure. Read
  * per law so a missing module reds the law that needs it instead of the file at import. */
@@ -121,6 +129,52 @@ test('the camera guard stands on the cell floor of the variant it draws, not the
     return `${id}: stand floor ${d.floorZ.toFixed(4)}, rig walk floor ${limits.zMin.toFixed(4)}, minElevation ${el.toFixed(4)} rad`;
   });
   console.log(`camera guard follows the variant: ${rows.join(' | ')}`);
+});
+
+test('the switch reaches the factories: each build draws its own valvetrain on its own floor', async () => {
+  const { shellDatums } = await authority('the factory switch');
+  const materials = proxyMaterials();
+  const rows = ['dohc', 'ohv'].map((id) => {
+    const units = engineUnits(materials, id);
+    const count = (root, re) => {
+      let n = 0;
+      root.traverse((o) => { if (o.isMesh && re.test(String(o.name))) n++; });
+      return n;
+    };
+    const lifters = count(units.valvetrain, /^lifter-/);
+    const buckets = count(units.valvetrain, /^bucket-/);
+    const camshafts = count(units.valvetrain, /^camshaft-/);
+    const journals = count(units.valvetrain, /^cam-V-journal/);
+    if (id === 'ohv') {
+      assert.equal(lifters, 16, `the OHV build draws ${lifters} lifters, not the 16 its published gallery machines bores for`);
+      assert.equal(buckets, 0, `the OHV build still draws ${buckets} DOHC buckets, which nothing in its valvetrain pushes`);
+      assert.equal(camshafts, 0, `the OHV build draws ${camshafts} per-bank camshafts instead of its one central cam`);
+      assert.equal(journals, 5, `the OHV central cam carries ${journals} drawn journals, not the 5 ohvCam() publishes`);
+    } else {
+      assert.equal(lifters, 0, `the DOHC build draws ${lifters} lifters, which its valvetrain has no use for`);
+      assert.equal(buckets, 48, `the DOHC build draws ${buckets} buckets, not one per cylinder`);
+      assert.equal(camshafts, 4, `the DOHC build draws ${camshafts} camshafts, not two per bank`);
+    }
+    // The pairing the shell has to honour: the stand this variant builds lands exactly on
+    // the plane shellDatums names, which is the plane src/main.js puts its floor plate on.
+    const lowest = (() => {
+      const stand = createStand(materials, id);
+      stand.group.updateWorldMatrix(true, true);
+      let lo = Infinity;
+      stand.group.traverse((o) => {
+        if (!o.isMesh) return;
+        o.updateWorldMatrix(true, false);
+        const p = o.geometry.attributes.position;
+        for (let i = 0; i < p.count; i++) {
+          lo = Math.min(lo, new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).z);
+        }
+      });
+      return lo;
+    })();
+    assert.ok(Math.abs(lowest - shellDatums(id).floorZ) < STAND_EPS, `the stand drawn for "${id}" reaches down to z ${lowest.toFixed(6)} while shellDatums names ${shellDatums(id).floorZ.toFixed(6)} as the plate its feet sit on`);
+    return `${id}: ${lifters} lifters, ${buckets} buckets, ${camshafts} camshafts, ${journals} cam journals, stand feet on ${lowest.toFixed(4)}`;
+  });
+  console.log(`factory switch: ${rows.join(' | ')}`);
 });
 
 test('the explode hoist lifts off the floor of the variant it draws, so the same chain needs the same lift', async () => {
