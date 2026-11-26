@@ -49,8 +49,18 @@ test('the default shot line carries only what a law compares, and two runs of on
     assert.ok(!a.includes(raw), `the default shot line prints the volatile ${field} (${raw}):\n  ${a}`);
   }
   // the numbers the shot laws actually compare stay in the line
-  for (const part of ['1278x798', '6.4', '244.1', '237.7', '640x1100', '339624'])
+  for (const part of ['1278x798', '6.4', '244.1', '237.7', '339624'])
     assert.ok(a.includes(part), `the default shot line dropped the measured ${part}:\n  ${a}`);
+  // Amended again after measuring (slice 8F-5b): the lit span is a rendered-frame reading too.
+  // Two runs of `node test/screenshots.mjs` at 1c87dcb differed on exactly one line -
+  //   tmp/v8-8f5-pair-a.out  shot ohv-exploded ... luminance 0..245.3 contrast 245.3, lit span 513x1194
+  //   tmp/v8-8f5-pair-b.out  shot ohv-exploded ... luminance 0..245.3 contrast 245.3, lit span 573x1194
+  // - 60 rows of the bounding box of lit pixels, which is the extremity of a threshold: one
+  // sparse pixel crossing it moves the box (test/screenshots.mjs:480 computes rows/cols as
+  // r1-r0 / c1-c0). No law of this gate compares the span, so it is not a fact the record may
+  // carry. The luminance trio stays: it is what the flatness law reads (contrast > 0) and it has
+  // been identical in every recorded pair measured so far.
+  assert.ok(!/lit span/.test(a), `the default shot line prints the lit span, a bounding box no run reproduces:\n  ${a}`);
 
   // Amended after measuring (issue #43 slice 8F-5). The fixture above moves litFraction in
   // the fifth decimal, which the printed line rounds away, so this law could not see the
@@ -69,15 +79,40 @@ test('the default shot line carries only what a law compares, and two runs of on
   assert.equal(one, two, `the pinned shot line printed the lit coverage of two renders of one pose:\n  ${one}\n  ${two}`);
   assert.ok(/at least 1000 pixels sampled/.test(one) && /at least 5% lit/.test(one) && /not flat/.test(one),
     `the pinned shot line states no verdict for the coverage its laws compare, so the record carries a number no run reproduces and no law reads either:\n  ${one}`);
-  for (const part of ['1280x713', '101626', '0..255', '255 contrast', '711x1278'])
+  for (const part of ['1280x713', '101626', '0..255', '255 contrast'])
     assert.ok(one.includes(part), `the pinned shot line dropped the measured ${part}:\n  ${one}`);
   assert.ok(!/lit \d/.test(one), `the pinned shot line still prints the lit coverage:\n  ${one}`);
+  assert.ok(!/lit span/.test(one), `the pinned shot line still prints the lit span:\n  ${one}`);
+});
+
+// Slice 8F-5b. Dropping the lit span took the record's visible proof that this gate's views
+// are different pictures, so the claim moves to where it already lives as a law: the gate
+// compares its own pictures seven times (shots.home vs cutaway, cutaway vs bdc, fluids vs
+// cutaway, exploded vs home, ohv vs ohv-cutaway, ohv vs ohv-exploded, sparkLit vs sparkOff)
+// and refuses when two of them come out alike. That comparison is reproducible - two renders
+// of ONE pose differ on up to 120 of 101626 samples (tmp/v8-8f2-shots2.out) while two
+// different poses never collide - so its verdict is recordable and the number is not.
+test('the gate records the view-distinctness verdict its own comparisons reach', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  const lines = src.split('\n');
+  const def = lines.find((l) => l.includes('const viewsDiffer ='));
+  assert.ok(def, 'the gate compares its pictures in seven separate if-statements and never records the verdict they reach');
+  assert.ok(/same picture/.test(def), `the shared comparison does not name what it is looking for:\n  ${def}`);
+  const calls = lines.filter((l) => /viewsDiffer\(/.test(l) && !l.includes('const viewsDiffer ='));
+  assert.ok(calls.length >= 7, `the gate registers ${calls.length} picture comparisons, so the record's claim that its views differ covers fewer pictures than the gate takes`);
+  for (const l of calls) {
+    const at = lines.indexOf(l);
+    assert.ok(/bad\.push|=> bad\.push|bad\)\.push/.test(l) || /bad\.push/.test(lines[at + 1]),
+      `the comparison at line ${at + 1} records a pair but refuses nothing when the two pictures come out alike:\n  ${l}`);
+  }
+  assert.ok(/console\.log\(`views distinct:/.test(src), 'the gate prints no view-distinctness verdict, so the record carries no claim that its views are different pictures');
 });
 
 test('the volatile numbers stay readable, behind detailLine only', () => {
   const d = detailLine('cutaway', SHOT_A);
-  for (const part of ['307534', '2459187896', '34.523', '412'])
+  for (const part of ['307534', '2459187896', '34.523', '412', '640x1100'])
     assert.ok(d.includes(part), `detailLine dropped ${part}:\n  ${d}`);
+  assert.ok(VOLATILE.includes('litSpan'), 'VOLATILE does not name the lit span, so nothing in this suite says the bounding box left the record');
 });
 
 test('a per-process GL driver handle normalizes to one stable token', () => {
