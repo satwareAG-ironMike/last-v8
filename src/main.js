@@ -362,6 +362,9 @@ window.__v8 = {
   variant: () => SPEC.build.variant,
   variants: () => Object.keys(SPEC.variants),
   variantParam: VARIANT_PARAM,
+  /** what the address asked for that this tree does not publish, or null. The status line
+   * says it to the reader for its hold window; this is the fact that outlives it. */
+  variantRejected: () => variantChoice.rejected,
   THREE,
   renderer,
   scene,
