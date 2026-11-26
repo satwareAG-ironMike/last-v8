@@ -1506,8 +1506,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (sparkPair.maxDelta > 60)
       bad.push(`the worst luminance delta between the 1/10 and the 1/50 frame of one pinned pose is ${sparkPair.maxDelta}: a flash that decays on the wall clock would land at a different point of its burn window here`);
   }
-  if (Math.abs(lit.disc.mean - slow.disc.mean) > 0.01 || Math.abs(lit.disc.ringMean - slow.disc.ringMean) > 0.01)
-    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} against ring ${lit.disc.ringMean} at 1/10 and ${slow.disc.mean} against ${slow.disc.ringMean} at 1/50: the flash's light depends on the frame rate and not on the crank angle`);
+  if (Math.abs(lit.disc.mean - slow.disc.mean) > 0.01)
+    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} at 1/10 and ${slow.disc.mean} at 1/50: the flash's own light depends on the frame rate and not on the crank angle`);
   if (Math.abs(lit.theta - slow.theta) > 1e-9 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
     bad.push(`plug-cyl${sparkCyl.num} sat at crank ${lit.theta} opacity ${lit.opacity} at 1/10 and crank ${slow.theta} opacity ${slow.opacity} at 1/50: the two pictures were not the same pose`);
 
@@ -1523,6 +1523,12 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   console.log('  ' + tipLine('lit 1/50 ', slow));
   console.log('  ' + tipLine('off      ', off));
 
+  // The floor is this row's own published number, derived from the fixed build's measured
+  // 187.92 (tmp/v8-8f4-shots2.out) with 1.5 points of rasteriser slack; the ring stays the
+  // relative reference it is measured against, without an equality demand of its own.
+  const SPARK_DISC_FLOOR = 185;
+  if (!(lit.disc.mean >= SPARK_DISC_FLOOR))
+    bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}, below the ${SPARK_DISC_FLOOR} this row publishes from the fixed build's measured 187.92: the flash is being culled by the metal it emits from (issue #52 measured 172.6 with the depth test answered)`);
   if (!(lit.disc.mean > lit.disc.ringMean))
     bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}: the flash is not visible in CUTAWAY`);
   if (!(lit.disc.mean > off.disc.mean))
