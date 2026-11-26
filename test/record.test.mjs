@@ -99,6 +99,30 @@ test('a shot taken at a live rpm prints only what its laws compare, because its 
   }
 });
 
+test('the screenshot gate carries a capture pass for the published fluid networks and the cam drive', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // row A1-G5's title names three things the gate must measure off the live page:
+  // the coolant jackets and passages, the oil galleries and drillings, and the
+  // working cam drive. A pass for them reads the published networks in the page
+  // and compares them with the drawn members, so the gate must import them there.
+  assert.ok(/import\('\/src\/engine\/coolant\.js'\)/.test(src), 'the gate never reads src/engine/coolant.js in the page, so no law measures the published coolant members');
+  assert.ok(/import\('\/src\/engine\/oil\.js'\)/.test(src), 'the gate never reads src/engine/oil.js in the page, so no law measures the published oil members');
+  assert.ok(/import\('\/src\/engine\/drive\.js'\)/.test(src), 'the gate never reads src/engine/drive.js in the page, so no law measures the drawn chain against its published pitch');
+  for (const clause of ['coolant', 'oil', 'drive'])
+    assert.ok(src.includes(`bad.push(\`${clause}: `), `the gate prints no verdict line for the ${clause} capture pass`);
+  // the volatile set stays behind the guard at every call site
+  const lines = src.split('\n');
+  const calls = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].includes('detailLine(')) continue;
+    calls.push(i);
+    const guarded = lines[i].includes("process.argv.includes('--detail')")
+      || (i > 0 && lines[i - 1].includes("process.argv.includes('--detail')"));
+    assert.ok(guarded, `detailLine is called without a --detail guard at line ${i + 1}:\n  ${lines[i - 1]}\n  ${lines[i]}`);
+  }
+  assert.ok(calls.length > 0, 'the gate never calls detailLine');
+});
+
 test('test/screenshots.mjs prints its recorded stream through this formatter, the volatile set behind --detail', () => {
   const src = readFileSync('test/screenshots.mjs', 'utf8');
   assert.match(src, /import \{[^}]*shotLine[^}]*\} from '\.\/support\/record\.mjs'/, 'the gate does not print its shot lines through the formatter');
