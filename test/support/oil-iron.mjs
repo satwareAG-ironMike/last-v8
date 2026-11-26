@@ -810,7 +810,12 @@ export function oilOracle(id = SPEC.build.variant) {
     const MULTI_OK = /^(main-neck-x|wall-|plate$|shell-|tab-|bolt-hole-)/;
     for (const [name, meshes] of drawn) {
       const fam = name.replace(/[-+][0-9.+-]+$/, '');
-      if (!known.has(name) && !known.has(fam) && !NOT_CAST_IRON.test(name) && !/[+]/.test(name)) {
+      // Slice 8G (issue #49): this clause used to also skip every name containing a
+      // plus sign. An exemption keyed on spelling lets a drawn part dodge the map by
+      // what it is called - measured at 3742215 with the exemption out, both variants
+      // are clean, so it was hiding nothing today and could not be trusted to keep
+      // hiding nothing tomorrow.
+      if (!known.has(name) && !known.has(fam) && !NOT_CAST_IRON.test(name)) {
         problems.push(`the map does not know drawn part ${name}`);
       }
       const claimed = iron.filter((e) => (e.drawn ?? e.name) === name).length
