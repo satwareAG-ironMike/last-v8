@@ -380,19 +380,34 @@ test(`${OHV_CAST}: the switch casts two different blocks, and the DOHC casting t
     return c;
   };
   const cd = census(dohc), co = census(ohv);
-  // the switch may not rename or drop a solid: every DOHC name has to survive in
-  // the OHV census. What the OHV build may add is its own derived cam-bearing
-  // family (slice 8B, src/engine/layout.js ohvBearings) and nothing else
+  // the switch may not drop a solid. Every DOHC name has to survive in the OHV census
+  // except the one construction the bored cam tunnel forces: the central main neck tower
+  // is re-cast as a boot leg on each side (slice 8C-3b), named for its side (slice 8C-3e).
+  // What the OHV build may add is its own derived family (src/engine/layout.js
+  // ohvBearings, the gallery ribs, those boot legs) and nothing else
   const extra = Object.keys(co).filter((k) => !Object.keys(cd).includes(k)).sort();
-  // what the OHV build may add is its own derived family: the cam bearings 8B
-  // derives (slice 8B), and the lifter gallery ribs 8C-3a derives (slice 8C-3a),
-  // each rib being the mouth block plus the guide wall the crank-side room leaves
-  const ownVariantFamily = (k) => /^(cam-(bushing-[1-5]|retainer|retainer-bolt-[+-])|gallery-[RL]-[1-4](-guide)?)$/.test(k);
+  // what the OHV build may add is its own derived family: the cam bearings 8B derives
+  // (slice 8B), the lifter gallery ribs 8C-3a derives (slice 8C-3a), each rib being the
+  // mouth block plus the guide wall the crank-side room leaves, and the main-bearing boot
+  // legs 8C-3b casts - one per side of the bored tunnel, named for its side like the cap
+  // bar and cap bolt it carries, because two drawn solids cannot share one name that PART
+  // INSPECTION and the explode chain address (issue #16 slice 8C-3e)
+  const centralMains = MAIN_CAPS_X.filter((c) => c !== MAIN_CAPS_X[0] && c !== MAIN_CAPS_X[4]);
+  const bootLegs = centralMains.flatMap((c) => [`main-neck-x${c}+`, `main-neck-x${c}-`]);
+  const ownVariantFamily = (k) => /^(cam-(bushing-[1-5]|retainer|retainer-bolt-[+-])|gallery-[RL]-[1-4](-guide)?|main-neck-x-?\d+[-+])$/.test(k);
   assert.ok(extra.every(ownVariantFamily),
     `the OHV build adds names the DOHC build does not cast and this variant's own laws do not derive: ${extra.join(', ')}`);
-  assert.equal(extra.length, 24, `the OHV build adds ${extra.length} of its own solids; the derived family is 5 bushings + 1 retainer + 2 bolts + 4 gallery ribs per bank with their guide walls (${extra.join(', ')})`);
+  assert.equal(extra.length, 24 + bootLegs.length, `the OHV build adds ${extra.length} of its own solids; the derived family is 5 bushings + 1 retainer + 2 bolts + 4 gallery ribs per bank with their guide walls, plus 2 boot legs for each of the ${centralMains.length} central mains the bored tunnel re-casts (${extra.join(', ')})`);
   const missing = Object.keys(cd).filter((k) => !Object.keys(co).includes(k)).sort();
-  assert.equal(missing.length, 0, `the OHV build drops the DOHC solids ${missing.join(', ')}: the switch may re-proportion the casting, not rename or delete what it casts`);
+  assert.deepEqual(missing, centralMains.map((c) => `main-neck-x${c}`).sort(),
+    `the OHV build drops DOHC solids beyond the central main necks the bored cam tunnel re-casts as per-side boot legs: ${missing.join(', ')}: the switch may re-proportion the casting, not rename or delete what it casts`);
+  for (const c of centralMains) {
+    assert.equal(cd[`main-neck-x${c}`], 1, `the DOHC build draws main-neck-x${c} ${cd[`main-neck-x${c}`]} times, not the one neck tower its laws measure`);
+    for (const sgn of ['+', '-']) {
+      const n = `main-neck-x${c}${sgn}`;
+      assert.equal(co[n], 1, `the OHV build draws ${n} ${co[n] ?? 0} times: the main at x ${c} has to be carried by exactly one boot leg on each side of the bored tunnel`);
+    }
+  }
   // the DOHC casting measured against the pre-OHV record above, not against itself
   const readBox = (o) => {
     const b = new THREE.Box3().setFromObject(o);
