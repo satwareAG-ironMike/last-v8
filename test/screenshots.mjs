@@ -1409,8 +1409,7 @@ const SPARK_READ = `(() => {
     const inner = box(0, r), outer = box(r + 1, r + 3);
     tips.push({
       cyl: c.num, name: o.name,
-      opacity: +o.material.opacity.toFixed(6),
-      slowmo: v.state.slowmo, theta: +v.state.theta.toFixed(6),
+      opacity: o.material.opacity, slowmo: v.state.slowmo, theta: v.state.theta, // unrounded: the window opens at 720 - advance exactly
       cutaway: st.cutaway, fraction: +st.fraction.toFixed(3),
       planeDist: plane ? +plane.distanceToPoint(p).toFixed(2) : null,
       clip: (o.material.clippingPlanes || []).length,
