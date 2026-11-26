@@ -22,14 +22,22 @@
 // The pixel laws are relational on purpose: identical vs different, wider vs narrower,
 // non-blank. No invented brightness magnitude is asserted.
 import { ROOT, withPage } from './support/browser.mjs';
+import { compareDetail, compareLine, detailLine, normalizeWarning, shotLine } from './support/record.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC } from '../src/engine/spec.js';
 import { crankEvent, eventMid } from '../src/engine/timing.js';
+import { firingProgress } from '../src/engine/timing.js';
+import { sparkAngle, totalAdvance } from '../src/engine/ignition.js';
 // The authority for the one exemption the PBR law below grants: the product's own
 // published table of additive light families. Read from the module rather than
 // typed here, so the gate and the renderer cannot drift apart.
 import { GLOW_SPECS } from '../src/render/materials.js';
+// The authorities for the second build this gate boots (row A1-G5 "in DOHC and in OHV",
+// row P1-G6 "the OHV valvetrain in CUTAWAY and EXPLODED"). Read from the modules that
+// publish them, so the gate never types a count the engine already owns.
+import { ohvBearings, ohvLifterGallery, ohvLifters, standDatums } from '../src/engine/layout.js';
+import { ohvCamLayout } from '../src/engine/ohv.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -474,29 +482,193 @@ const PIXELS = `(() => {
   };
 })()`;
 
+/**
+ * Row A1-G5's three named things, read in the live page: the coolant network
+ * src/engine/coolant.js publishes, the oil network src/engine/oil.js publishes and the
+ * chain src/engine/drive.js lays out. The gate compares the published list with the
+ * members the scene really holds - the authority is the network, never a typed list.
+ */
+const FLUIDS = `(async () => {
+  const v = window.__v8, THREE = v.THREE;
+  const { coolantNetwork } = await import('/src/engine/coolant.js');
+  const { oilNetwork } = await import('/src/engine/oil.js');
+  const { chainPitch } = await import('/src/engine/drive.js');
+  const r = (n, k) => +Number(n).toFixed(k === undefined ? 6 : k);
+  const net = (n) => (typeof n === 'string' ? n : n && (n.member || n.name || n.id));
+
+  const cn = coolantNetwork(v.variant());
+  const coolantNames = (cn.members || []).map(net).filter(Boolean);
+  const oilNet = oilNetwork(v.variant());
+  const oilNames = [oilNet.supply, ...oilNet.galleries, ...oilNet.camGalleries, ...oilNet.links,
+    ...oilNet.bridges, ...oilNet.feeds].map((b) => b && b.id).filter(Boolean);
+  const pendingOil = (oilNet.pendingGalleries || []).map(net).filter(Boolean);
+
+  const inspectable = new Set(v.view.inspectables().map((i) => i.name));
+  const drawn = (name) => {
+    const o = v.view.members.get(name);
+    if (!o) return null;
+    let meshes = 0, verts = 0;
+    o.traverse((x) => {
+      if (!x.isMesh) return;
+      meshes += 1;
+      const pos = x.geometry && x.geometry.attributes && x.geometry.attributes.position;
+      verts += pos ? pos.count : 0;
+    });
+    return { meshes, verts };
+  };
+  const census = (names) => {
+    const missing = [], empty = [], offMenu = [];
+    for (const n of names) {
+      const d = drawn(n);
+      if (!d) { missing.push(n); continue; }
+      if (d.verts === 0) empty.push(n);
+      if (!inspectable.has(n)) offMenu.push(n);
+    }
+    return { want: names.length, drawn: names.length - missing.length, missing, empty, offMenu };
+  };
+
+  const chains = [];
+  v.scene.traverse((o) => {
+    if (!o.isGroup || !o.userData || !o.userData.chain) return;
+    const rollers = [];
+    o.traverse((x) => { if (x.isMesh && /-roller-/.test(x.name)) rollers.push(x); });
+    let plates = 0, guide = false, tensioner = false;
+    o.traverse((x) => {
+      if (x.isInstancedMesh && /-plates-/.test(x.name)) plates += 1;
+      if (x.isGroup && /-guide$/.test(x.name)) guide = true;
+      if (x.isGroup && /-tensioner$/.test(x.name)) tensioner = true;
+    });
+    let loop = 0;
+    for (let i = 0; i < rollers.length; i++) {
+      const a = new THREE.Vector3(), b = new THREE.Vector3();
+      a.setFromMatrixPosition(rollers[i].matrixWorld);
+      b.setFromMatrixPosition(rollers[(i + 1) % rollers.length].matrixWorld);
+      loop += a.distanceTo(b);
+    }
+    const pitch = chainPitch();
+    chains.push({
+      name: o.name, rollers: rollers.length, plates, guide, tensioner,
+      loop: r(loop, 3), pitch: r(pitch, 4), linksAtPitch: r(loop / pitch, 3),
+    });
+  });
+
+  const half = v.SPEC.cam.halfSpeedRatio;
+  const sp = v.SPEC.cam.sprocket, csp = v.SPEC.crank.sprocket;
+
+  // where the published fluids actually are, so the capture frames them instead of a
+  // typed point: the union of every drawn coolant member and oil bore
+  const box = new THREE.Box3();
+  for (const n of [...coolantNames, ...oilNames]) {
+    const o = v.view.members.get(n);
+    if (!o) continue;
+    o.updateWorldMatrix(true, false);
+    box.union(new THREE.Box3().setFromObject(o));
+  }
+  const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
+  return {
+    variant: v.variant(),
+    fluidBounds: {
+      min: box.min.toArray().map((x) => +x.toFixed(3)),
+      max: box.max.toArray().map((x) => +x.toFixed(3)),
+      center: c.toArray().map((x) => +x.toFixed(3)),
+      size: sz.toArray().map((x) => +x.toFixed(3)),
+    },
+    coolant: census(coolantNames),
+    coolantPublished: (cn.counts && cn.counts.members) || coolantNames.length,
+    headCrossing: {
+      links: coolantNames.filter((n) => /coolant-headlink-/.test(n)).length,
+      galleries: coolantNames.filter((n) => /coolant-headgallery-/.test(n)).length,
+    },
+    oil: census(oilNames),
+    oilPending: pendingOil,
+    oilHardware: ['oil-pump', 'oil-pan-pickup', 'oil-pressure-gauge'].map((n) => ({ name: n, drawn: !!drawn(n), inspectable: inspectable.has(n) })),
+    inspectables: v.view.inspectables().length,
+    chains,
+    half,
+    sprockets: { crankTeeth: csp && csp.teeth, camTeeth: sp.teeth, crankPitchR: csp && csp.pitchR, camPitchR: sp.pitchR },
+  };
+})()`;
+
+// One finding list and one shot table for every build this gate boots - the default and
+// `/?variant=ohv` - because rows A1-G5 ("... in DOHC and in OHV") and P1-G6 ("the OHV
+// valvetrain in CUTAWAY and EXPLODED") pin their CHECK string with
+// gate-sig=c5527127c3f7ff77: the OHV pass cannot be a second script, and the verdict text
+// below is the one those rows cite, so it stays word for word.
+const bad = [];
+const shots = {};
+const takeShot = (capture) => async (file) => {
+  const png = await capture();
+  const path = join(ROOT, 'shots', file);
+  writeFileSync(path, png);
+  return { path, bytes: png.length };
+};
+/**
+ * Pin the crank angle and let the loop repaint the poses from it. The wait is a measured
+ * frame count, never a wall clock: the OHV home shot printed `lit 27.7%` in one run and
+ * `lit 27.2%` in the next (tmp/v8-8f3-shots3.out against tmp/v8-8f3-shots4.out) while every
+ * other line matched, because the capture followed `sleep(1400)` on a page measured at 1.6
+ * fps under software rasterisation - the number of repaints that had landed varied, which is
+ * exactly the stopwatch dependency issue #43 is about.
+ */
+const takePin = (evalJs) => async (theta) => {
+  const from = await evalJs('window.__v8.frameCount()');
+  await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
+  await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
+  for (let i = 0; i < 90; i++) {
+    await sleep(120);
+    if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
+  }
+  throw new Error('the page produced no animation frames after pinning crank ' + theta);
+};
+/**
+ * Wait for a view transition to reach its published goal, and prove it did. The cutaway
+ * section is a function of that transition: src/ui/viewControls.js:296 builds it from
+ * `cutawaySpecs({ lift: lift * fraction })` and :525 re-derives `plane.constant` from the
+ * same product, while :511-513 walk `fraction` toward its goal one frame at a time. A
+ * section captured mid-transition therefore stands at a height set by elapsed wall clock -
+ * measured as `lit 26.7%` against `lit 26.8%` for one CUTAWAY pose (tmp/v8-8f3-shots5.out
+ * against tmp/v8-8f3-shots6.out), same buffer, same samples, same lit span.
+ */
+const takeSettle = (evalJs) => async () => {
+  const settled = await evalJs('window.__v8.settleView()');
+  const st = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+  if (Math.abs(st.goal - settled) > 1e-6)
+    throw new Error(`the view transition did not reach its goal: settleView() returned fraction ${settled} against goal ${st.goal}`);
+  return st;
+};
+const distinctPairs = [];
+let viewsAlike = 0;
+/** Two shots taken at different poses must not come out as the same picture. Every pair this
+ *  gate compares is recorded, so the verdict the comparisons reach - not the lit span that used
+ *  to stand in for it - is what lands in the record (slice 8F-5b). */
+const viewsDiffer = (a, b, samePicture) => {
+  distinctPairs.push(`${a} vs ${b}`);
+  if (shots[a].pixels.hash === shots[b].pixels.hash) { viewsAlike += 1; samePicture(); }
+};
+const finish = () => {
+  console.log(`views distinct: ${distinctPairs.length} pairs of this gate's pictures compared, ${viewsAlike} came out the same picture`);
+  if (bad.length) {
+    console.log('\nSHOTS INCOMPLETE:');
+    for (const b of bad) console.log('  ' + b);
+    console.log(`shots: ${Object.keys(shots).length} written, laws sampled at ${ANGLES.length} pinned crank angles`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    '\nSHOTS OK: the rendered assembly is driven by one crank angle - rods on their crankpins, rods on their pistons, ' +
+      'pistons in their bores, cams at half crank speed, lobes lifting the valves the timing module says, ' +
+      'nothing left floating apart, and the same pose gives the same picture'
+  );
+};
+
 // Same watchdog reasoning as the control gate: the box is not idle (a local inference
 // server measured at 273% CPU), the page runs at 1.6 fps under software rasterisation
 // (tmp/hud-fps-probe.out), and the hang guard has to sit above the measured wall time
 // of the gate rather than below it. No measured threshold in any law changed.
 await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
-  const bad = [];
-  const shot = async (file) => {
-    const png = await capture();
-    const path = join(ROOT, 'shots', file);
-    writeFileSync(path, png);
-    return { path, bytes: png.length };
-  };
-  /** Pin the crank angle and let the loop repaint the poses from it. */
-  const pin = async (theta) => {
-    const from = await evalJs('window.__v8.frameCount()');
-    await evalJs('window.__v8.setRpm(0); window.__v8.start(); "ok"');
-    await evalJs('window.__v8.state.theta = ' + theta + '; window.__v8.settleView(); "ok"');
-    for (let i = 0; i < 90; i++) {
-      await sleep(120);
-      if ((await evalJs('window.__v8.frameCount()')) - from >= 4) return;
-    }
-    throw new Error('the page produced no animation frames after pinning crank ' + theta);
-  };
+  const shot = takeShot(capture);
+  const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
   // The measurement walks live vertices of 136 members plus 8 cylinders x 37 piston
   // poses inside one evaluate, which is heavier than any other call this gate makes.
   // It gets a per-call timeout instead of the harness default, so a slow SwiftShader
@@ -760,17 +932,16 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (!seen.has(stroke)) bad.push(`cylinder 1 never showed the ${stroke} stroke across the sampled crank angles`);
 
   // ---- shots, and what the pixels say about them ------------------------------
-  const shots = {};
   await resetView();
   await evalJs('window.__v8.stop(); window.__v8.state.theta = 0; "ok"');
   await pin(0);
   shots.home = { ...(await shot('07-home.png')), pixels: await evalJs(`(${PIXELS})`) };
 
   await evalJs('window.__v8.cutaway(true); "ok"');
-  await sleep(400);
+  await settle();
+  await pin(0);
   shots.cutaway = { ...(await shot('08-cutaway.png')), pixels: await evalJs(`(${PIXELS})`), theta: 0 };
-  if (shots.home.pixels.hash === shots.cutaway.pixels.hash)
-    bad.push('CUTAWAY changed no pixel: the section is not visible in the picture');
+  viewsDiffer('home', 'cutaway', () => bad.push('CUTAWAY changed no pixel: the section is not visible in the picture'));
 
   // The same section at the OPPOSITE dead centres: at crank 0 cylinder 1 is at top dead
   // centre and cylinder 4 at bottom dead centre; at crank 180 they swap. Two shots of the
@@ -779,8 +950,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // claims it is - and the pair is compared only after both pictures exist.
   await pin(180);
   shots.bdc = { ...(await shot('09-cutaway-tdc-bdc.png')), pixels: await evalJs(`(${PIXELS})`), theta: 180 };
-  if (shots.cutaway.pixels.hash === shots.bdc.pixels.hash)
-    bad.push('the two cutaway shots at crank 0 and crank 180 produced the same picture: the pistons did not travel to the opposite dead centres');
+  viewsDiffer('cutaway', 'bdc', () => bad.push('the two cutaway shots at crank 0 and crank 180 produced the same picture: the pistons did not travel to the opposite dead centres'));
 
   // How far apart the two dead centres are IN THE PICTURE, measured sample to sample
   // against the crank 0 cutaway read that immediately preceded this one (PIXELS keeps
@@ -792,10 +962,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const pair = shots.bdc.pixels.diff;
   if (!pair) bad.push('the two cutaway pictures were never compared sample to sample');
   else {
-    console.log(
-      `cutaway pair at crank 0 vs crank 180: ${pair.differing} of ${pair.of} sampled pixels differ ` +
-      `(${pair.pct}%), worst luminance delta ${pair.maxDelta}, mean delta ${pair.meanDelta} where a pixel moved`
-    );
+    console.log(compareLine('cutaway pair crank 0 vs crank 180', pair, { pctMin: 1, maxDeltaMin: 40 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('cutaway pair crank 0 vs crank 180', pair));
     if (pair.pct < 1)
       bad.push(`the cutaway at crank 0 and the cutaway at crank 180 differ on only ${pair.pct}% of ${pair.of} sampled pixels: the pistons did not travel to the opposite dead centres`);
     if (pair.maxDelta < 40)
@@ -811,10 +979,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const back = await evalJs(`(${PIXELS})`);
   if (!back.diff) bad.push('the trip back to crank 0 was never compared with the crank 180 picture');
   else {
-    console.log(
-      `round trip crank 0 -> 180 -> 0: the picture at the second crank 0 is ${back.diff.differing} of ` +
-      `${back.diff.of} sampled pixels (${back.diff.pct}%) from the crank 180 picture, worst delta ${back.diff.maxDelta}`
-    );
+    console.log(compareLine('round trip crank 0 -> 180 -> 0', back.diff, { pctSlack: 0.5, slack: 40 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('round trip crank 0 -> 180 -> 0', back.diff));
     if (Math.abs(back.diff.pct - pair.pct) > 0.5)
       bad.push(`crank 0 gave ${pair.pct}% against crank 180 the first time and ${back.diff.pct}% the second: the engine did not come back to the picture it left`);
     if (Math.abs(back.diff.maxDelta - pair.maxDelta) > 40)
@@ -822,7 +988,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   }
 
   await evalJs('window.__v8.cutaway(false); "ok"');
-  await sleep(300);
+  await settle();
 
   // Cylinders 1 and 4 are the pair the gate pinned: crank 0 leaves 1 at top dead centre
   // and 4 at bottom dead centre (measured off the meshes, not assumed), and crank 180 must
@@ -849,27 +1015,104 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (twice.tree !== thrice.tree)
     bad.push(`the rendered tree changed between two reads of the same pinned pose (${twice.tree} -> ${thrice.tree}): the assembly is not a function of the crank angle`);
   const px = thrice.diff;
-  console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, pixels ${twice.hash} vs ${thrice.hash}, sampled ${thrice.samples}: ${px ? px.differing + ' differing, worst luminance delta ' + px.maxDelta : 'no comparison'}`);
+  // The verdict against the published tolerances, not the counts: issue #43's contract
+  // is that a recorded line states what a law compares. Measured on this gate, two runs
+  // of one pinned pose printed `0 differing, worst luminance delta 0`
+  // (tmp/v8-8f-shots-fix3.out) against `120 differing, worst luminance delta 23`
+  // (tmp/v8-8f2-shots2.out) - both inside the floors, so the counts are a stopwatch
+  // reading and belong in the --detail stream, not in the record a row cites.
   if (!px) bad.push('the determinism measurement produced no pixel comparison');
   else {
+    console.log(`determinism at one pose: tree ${twice.tree} == ${thrice.tree}, ${compareLine('same pose twice', px, { pctMax: 0.5, maxDeltaMax: 60 })}`);
+    if (process.argv.includes('--detail')) console.log(compareDetail('same pose twice', px));
     if (px.pct > 0.5)
       bad.push(`${px.differing} of ${px.of} sampled pixels (${px.pct}%) differ between two renders of the same pinned pose; the measured worst case on this build is 0.2125%`);
     if (px.maxDelta > 60)
       bad.push(`two renders of the same pinned pose differ by ${px.maxDelta} luminance at one pixel; the measured worst case on this build is 48`);
   }
 
+  // ---- row A1-G5's capture pass: the fluids and the drive, measured live ----------
+  // The gate has always measured the cranktrain, the valve train and the castings at
+  // eight pinned angles; it has never asked what the coolant network, the oil network
+  // and the chain drive publish against what the scene holds - grepping this file for
+  // coolant/jacket/gallery/oil returned one contact pair, ['oil-pan', 'crankcase'].
+  // The networks are read in the page, so the authority is the published list.
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await settle();
+  const fluids = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${FLUIDS})))()`, { timeoutMs: 120000 }));
+  console.log(`coolant: ${fluids.coolant.drawn} of ${fluids.coolant.want} published members drawn in the sectioned casting, ${fluids.coolant.offMenu.length} off the inspection menu, ${fluids.coolant.empty.length} without vertices, ${fluids.headCrossing.links} head links + ${fluids.headCrossing.galleries} head galleries beyond the gasket`);
+  if (fluids.coolant.missing.length)
+    bad.push(`coolant: ${fluids.coolant.missing.length} published members are not in the live tree (${fluids.coolant.missing.slice(0, 6).join(', ')})`);
+  if (fluids.coolant.offMenu.length)
+    bad.push(`coolant: ${fluids.coolant.offMenu.length} drawn members are not on the inspection menu (${fluids.coolant.offMenu.slice(0, 6).join(', ')})`);
+  if (fluids.coolant.empty.length)
+    bad.push(`coolant: ${fluids.coolant.empty.length} drawn members carry no vertices (${fluids.coolant.empty.slice(0, 6).join(', ')})`);
+  if (!(fluids.headCrossing.links > 0 && fluids.headCrossing.galleries > 0))
+    bad.push(`coolant: the passages stop at the gasket - ${fluids.headCrossing.links} head links and ${fluids.headCrossing.galleries} head galleries are published`);
+
+  console.log(`oil: ${fluids.oil.drawn} of ${fluids.oil.want} published bores drawn, ${fluids.oil.offMenu.length} off the inspection menu, ${fluids.inspectables} inspectables on the menu, hardware ${fluids.oilHardware.map((h) => `${h.name} ${h.drawn && h.inspectable ? 'drawn+inspectable' : 'MISSING'}`).join(', ')}`);
+  if (fluids.oil.missing.length)
+    bad.push(`oil: ${fluids.oil.missing.length} published bores are not in the live tree (${fluids.oil.missing.slice(0, 6).join(', ')})`);
+  if (fluids.oil.offMenu.length)
+    bad.push(`oil: ${fluids.oil.offMenu.length} published bores are not on the inspection menu (${fluids.oil.offMenu.slice(0, 6).join(', ')})`);
+  for (const h of fluids.oilHardware)
+    if (!h.drawn || !h.inspectable)
+      bad.push(`oil: ${h.name} is ${h.drawn ? 'not on the inspection menu' : 'not drawn'} - the pump and its pickup have to be parts a reader can select`);
+
+  console.log(`drive: ${fluids.chains.length} chains, cams at half crank (SPEC.cam.halfSpeedRatio ${fluids.half}), sprockets ${fluids.sprockets.crankTeeth}/${fluids.sprockets.camTeeth} teeth at pitch radii ${fluids.sprockets.crankPitchR}/${fluids.sprockets.camPitchR} cm`);
+  for (const c of fluids.chains) {
+    console.log(`  chain ${c.name}: ${c.rollers} rollers, ${c.plates} plate layers, guide ${c.guide ? 'yes' : 'no'}, tensioner ${c.tensioner ? 'yes' : 'no'}, closed roller loop ${c.loop} cm = ${c.linksAtPitch} links at the published ${c.pitch} cm pitch`);
+    if (c.rollers === 0) bad.push(`drive: chain ${c.name} draws no rollers`);
+    if (!c.guide) bad.push(`drive: chain ${c.name} has no guide it runs on`);
+    if (!c.tensioner) bad.push(`drive: chain ${c.name} has no tensioner`);
+    if (!(c.loop > 0)) bad.push(`drive: chain ${c.name}'s roller loop measures ${c.loop} cm`);
+    // The loop a reader can walk must be the published pitch times the rollers the
+    // chain actually draws: measured 105.976 cm / 1.2043 cm = 87.998 links against 88
+    // rollers on all four DOHC chains (tmp/v8-8f2-shots3.out), so the floor of 0.02
+    // links sits far under the measurement and catches a loop that overlaps or stretches.
+    if (Math.abs(c.linksAtPitch - c.rollers) > 0.02)
+      bad.push(`drive: chain ${c.name}'s closed roller loop of ${c.loop} cm is ${c.linksAtPitch} links at the published ${c.pitch} cm pitch, but the chain draws ${c.rollers} rollers - those links would overlap or stretch`);
+  }
+  // the half-speed law itself is already measured at every pinned angle above
+  // (line "has turned N cam degrees at crank T"), so this pass adds what that law
+  // cannot see: the chains that carry it and the sprocket pair they run on.
+  if (fluids.chains.length < 4)
+    bad.push(`drive: the DOHC build publishes four cam chains and the live tree holds ${fluids.chains.length}`);
+  if (fluids.half !== 2)
+    bad.push(`drive: SPEC.cam.halfSpeedRatio is ${fluids.half}, the cam drive has to turn the cams at half crank`);
+  if (fluids.sprockets.camTeeth !== 2 * fluids.sprockets.crankTeeth)
+    bad.push(`drive: the cam sprocket's ${fluids.sprockets.camTeeth} teeth are not 2x the crank sprocket's ${fluids.sprockets.crankTeeth}`);
+  if (fluids.sprockets.camPitchR !== 2 * fluids.sprockets.crankPitchR)
+    bad.push(`drive: the pitch radii ${fluids.sprockets.crankPitchR}/${fluids.sprockets.camPitchR} cm are not the published 2:1 pair`);
+
+  // the picture the row asks for: the fluids, sectioned in the casting they are bored in,
+  // framed on the bounds the published networks themselves report
+  const fb = fluids.fluidBounds;
+  const span = Math.max(...fb.size);
+  console.log(`fluid bounds: ${fb.min.join(',')} .. ${fb.max.join(',')} (${fb.size.join(' x ')} cm), framed at centre ${fb.center.join(',')} range ${(span * 1.35).toFixed(2)} cm`);
+  await evalJs(`window.__v8.focusCameraOn(new window.__v8.THREE.Vector3(${fb.center.join(',')}), ${(span * 1.35).toFixed(2)}); "ok"`);
+  await settle();
+  shots.fluids = { ...(await shot('13-cutaway-fluids.png')), pixels: await evalJs(`(${PIXELS})`) };
+  viewsDiffer('fluids', 'cutaway', () => bad.push('the fluid capture produced the same picture as the plain cutaway: the framing never reached the galleries'));
+  await resetView();
+  await settle();
+
   await evalJs('window.__v8.setRpm(1800); window.__v8.setSlowmo(1); window.__v8.start(); "ok"');
   await sleep(700);
   shots.running = { ...(await shot('10-running.png')), pixels: await evalJs(`(${PIXELS})`) };
   await evalJs('window.__v8.stop(); "ok"');
-
+  // src/ui/viewControls.js:477-490 frames the camera on explodedBounds(), and :440-462
+  // builds that box from worldBox(engine) plus every member's live worldBox - the pistons,
+  // rods and valves stand where the crank angle puts them. Pinning first is what makes the
+  // EXPLODED framing a measurement of a pose instead of the angle this page's 1800 rpm run
+  // happened to stop at (measured on two runs: lit 17.1% against 17.0%, same buffer, same
+  // samples, same luminance ceiling, same lit span - tmp/nc8f3b-restored-a.out against
+  // tmp/nc8f3b-restored-b.out).
+  await pin(0);
   await evalJs('window.__v8.explode(); "ok"');
-  for (let i = 0; i < 160; i++) {
-    await sleep(100);
-    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
-    if (1 - vs.fraction < 1e-6 && vs.moved > 0) break;
-    if (i === 159) bad.push('EXPLODED VIEW never settled to the published 34.25 cm hoist');
-  }
+  await settle();
+  const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+  if (vs.moved === 0) bad.push('EXPLODED VIEW moved 0 members');
   await pin(0);
   shots.exploded = { ...(await shot('11-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
   const apart = JSON.parse(
@@ -901,14 +1144,15 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (!(apart.worstNdc <= 1))
     bad.push(`the separated assembly is cropped on screen: its farthest corner projects to ${apart.worstNdc} in ndc`);
   if (apart.moved === 0) bad.push('EXPLODED VIEW moved 0 members');
-  if (shots.exploded.pixels.hash === shots.home.pixels.hash)
-    bad.push('the separated assembly produced the same picture as the assembled one');
+  viewsDiffer('exploded', 'home', () => bad.push('the separated assembly produced the same picture as the assembled one'));
   console.log(`spread law: assembled ${home.join(' x ')} cm -> exploded ${apart.span.join(' x ')} cm, worst corner ndc ${apart.worstNdc}, ${apart.moved} members hoisted ${apart.engineZ} cm`);
-  await evalJs('window.__v8.assemble(); window.__v8.settleView(); "ok"');
-  await sleep(1500);
+  await evalJs('window.__v8.assemble(); "ok"');
+  await settle();
 
   await evalJs('window.__v8.inspect("piston-cyl1"); "ok"');
-  await sleep(1200);
+  // src/ui/cameraRig.js:151-152 snaps focus to its goal on focusCameraOn, so the framing
+  // is settled the moment the call returns; what still has to land is the pose.
+  await settle();
   await pin(0);
   shots.inspect = { ...(await shot('12-inspect-piston.png')), pixels: await evalJs(`(${PIXELS})`) };
   const framed = await measure();
@@ -920,16 +1164,19 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     `${(framed.coverHome.fraction * 100).toFixed(1)}% when inspected`
   );
   await evalJs('window.__v8.clearInspect(); window.__v8.rig.reset(); "ok"');
-  await sleep(1400);
+  await settle();
 
   for (const [name, s] of Object.entries(shots)) {
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
     if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
     if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
-    console.log(
-      `shot ${name.padEnd(9)} ${s.bytes} bytes  buffer ${s.pixels.w}x${s.pixels.h}  lit ${(s.pixels.litFraction * 100).toFixed(1)}%  ` +
-        `mean ${s.pixels.mean}  min ${s.pixels.min} max ${s.pixels.max}  span ${s.pixels.litSpan.rows}x${s.pixels.litSpan.cols}  calls ${s.pixels.drawCalls}  hash ${s.pixels.hash}`
-    );
+    // The recorded stream carries only what the laws above compare (issue #43):
+    // the PNG byte count, the rasteriser's own pixel hash, the mean luminance and
+    // the draw-call count moved between two runs of one pose, so a row citing a
+    // record of this gate would cite a snapshot of a rasteriser. They stay
+    // readable behind --detail.
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
   }
 
   // contact numbers measured here, printed so the thresholds above are auditable
@@ -957,20 +1204,367 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // A picture rendered by a page that logged an error is not a working simulation: the
   // harness (test/support/browser.mjs) collects every console.error, page exception, CDP
   // log entry of level error and target crash, and this gate reads them into a law too.
-  if (warnings.length) console.log(`warnings: ${warnings.length} (${warnings.slice(0, 3).join(' | ')})`);
+  // A driver warning carries a per-process handle: the same warning in two runs of
+  // one gate printed different text (issue #43), so the handles are normalized
+  // before the line reaches a record.
+  if (warnings.length) console.log(`warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
   console.log(`console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
   if (errors.length) bad.push(`${errors.length} console/CDP error(s) while the gate rendered its pictures`);
 
-  if (bad.length) {
-    console.log('\nSHOTS INCOMPLETE:');
-    for (const b of bad) console.log('  ' + b);
-    console.log(`shots: ${Object.keys(shots).length} written, laws sampled at ${ANGLES.length} pinned crank angles`);
-    process.exitCode = 1;
+});
+
+// ---- rows A1-G5 "in DOHC and in OHV" and P1-G6 "the OHV valvetrain in CUTAWAY and
+// EXPLODED": the same gate, the other build, reached the way a reader reaches it - the
+// address. Every count below is read from the modules that publish it.
+const OHV_READ = `(() => {
+  const v = window.__v8, THREE = v.THREE;
+  const names = { lifters: [], journals: [], lobes: [], necks: [], valves: [], springs: [], buckets: [], camshafts: [], gallery: [], chains: [] };
+  let rollers = 0, meshes = 0;
+  v.engine.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const n = String(o.name);
+    if (/^lifter-cyl/.test(n)) names.lifters.push(n);
+    if (/^cam-V-journal/.test(n)) names.journals.push(n);
+    if (/^lobe-cyl/.test(n)) names.lobes.push(n);
+    if (/^cam-V-neck/.test(n)) names.necks.push(n);
+    if (/^valve-cyl/.test(n)) names.valves.push(n);
+    if (/^spring-cyl/.test(n)) names.springs.push(n);
+    if (/^bucket-/.test(n)) names.buckets.push(n);
+    if (/^camshaft-/.test(n)) names.camshafts.push(n);
+    if (/^gallery-/.test(n)) names.gallery.push(n);
+  });
+  for (const [name, o] of v.view.members) {
+    if (!/^cam-chain/.test(name)) continue;
+    names.chains.push(name);
+    o.traverse((x) => { if (x.isMesh && /-roller-/.test(x.name)) rollers++; });
+  }
+  const inspectable = new Set(v.view.inspectables().map((i) => i.name));
+  let lowest = Infinity;
+  v.engine.traverse((o) => {
+    if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+    o.updateWorldMatrix(true, false);
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const z = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).z;
+      if (z < lowest) lowest = z;
+    }
+  });
+  return {
+    variant: v.variant(),
+    rejected: v.variantRejected(),
+    meshes,
+    counts: {
+      lifters: names.lifters.length, journals: names.journals.length, lobes: names.lobes.length,
+      necks: names.necks.length, valves: names.valves.length, springs: names.springs.length,
+      buckets: names.buckets.length, camshafts: names.camshafts.length, gallery: names.gallery.length,
+      chains: names.chains.length,
+    },
+    offMenu: names.lifters.filter((n) => !inspectable.has(n)),
+    galleryOffMenu: names.gallery.filter((n) => !inspectable.has(n)),
+    rollers,
+    inspectables: v.view.inspectables().length,
+    lowestEngineZ: +lowest.toFixed(4),
+  };
+})()`;
+
+await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
+  const shot = takeShot(capture);
+  const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
+  const want = standDatums('ohv');
+  const published = {
+    lifters: ohvLifters().lifters,
+    cam: ohvCamLayout(ohvBearings()),
+    ribs: ['L', 'R'].flatMap((b) => ohvLifterGallery().banks[b].clusters).length * 2,
+  };
+  const ohv = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${OHV_READ})))()`, { timeoutMs: 180000 }));
+  console.log(`ohv build: variant ${ohv.variant}${ohv.rejected ? ` (refused ${ohv.rejected})` : ''}, ${ohv.meshes} drawn engine meshes, ${ohv.counts.lifters} lifters, ${ohv.counts.journals} cam journals, ${ohv.counts.lobes} lobes, ${ohv.counts.necks} necks, ${ohv.counts.valves} valves, ${ohv.counts.buckets} DOHC buckets, ${ohv.counts.camshafts} DOHC camshafts, ${ohv.counts.gallery} cast gallery ribs, ${ohv.counts.chains} cam chain with ${ohv.rollers} rollers, ${ohv.inspectables} inspectables`);
+  if (ohv.variant !== 'ohv') bad.push(`ohv: the page drew "${ohv.variant()}" while the address asked for ohv`);
+  if (ohv.rejected) bad.push(`ohv: the page refused the variant "${ohv.rejected}" it was asked for`);
+  if (ohv.counts.lifters !== published.lifters.length)
+    bad.push(`ohv: the build draws ${ohv.counts.lifters} lifters while src/engine/layout.js ohvLifters() publishes ${published.lifters.length}`);
+  if (ohv.offMenu.length)
+    bad.push(`ohv: ${ohv.offMenu.length} drawn lifters are not on the inspection menu (${ohv.offMenu.slice(0, 6).join(', ')})`);
+  if (ohv.counts.journals !== published.cam.journals.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.journals} journals while ohvCamLayout() derives ${published.cam.journals.length}`);
+  if (ohv.counts.lobes !== published.cam.lobes.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.lobes} lobes while ohvCamLayout() derives ${published.cam.lobes.length}`);
+  if (ohv.counts.necks !== published.cam.necks.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.necks} necks while ohvCamLayout() derives ${published.cam.necks.length}`);
+  if (ohv.counts.camshafts !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.camshafts} DOHC camshafts`);
+  if (ohv.counts.buckets !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.buckets} DOHC spring buckets`);
+  // The valve gap this pass found, printed rather than assumed away: src/render/valvetrain.js
+  // returns from its central-cam branch (line 284) before the valve and spring loop, so the
+  // OHV build draws no valve and no spring at all, while SPEC.variants.ohv.pendingHardware
+  // names only pushrods, rockers and covers as pending. A build that draws some of the
+  // valves and not all of them is a disagreement and is refused; drawing none is a published
+  // gap of this variant and is named in the record, which is what keeps row P1-G6 open.
+  const pendingOhv = (SPEC.variants.ohv.pendingHardware || []).map((p) => p.family);
+  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${ohv.counts.valves} valve meshes and ${ohv.counts.springs} springs drawn for ${SPEC.cylinders.length} cylinders`);
+  console.log(`ohv pending hardware published by SPEC.variants.ohv.pendingHardware: ${pendingOhv.join(', ')}`);
+  if (ohv.counts.valves === 0 && !pendingOhv.some((f) => /valve|spring/i.test(f)))
+    console.log(`ohv undeclared gap: the build draws no valve and no spring while the published pending list names only ${pendingOhv.join(', ')}`);
+  if (ohv.counts.valves > 0 && ohv.counts.valves !== SPEC.cylinders.length * 2)
+    bad.push(`ohv: the OHV build draws ${ohv.counts.valves} valve meshes for ${SPEC.cylinders.length} cylinders`);
+  if (ohv.counts.gallery !== published.ribs)
+    bad.push(`ohv: the block casts ${ohv.counts.gallery} gallery ribs while ohvLifterGallery() publishes ${published.ribs} (rib + guide per cluster)`);
+  console.log(`ohv gallery ribs on the inspection menu: ${ohv.counts.gallery - ohv.galleryOffMenu.length} of ${ohv.counts.gallery}${ohv.galleryOffMenu.length ? ` (${ohv.galleryOffMenu.slice(0, 6).join(', ')} off the menu)` : ''}`);
+  if (ohv.counts.chains === 0 || ohv.rollers === 0)
+    bad.push('ohv: nothing drives the central cam - the live tree holds no cam chain and no rollers');
+
+  // the same loop-vs-published-pitch law the DOHC chains are held to, on this build's chain
+  const ohvDrive = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${FLUIDS})))()`, { timeoutMs: 120000 }));
+  console.log(`ohv coolant: ${ohvDrive.coolant.drawn} of ${ohvDrive.coolant.want} published members drawn in the sectioned casting, ${ohvDrive.coolant.offMenu.length} off the inspection menu, ${ohvDrive.headCrossing.links} head links + ${ohvDrive.headCrossing.galleries} head galleries beyond the gasket`);
+  if (ohvDrive.coolant.missing.length)
+    bad.push(`ohv coolant: ${ohvDrive.coolant.missing.length} published members are not in the live tree (${ohvDrive.coolant.missing.slice(0, 6).join(', ')})`);
+  if (!(ohvDrive.headCrossing.links > 0 && ohvDrive.headCrossing.galleries > 0))
+    bad.push(`ohv coolant: the passages stop at the gasket - ${ohvDrive.headCrossing.links} head links and ${ohvDrive.headCrossing.galleries} head galleries are published`);
+  console.log(`ohv oil: ${ohvDrive.oil.drawn} of ${ohvDrive.oil.want} published bores drawn, ${ohvDrive.oil.offMenu.length} off the inspection menu`);
+  if (ohvDrive.oil.missing.length)
+    bad.push(`ohv oil: ${ohvDrive.oil.missing.length} published bores are not in the live tree (${ohvDrive.oil.missing.slice(0, 6).join(', ')})`);
+  for (const c of ohvDrive.chains) {
+    console.log(`  chain ${c.name}: ${c.rollers} rollers, ${c.plates} plate layers, guide ${c.guide ? 'yes' : 'no'}, tensioner ${c.tensioner ? 'yes' : 'no'}, closed roller loop ${c.loop} cm = ${c.linksAtPitch} links at the published ${c.pitch} cm pitch`);
+    if (c.rollers === 0) bad.push(`drive: chain ${c.name} draws no rollers`);
+    if (!(c.loop > 0)) bad.push(`drive: chain ${c.name}'s roller loop measures ${c.loop} cm`);
+    if (Math.abs(c.linksAtPitch - c.rollers) > 0.02)
+      bad.push(`drive: chain ${c.name}'s closed roller loop of ${c.loop} cm is ${c.linksAtPitch} links at the published ${c.pitch} cm pitch, but the chain draws ${c.rollers} rollers - those links would overlap or stretch`);
+  }
+
+  console.log(`ohv stand: lowest drawn engine face ${ohv.lowestEngineZ} cm against this build's floor ${+want.floorZ.toFixed(4)} cm`);
+  if (!(ohv.lowestEngineZ > want.floorZ))
+    bad.push(`ohv: the engine reaches ${ohv.lowestEngineZ} cm, below the ${+want.floorZ.toFixed(4)} cm floor plate this build's stand is built on`);
+
+  // Every OHV picture is taken after a measured number of repaints from a pinned crank
+  // angle, the same guard the default build's shots use (see takePin above for why).
+  await pin(0);
+  shots.ohv = { ...(await shot('14-ohv.png')), pixels: await evalJs(`(${PIXELS})`) };
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await settle();
+  await pin(0);
+  shots['ohv-cutaway'] = { ...(await shot('15-ohv-cutaway.png')), pixels: await evalJs(`(${PIXELS})`) };
+  viewsDiffer('ohv-cutaway', 'ohv', () => bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one'));
+  await evalJs('window.__v8.cutaway(false); window.__v8.explode(); "ok"');
+  await settle();
+  const ohvView = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+  if (!(ohvView.moved > 0))
+    bad.push(`ohv: EXPLODED left the OHV build where it stood (${JSON.stringify(ohvView)})`);
+  await pin(0);
+  shots['ohv-exploded'] = { ...(await shot('16-ohv-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
+  viewsDiffer('ohv-exploded', 'ohv', () => bad.push('ohv: the separated OHV build produced the same picture as the assembled one'));
+  for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('ohv'))) {
+    if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
+    if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
+    if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
+  }
+  if (warnings.length) console.log(`ohv warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
+  console.log(`ohv console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
+  if (errors.length) bad.push(`ohv: ${errors.length} console/CDP error(s) while the gate rendered its OHV pictures`);
+});
+
+// ---- row P1-G6: the spark in CUTAWAY at 1/10 and 1/50, and past its burn window ----------
+// The authorities this pass reads are the product's own: src/engine/timing.js:92 publishes the
+// burn window (0 at the spark, 1 at `advance + burnDeg` past it), src/engine/ignition.js:62
+// publishes the crank angle a cylinder sparks at, src/engine/animation.js:54-56 clamps the
+// frame-rate factor to 0.02..1 so 1/50 is the slowest picture this product can draw, and
+// src/render/plugs.js:119 writes opacity = progress < 0 ? 0 : 1 - progress from
+// src/main.js:282 with state.advance().total, which src/engine/animation.js:68 takes from
+// totalAdvance(). The measured region is the published glow sphere (SPEC.plug.glowR) projected
+// through this page's own camera - radius in pixels glowR * (bufferHeight / 2) /
+// (distance * tan(fov / 2)) - and the ring around it is the reference the flash has to beat.
+// No pixel box is invented here.
+const SPARK_RPM = 0, SPARK_THROTTLE = 50;
+const TIP_NAME = /^plug-cyl(\d+)-flash$/; // src/render/plugs.js:102 names the tip mesh
+
+const SPARK_READ = `(() => {
+  const v = window.__v8, THREE = v.THREE;
+  v.renderer.render(v.scene, v.camera); // no preserveDrawingBuffer: the read has to follow a render
+  const gl = v.renderer.getContext();
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const px = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const L = (x, y) => { const i = (y * w + x) * 4; return 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; };
+  const st = v.view.state();
+  const plane = st.cutawayPlane ? new THREE.Plane(new THREE.Vector3(st.cutawayPlane.normal[0], st.cutawayPlane.normal[1], st.cutawayPlane.normal[2]), st.cutawayPlane.constant) : null;
+  const tanHalfFov = Math.tan((v.camera.fov * Math.PI / 180) / 2);
+  const tips = [];
+  for (const c of v.SPEC.cylinders) {
+    const o = v.scene.getObjectByName('plug-cyl' + c.num + '-flash');
+    if (!o) { tips.push({ cyl: c.num, missing: true }); continue; }
+    o.updateWorldMatrix(true, false);
+    const p = o.getWorldPosition(new THREE.Vector3());
+    const n = p.clone().project(v.camera);
+    const dist = v.camera.position.distanceTo(p);
+    const r = Math.max(1, Math.round(v.SPEC.plug.glowR * (h / 2) / (dist * tanHalfFov)));
+    const cx = Math.round((n.x * 0.5 + 0.5) * w), cy = Math.round((n.y * 0.5 + 0.5) * h); // row 0 is the bottom
+    const box = (lo, hi) => {
+      let nn = 0, sum = 0, peak = 0;
+      for (let dy = -r - 3; dy <= r + 3; dy++) for (let dx = -r - 3; dx <= r + 3; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const rr = Math.hypot(dx, dy);
+        if (rr < lo || rr > hi) continue;
+        nn += 1; const l = L(x, y); sum += l; if (l > peak) peak = l;
+      }
+      return { mean: +(sum / Math.max(1, nn)).toFixed(2), peak: +peak.toFixed(2), samples: nn };
+    };
+    const inner = box(0, r), outer = box(r + 1, r + 3);
+    tips.push({
+      cyl: c.num, name: o.name,
+      opacity: o.material.opacity, slowmo: v.state.slowmo, theta: v.state.theta, // unrounded: the window opens at 720 - advance exactly
+      cutaway: st.cutaway, fraction: +st.fraction.toFixed(3),
+      planeDist: plane ? +plane.distanceToPoint(p).toFixed(2) : null,
+      clip: (o.material.clippingPlanes || []).length,
+      radiusPx: r, px: [cx, cy],
+      disc: {
+        mean: inner.mean, peak: inner.peak, samples: inner.samples,
+        ringMean: outer.mean, ringPeak: outer.peak, ringSamples: outer.samples,
+      },
+    });
+  }
+  return { tips, cutaway: st.cutaway, plane: st.cutawayPlane || null };
+})()`;
+
+await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
+  const shot = takeShot(capture);
+  const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
+  const readSpark = async () => JSON.parse(await evalJs(`(async () => JSON.stringify(await (${SPARK_READ})))()`, { timeoutMs: 180000 }));
+  const adv = totalAdvance(SPARK_RPM, SPARK_THROTTLE);
+
+  /** Every live tip against the window and the decay the modules publish. */
+  const poseLaw = (reads, label) => {
+    let lit = 0;
+    for (const t of reads.tips) {
+      if (t.missing) { bad.push(`spark ${label}: the live tree has no plug-cyl${t.cyl}-flash tip to read`); continue; }
+      if (!TIP_NAME.test(t.name))
+        bad.push(`spark ${label}: the read came from "${t.name}", not from the name src/render/plugs.js:102 gives the tip glow`);
+      const cyl = SPEC.cylinders.find((c) => c.num === t.cyl);
+      const progress = firingProgress(cyl, t.theta, adv);
+      const want = progress < 0 ? 0 : 1 - progress;
+      if (Math.abs(t.opacity - want) > 1e-6)
+        bad.push(`spark ${label}: plug-cyl${t.cyl} carries opacity ${t.opacity} at crank ${t.theta} while firingProgress() says ${progress.toFixed(6)}, so src/render/plugs.js:119 would write ${want}`);
+      if (t.opacity > 0) lit += 1;
+    }
+    return lit;
+  };
+  const slowmoLaw = (got, want, label) => {
+    if (Math.abs(got - want) > 1e-12)
+      bad.push(`spark ${label}: the page is running slowmo ${got} although the gate asked for ${want} (src/engine/animation.js:54 clamps to 0.02..1)`);
+  };
+  // The two published numbers this row's spark clauses are held to, declared here because the
+  // printed line states the verdict against them.
+  //   FLOOR: the lit tip's own light. Derived from the fixed build's measured 187.92
+  //     (tmp/v8-8f4-shots2.out) with 1.5 points of rasteriser slack. The ring stays the
+  //     relative reference it is measured against, without an equality demand of its own:
+  //     tmp/v8-8f4-nc-live.out showed a flash culled down to 172.6 still printing READS
+  //     against a 41-point ring, so "disc > ring" alone is not a floor.
+  //   TOLERANCE: how far the tip's measured light may move between the 1/10 and the 1/50
+  //     frame of ONE pinned pose. Derived from the spread five recorded runs measured -
+  //     187.92/187.92, 187.92/187.92, 187.93/187.92, 188.15/187.92 - worst 0.23 points,
+  //     published at 1.0. The number is a reading of a rendered frame, not a fact about the
+  //     pose; the pose itself is held to equality by the opacity and crank-angle clauses.
+  const SPARK_DISC_FLOOR = 185;
+  const SPARK_DISC_TOLERANCE = 1.0;
+  const tipLine = (label, t) => `${label} plug-cyl${t.cyl} op ${t.opacity} at crank ${t.theta} slowmo ${t.slowmo} plane ${String(t.planeDist).padStart(7)} r ${t.radiusPx}px | disc peak ${t.disc.peak} over ${t.disc.samples} px, ring peak ${t.disc.ringPeak} over ${t.disc.ringSamples} px | ${t.disc.mean > t.disc.ringMean ? 'READS' : 'dark'} | ${t.opacity > 0 ? (t.disc.mean >= SPARK_DISC_FLOOR ? `clears the ${SPARK_DISC_FLOOR} floor` : `BELOW the ${SPARK_DISC_FLOOR} floor`) : 'flash off, floor not applicable'}`;
+  const tipDetail = (label, t) => `detail ${label}disc mean ${t.disc.mean} over ${t.disc.samples} px, ring mean ${t.disc.ringMean} over ${t.disc.ringSamples} px, disc against ring ${t.disc.mean > t.disc.ringMean}`;
+
+  await evalJs(`window.__v8.setThrottle(${SPARK_THROTTLE}); window.__v8.setRpm(${SPARK_RPM}); "ok"`);
+  await evalJs('window.__v8.setSlowmo(1 / 10); "ok"');
+  slowmoLaw(await evalJs('window.__v8.state.slowmo'), 1 / 10, 'at 1/10');
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await settle();
+
+  // Which plugs the published section keeps is measured off the live plane, not typed here:
+  // the section is what removes the four far-side plugs, and a flash on that side is dark by
+  // design (test/view.test.mjs:1332-1372 requires every tip to be clipped by the plane).
+  await pin(0);
+  const home = await readSpark();
+  const kept = home.tips.filter((t) => !t.missing && t.planeDist !== null && t.planeDist > 0);
+  const cut = home.tips.filter((t) => !t.missing && t.planeDist !== null && t.planeDist <= 0);
+  console.log(`spark cutaway: the published plane keeps ${kept.length} of ${home.tips.length} plugs (${kept.map((t) => `cyl${t.cyl} +${t.planeDist}`).join(', ')}) and removes ${cut.length} (${cut.map((t) => `cyl${t.cyl} ${t.planeDist}`).join(', ')})`);
+  if (kept.length === 0) {
+    bad.push('spark cutaway: the published section keeps no plug, so no tip flash can be pictured in CUTAWAY at all');
     return;
   }
-  console.log(
-    '\nSHOTS OK: the rendered assembly is driven by one crank angle - rods on their crankpins, rods on their pistons, ' +
-      'pistons in their bores, cams at half crank speed, lobes lifting the valves the timing module says, ' +
-      'nothing left floating apart, and the same pose gives the same picture'
-  );
+
+  const sparkCyl = SPEC.cylinders.find((c) => c.num === kept[0].cyl);
+  const sparkAt = sparkAngle(sparkCyl, SPARK_RPM, SPARK_THROTTLE);
+  const sparkOff = crankEvent(sparkCyl, SPEC.ignition.burnDeg + 1);
+  console.log(`spark pose: cyl${sparkCyl.num} sparks at crank ${sparkAt.toFixed(4)} (totalAdvance ${adv.toFixed(6)} deg before its power TDC at ${sparkCyl.powerTDC}) and its window closes at ${sparkOff.toFixed(4)}`);
+
+  await pin(sparkAt);
+  const litRead = await readSpark();
+  const litTips = poseLaw(litRead, 'lit at 1/10');
+  const lit = litRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkLit = { ...(await shot('17-cutaway-spark-10.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  // The same pose at the clamp floor src/engine/animation.js:54-56 names.
+  await evalJs('window.__v8.setSlowmo(1 / 50); "ok"');
+  slowmoLaw(await evalJs('window.__v8.state.slowmo'), 1 / 50, 'at 1/50');
+  await pin(sparkAt);
+  const slowRead = await readSpark();
+  const slowTips = poseLaw(slowRead, 'lit at 1/50');
+  const slow = slowRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkSlow = { ...(await shot('18-cutaway-spark-50.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  // Same pinned crank pose, two frame rates. The picture is compared sample to sample against
+  // the floors this gate already publishes for one pose read twice: tmp/spark-probe20.mjs
+  // measured 21 of 101626 sampled pixels differing (worst luminance delta 35) between two
+  // renders of ONE pose at ONE speed, so a hash equality would gate the software rasteriser
+  // rather than the flash. The flash itself is held to equality of its measured light.
+  const sparkPair = shots.sparkSlow.pixels.diff;
+  if (!sparkPair) bad.push('the 1/10 and the 1/50 spark pictures were never compared sample to sample');
+  else {
+    console.log(compareLine('spark pair 1/10 vs 1/50 at one pinned pose', sparkPair, { pctMax: 0.5, maxDeltaMax: 60 }));
+    if (process.argv.includes('--detail')) console.log(compareDetail('spark pair 1/10 vs 1/50 at one pinned pose', sparkPair));
+    if (sparkPair.pct > 0.5)
+      bad.push(`${sparkPair.differing} of ${sparkPair.of} sampled pixels (${sparkPair.pct}%) differ between the 1/10 and the 1/50 frame of one pinned pose: the picture would depend on the frame rate and not on the crank angle`);
+    if (sparkPair.maxDelta > 60)
+      bad.push(`the worst luminance delta between the 1/10 and the 1/50 frame of one pinned pose is ${sparkPair.maxDelta}: a flash that decays on the wall clock would land at a different point of its burn window here`);
+  }
+  if (Math.abs(lit.disc.mean - slow.disc.mean) > SPARK_DISC_TOLERANCE)
+    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} at 1/10 and ${slow.disc.mean} at 1/50, ${Math.abs(lit.disc.mean - slow.disc.mean).toFixed(2)} points apart against the ${SPARK_DISC_TOLERANCE} this row publishes from the measured 0.23 spread: the flash's own light depends on the frame rate and not on the crank angle`);
+  if (Math.abs(lit.theta - slow.theta) > 1e-9 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
+    bad.push(`plug-cyl${sparkCyl.num} sat at crank ${lit.theta} opacity ${lit.opacity} at 1/10 and crank ${slow.theta} opacity ${slow.opacity} at 1/50: the two pictures were not the same pose`);
+
+  // The same tip past its burn window.
+  await pin(sparkOff);
+  const offRead = await readSpark();
+  const offTips = poseLaw(offRead, 'past the window');
+  const off = offRead.tips.find((t) => t.cyl === sparkCyl.num);
+  shots.sparkOff = { ...(await shot('19-cutaway-spark-off.png')), pixels: await evalJs(`(${PIXELS})`) };
+
+  console.log(`spark tips lit: ${litTips} of ${home.tips.length} at the spark instant, ${slowTips} at 1/50, ${offTips} past the window`);
+  console.log('  ' + tipLine('lit 1/10 ', lit));
+  console.log('  ' + tipLine('lit 1/50 ', slow));
+  console.log('  ' + tipLine('off      ', off));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('lit 1/10 ', lit));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('lit 1/50 ', slow));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('off      ', off));
+
+  if (!(lit.disc.mean >= SPARK_DISC_FLOOR))
+    bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}, below the ${SPARK_DISC_FLOOR} this row publishes from the fixed build's measured 187.92: the flash is being culled by the metal it emits from (issue #52 measured 172.6 with the depth test answered)`);
+  if (!(lit.disc.mean > lit.disc.ringMean))
+    bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}: the flash is not visible in CUTAWAY`);
+  if (!(lit.disc.mean > off.disc.mean))
+    bad.push(`plug-cyl${sparkCyl.num} reads ${lit.disc.mean} at its spark instant and ${off.disc.mean} past its burn window: a glow that simply stands there lit would pass this row otherwise`);
+  if (!(slow.disc.mean > off.disc.mean))
+    bad.push(`plug-cyl${sparkCyl.num} at 1/50 reads ${slow.disc.mean} against ${off.disc.mean} past the window: the flash does not read at the clamp floor either`);
+  viewsDiffer('sparkLit', 'sparkOff', () => bad.push('the lit spark frame and the frame past the burn window produced the same picture: the flash changed nothing on screen'));
+
+  for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('spark'))) {
+    if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
+    if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
+    if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
+    console.log(shotLine(name, s, { samplesMin: 1000, litMin: 0.05 }));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
+  }
+  if (warnings.length) console.log(`spark warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
+  console.log(`spark console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
+  if (errors.length) bad.push(`spark: ${errors.length} console/CDP error(s) while the gate rendered its spark pictures`);
 });
+
+finish();
