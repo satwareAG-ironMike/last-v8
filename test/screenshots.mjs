@@ -348,6 +348,7 @@ const MEASURE = `(async () => {
           additive: mt.blending === THREE.AdditiveBlending,
           transparent: mt.transparent === true,
           depthWriteOff: mt.depthWrite === false,
+          depthTest: mt.depthTest !== false,
           opacity: Number((mt.opacity ?? 1).toFixed(6)),
           color: mt.color && mt.color.getHex ? mt.color.getHex() : null,
           maps: 0,
@@ -593,6 +594,14 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
       const s = GLOW_SPECS[spec.family];
       if (!(g.additive && g.transparent && g.depthWriteOff))
         bad.push(`crank ${theta}: ${g.mesh} carries the glow family ${g.material} but does not behave like a glow (additive=${g.additive}, transparent=${g.transparent}, depthWrite off=${g.depthWriteOff}) - a glow that writes depth hides the parts behind it, which is what CUTAWAY and EXPLODED are for`);
+      // The depth behaviour is read off the material the PRODUCT built, not off the
+      // table: src/render/materials.js:277 glowMaterial spreads GLOW_SPECS into a
+      // MeshBasicMaterial and src/render/plugs.js:92 clones it per tip, and only this
+      // page renders with it. The spark family is published depth-test-free because its
+      // sphere stands on the spark gap inside the plug's own nose and electrode
+      // (tmp/spark-probe17.out: 3 of 8 tips read in EXPLODED with the test on, 8 of 8 off).
+      if (g.depthTest !== (s.depthTest !== false))
+        bad.push(`crank ${theta}: ${g.mesh} answers the depth test as ${g.depthTest} while the published ${spec.family} says depthTest ${JSON.stringify(s.depthTest)} - the light would be culled by the metal it emits from (test/view.test.mjs names the measured EXPLODED numbers)`);
       if (g.maps !== 0)
         bad.push(`crank ${theta}: the glow ${g.mesh} carries ${g.maps} texture map(s) - ${spec.family} is published as flat additive light (${JSON.stringify(s)}), not as a surface`);
       if (g.color !== s.color)

@@ -1471,6 +1471,10 @@ test('plugs: every tip owns its own material, and the flash reads correctly in C
 test('plugs: the published spark family is not depth-tested, so the tip glow reads in EXPLODED instead of standing inside its own plug', (t) => {
   const published = GLOW_SPECS.spark;
   assert.equal(published.depthTest, false, 'the published spark family is depth-tested: the tip glow stands on the spark gap, enclosed by the plug\'s own nose and electrode, so every fragment of it fails the depth test and the flash is invisible in EXPLODED (measured 3 of 8 tips reading, tmp/spark-probe17.out)');
+  // src/render/materials.js:277 glowMaterial builds M.spark by spreading this table, and
+  // src/render/plugs.js:92 clones it per tip, so the product's material follows the published
+  // family; the live product tree is read in the browser gate instead (test/screenshots.mjs
+  // GLOW audit), which is where a canvas-built material can be measured at all.
   const unit = plugUnit();
   assert.ok(unit, 'no spark-plug unit, so there is no live tip to read the exemption off');
   for (const c of SPEC.cylinders) {
