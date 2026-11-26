@@ -582,8 +582,8 @@ test(`${OHV_BRG}: the drawn OHV block carries five front-insert bearing rings at
 // reads as a void with wall 90 deg away.
 const OIL_WAY = 'A1-G4/issue #8 item 5 slice 8D-2b: the bearing iron carries its own drilled oil way';
 const DEG = Math.PI / 180;
-const SHELL_IN = SPEC.crank.mainRadius + 0.05; // 2.75 main shell bore: journal + published film
-const SHELL_OUT = SHELL_IN + 0.7; // 3.45 its outside face, the band main-shell-* is bored at
+const SHELL_IN = SPEC.crank.mainRadius + SPEC.oil.mainShell.filmCm; // 2.75: journal + published film
+const SHELL_OUT = SPEC.block.mainSeat.boreCm; // 3.45 the seat bore the block machines, main-shell-* OD
 const REACH_DEG = 20; // past this azimuth a void in the band is not a drilled hole:
 // it stands outside the footprint of the machined cuts, so a ring with a piece
 // missing rather than a hole bored in it is caught here

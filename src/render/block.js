@@ -37,8 +37,8 @@ const CR = SPEC.crank;
 const LINER_OD = B.boreShellRadius + B.linerWallCm; // slips into the bore wall columns
 const X_FRONT = B.stations[0] + B.pitch / 2; // 22
 const X_REAR = B.stations[3] - B.pitch / 2; // -22
-const SHELL_IN = CR.mainRadius + 0.05; // bearing shell inner
-const SHELL_OUT = SHELL_IN + 0.7;
+const SHELL_IN = CR.mainRadius + SPEC.oil.mainShell.filmCm; // bearing shell inner
+const SHELL_OUT = SPEC.block.mainSeat.boreCm; // 3.45: the seat the block bores IS this shell's OD
 const PLUG_IN = 0.2; // how far a drain plug reaches up into the sump it screws into
 
 /** Closed outer-first lathe profile for a ring about world X. */
@@ -251,6 +251,54 @@ function ohvGalleryRib(G, bank, cluster, span, inFace, name) {
   return { geo, bored, name };
 }
 
+/**
+ * A1-G7 / issue #18 ask 3 (slice 8C-3d): one central main support, cast on its flat top
+ * plane and then BORED at the published seat radius about the crank axis.
+ *
+ * The support used to end on a flat top standing INSIDE the bearing shell's own bore: the
+ * shell is a full ring at SHELL_OUT 3.4500 whose lowest face is z -3.4500, while the support
+ * top plane stood at z -3.3500, so cast iron crossed the bore over |y| <= 0.8246 - 0.1000 cm
+ * of the shell's own bearing seat occupied by the casting that is supposed to locate it
+ * (issue #18 Measured 1). Machining the bore takes exactly that iron out: the support now
+ * carries the shell on a machined arc at the published radius, and the flat top survives
+ * only as the shoulder the boring bar leaves the iron through. Nothing is added anywhere -
+ * the section is the old outline with the bore disc taken out of it.
+ *
+ * The contour is traced in (y, z) and machined through the same alignX/extrude idiom
+ * ohvSection and ohvEndWall machine their bored faces with, at the same published arc step.
+ */
+function mainSupport(x0, x1, y0, y1, bottom, top) {
+  const R = SPEC.block.mainSeat.boreCm;
+  const step = (SPEC.variants.ohv.tunnel.arcStepDeg * Math.PI) / 180;
+  const zTop = -top; // the cast top plane, below the crank axis
+  const cross = Math.sqrt(R * R - top * top); // where the bore circle meets that plane
+  const pts = [[y0, bottom], [y1, bottom]];
+  if (y1 > -cross && y0 < cross) {
+    // The bore reaches this support. Where the support's own edge stands INSIDE the
+    // crossing window, that edge stops at the circle, not at the cast top plane: the
+    // iron is gone above it. Where the edge stands outboard of the window, the flat
+    // cast top runs all the way to the crossing point and the boring bar leaves the
+    // iron through that shoulder.
+    const inA = y0 > -cross;
+    const inB = y1 < cross;
+    const pA = inA ? [y0, -Math.sqrt(R * R - y0 * y0)] : [-cross, zTop];
+    const pB = inB ? [y1, -Math.sqrt(R * R - y1 * y1)] : [cross, zTop];
+    pts.push([y1, pB[1]]);
+    if (!inB) pts.push(pB);
+    pts.push(...machinedArc(0, 0, R, Math.atan2(pA[1], pA[0]), Math.atan2(pB[1], pB[0]), step).reverse());
+    if (!inA) pts.push([y0, zTop]); // the arc ends ON the circle only where the support
+    // edge stands inside the crossing window; outboard of it the flat cast top runs on.
+  } else {
+    pts.push([y1, zTop], [y0, zTop]); // this support is outboard of the bore: flat cast top
+  }
+  const shape = new THREE.Shape();
+  trace(shape, pts.filter((p, i) => i === 0 || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 1e-9));
+  const g = alignX(extrude(shape, x1 - x0, { bevel: 0, curveSegments: 1 }));
+  g.translate((x0 + x1) / 2, 0, 0);
+  g.computeVertexNormals();
+  return g;
+}
+
 export function createBlock(materials, variantId = SPEC.build.variant) {
   const variant = variantEntry(variantId);
   const P = panPlanes(variantId); // the bolt planes THIS variant casts
@@ -428,7 +476,7 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
   //    wrench-clearance band outside them. Every plane below is a published wall.
   const lug = mainCapLug();
   const BEAR = SPEC.cam.bearing;
-  const shellTopZ = -SHELL_OUT + 0.1; // 0.1 into the shell ring, as the neck does
+  const shellTopZ = -SPEC.block.mainSeat.castTopCm; // the cast top plane the seat bore is machined through
   const crownZ = H ? -(H.belowCrankCm - H.tunnelWallR) : null; // top of the cast tunnel wall
   const band = (sgn, a, b) => (sgn > 0 ? [a, b] : [-b, -a]); // the same wall on either side
   for (const c of MAIN_CAPS_X) {
@@ -453,10 +501,11 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
         // the skirt's tie-in on the OD circle up to the bearing shell flank
         const [ly0, ly1] = band(sgn, H.skirtInboardY, H.skirtHalfY);
         put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, ly0, ly1, H.skirtCornerZ, shellTopZ, 0.2), materials.castIronBlock);
-        // the cap bar: bottom face on the cast crown of the bored tunnel, top
-        // face press-fit into the shell ring - it reaches the full lug width
+        // the cap bar: bottom face on the cast crown of the bored tunnel, top face
+        // bored at the published seat radius so it carries the shell on a machined
+        // arc - it reaches the full lug width
         const [cy0, cy1] = band(sgn, 0, lug.y1);
-        put(`main-cap-${c}${sgn > 0 ? '+' : '-'}`, worldBox(c - 2.3, c + 2.3, cy0, cy1, crownZ, shellTopZ, 0.25), materials.castIronBlock);
+        put(`main-cap-${c}${sgn > 0 ? '+' : '-'}`, mainSupport(c - 2.3, c + 2.3, cy0, cy1, crownZ, SPEC.block.mainSeat.castTopCm), materials.castIronBlock);
         // cap bolt standing in the wrench-clearance band outside that boot wall,
         // same fastener family and proportions as the DOHC main bolts it replaces
         const [by0, by1] = band(sgn, H.skirtHalfY - 0.1, H.skirtHalfY + 0.75);
@@ -464,9 +513,10 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
       }
       continue;
     }
-    // neck stays inside the web gap (|x-c| <= 0.8 < 0.95) and never enters
-    // the shell bore (top at r 3.35 > main radius 2.7) but overlaps the shell ring
-    put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, -3.1, 3.1, lug.zBottom, shellTopZ, 0.2), materials.castIronBlock);
+    // neck stays inside the web gap (|x-c| <= 0.8 < 0.95) and is bored at the
+    // published seat radius: its top is the machined seat arc, not a plane crossing
+    // the shell bore (issue #18 ask 3)
+    put(`main-neck-x${c}`, mainSupport(c - 0.8, c + 0.8, -3.1, 3.1, lug.zBottom, SPEC.block.mainSeat.castTopCm), materials.castIronBlock);
     put(`main-cap-${c}+`, worldBox(c - 2.3, c + 2.3, lug.y0, lug.y1, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
     put(`main-cap-${c}-`, worldBox(c - 2.3, c + 2.3, -lug.y1, -lug.y0, lug.zBottom, lug.zTop, 0.25), materials.castIronBlock);
     put(`main-bolt-${c}+`, worldBox(c - 0.55, c + 0.55, lug.y1 - 0.1, lug.y1 + 0.75, lug.zBottom - 0.55, lug.zBottom + 0.1, 0.15), materials.fastenerDark);

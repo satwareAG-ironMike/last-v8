@@ -39,8 +39,8 @@ const OD = B.caseOuterRadius; // 11.6 the crankcase casting OD
 const ID = B.crankcaseRadius; // 9.4 the crankcase void
 const X_SLAB = B.stations[0] + B.pitch / 2; // 22 where the station slabs end
 const X_FACE = endDiscFaceX(); // 26.5 the fore/aft end faces
-const SHELL_IN = CR.mainRadius + 0.05; // 2.75 a main shell's inside
-const SHELL_OUT = SHELL_IN + 0.7; // 3.45 its outside, pressed into the bush bore
+const SHELL_IN = CR.mainRadius + SPEC.oil.mainShell.filmCm; // 2.75 a main shell's inside
+const SHELL_OUT = SPEC.block.mainSeat.boreCm; // 3.45 its outside: the seat bore the block machines
 const SHELL_HALF = 0.85; // a main shell ring spans the cap width
 const LINER_OD = B.boreShellRadius + 0.15; // 5.45 the press fit the liners use
 const LINER_IN = B.boreRadius; // 5.1 the bore the liner is machined to
@@ -177,7 +177,15 @@ function ohvMaterial(y, z) {
 }
 
 const LUG = mainCapLug(); // 3.0..4.6 out, -8.9 top, -11.5 bottom
-const SHELL_TOP = -SHELL_OUT + 0.1; // a neck/cap top face stands 0.1 into the shell ring
+const SHELL_TOP = -SPEC.block.mainSeat.castTopCm; // -3.35: the cast top plane the seat bore is machined through
+/**
+ * A1-G7 / issue #18 ask 3 (slice 8C-3d): a central main support whose top plane stands
+ * inside the seat bore is BORED at the bore radius - src/render/block.js `mainSupport`
+ * machines the dish out of it. The map must not claim iron the casting no longer has, so
+ * every support measured against this plane is also asked to stand outside the bore, held
+ * to the same face convention (FILM) the shell solid itself is measured at.
+ */
+const outOfSeat = (p) => r2(p[1], p[2]) >= SHELL_OUT - FILM;
 
 function blockParts(id) {
   const P = panPlanes(id);
@@ -234,7 +242,9 @@ function blockParts(id) {
   for (const c of MAIN_CAPS_X) {
     if (c === MAIN_CAPS_X[0] || c === MAIN_CAPS_X[4]) continue; // fore/aft ride the end discs
     if (H) {
-      // two boot legs share the name, one standing on each side of the bored tunnel
+      // two boot legs share the name, one standing on each side of the bored tunnel;
+      // they are outboard of the seat crossing window (|y| >= 3.6754 > 3.45), so the
+      // bore cannot reach them and they keep their flat cast top
       push(`main-neck-x${c}`, (p) => Math.abs(p[0] - c) <= 0.8 + EPS
         && Math.abs(p[1]) >= OHV.skirtInboardY - EPS && Math.abs(p[1]) <= OHV.skirtHalfY + EPS
         && p[2] >= OHV.skirtCornerZ - EPS && p[2] <= SHELL_TOP + EPS,
@@ -243,12 +253,14 @@ function blockParts(id) {
       for (const sgn of [1, -1]) {
         const [y0, y1] = sgn > 0 ? [0, LUG.y1] : [-LUG.y1, 0]; // the cap bar reaches the full lug width
         push(`main-cap-${c}${sgn > 0 ? '+' : '-'}`, (p) => Math.abs(p[0] - c) <= 2.3 + EPS
-          && p[1] >= y0 - EPS && p[1] <= y1 + EPS && p[2] >= crownZ - EPS && p[2] <= SHELL_TOP + EPS,
+          && p[1] >= y0 - EPS && p[1] <= y1 + EPS && p[2] >= crownZ - EPS && p[2] <= SHELL_TOP + EPS
+          && outOfSeat(p),
           claimWorld(c - 2.3, c + 2.3, y0, y1, crownZ, SHELL_TOP));
       }
     } else {
       push(`main-neck-x${c}`, (p) => Math.abs(p[0] - c) <= 0.8 + EPS
-        && Math.abs(p[1]) <= 3.1 + EPS && p[2] >= LUG.zBottom - EPS && p[2] <= SHELL_TOP + EPS,
+        && Math.abs(p[1]) <= 3.1 + EPS && p[2] >= LUG.zBottom - EPS && p[2] <= SHELL_TOP + EPS
+        && outOfSeat(p),
         claimWorld(c - 0.8, c + 0.8, -3.1, 3.1, LUG.zBottom, SHELL_TOP));
       push(`main-cap-${c}+`, (p) => Math.abs(p[0] - c) <= 2.3 + EPS
         && Math.abs(p[1]) >= LUG.y0 - EPS && Math.abs(p[1]) <= LUG.y1 + EPS
