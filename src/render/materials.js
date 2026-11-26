@@ -394,9 +394,18 @@ export function createMaterials() {
  * hand-written constructors: a glow is not a machined surface, so it is not a
  * metal/roughness material and its transparency, blending and depth behaviour are
  * the part of its definition a law can measure.
+ *
+ * The spark family is the one family not answered by the depth test. Its sphere
+ * stands on the spark gap - the plug stack's lowest point, src/render/plugs.js:95
+ * - and that point is enclosed by the plug's own nose and electrode segments, so a
+ * depth test rejects every fragment of the light: measured over the eight tips at
+ * their own spark instants, 3 of 8 read in EXPLODED with the test on and 8 of 8
+ * with it off, the rings around them unmoved (tmp/spark-probe17.out). Light is not
+ * occluded by the housing it emits from. flame and exhaustGlow are effects inside
+ * the chamber and the ports and stay depth-tested.
  */
 export const GLOW_SPECS = {
-  spark: { color: 0xfff3c8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false },
+  spark: { color: 0xfff3c8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false },
   flame: { color: 0xff9a3c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false },
   exhaustGlow: { color: 0xff6a2a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide },
 };
