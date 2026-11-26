@@ -347,3 +347,31 @@ test('a view transition is settled before a pinned capture, and a pinned capture
     assert.equal(/await sleep\(\d+\);/.test(untilCapture), false, `a cutaway switch waits on a wall clock before its capture:\n  ${untilCapture.slice(0, 220)}`);
   }
 });
+
+// Row P1-G6 names "the spark visible in CUTAWAY at 1/10 and 1/50". Measured gap: this gate
+// has plug MATERIAL laws (the GLOW_SPECS exemption above) and never calls setSlowmo with
+// either factor, so no picture at those speeds exists and no law reads a plug flash out of a
+// rendered frame. The authorities this law names are the product's own: src/render/plugs.js:102
+// names the tip mesh plug-cyl{N}-flash, :93-94 clones its material per plug, :119-120 writes
+// opacity = progress < 0 ? 0 : 1 - progress, src/main.js:280 feeds it state.theta and
+// state.advance().total, src/engine/ignition.js:62 publishes the crank angle the spark fires at,
+// src/engine/timing.js:92 publishes the burn window, and src/engine/animation.js:54-56 clamps
+// slowmo to 0.02..1 - so 1/50 is the slowest picture this product can render, not a speed
+// chosen here.
+test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factors row P1-G6 names, and reads the flash from the timing module', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  for (const f of ['1 / 10', '1 / 50'])
+    assert.ok(src.includes(`setSlowmo(${f})`), `the gate never calls setSlowmo(${f}), so row P1-G6's clause "the spark visible in CUTAWAY at 1/10 and 1/50" has no picture behind it`);
+  for (const f of ['17-cutaway-spark-10.png', '18-cutaway-spark-50.png', '19-cutaway-spark-off.png'])
+    assert.ok(src.includes(f), `the gate writes no ${f}: the lit frame, the same pose at the clamp floor, or the same tip past its burn window is never pictured`);
+  assert.ok(/const SPARK_READ = /.test(src), 'there is no spark read: the flash is asserted in the gate rather than measured off the live tree');
+  assert.ok(src.includes('/^plug-cyl(\\d+)-flash$/'), 'the gate never names the tip glow mesh it measures (src/render/plugs.js:102 names it plug-cyl{N}-flash)');
+  assert.ok(src.includes('.material.opacity'), 'the gate never reads a glow opacity off the live material, so the flash is typed rather than measured (src/render/plugs.js:119-120 writes it there)');
+  assert.ok(src.includes('state.slowmo'), 'the gate never reads the page live slowmo factor, so the speed in the record is a number typed here rather than the factor the animation is really running at (src/engine/animation.js:54)');
+  for (const call of ['firingProgress(', 'sparkAngle(', 'totalAdvance('])
+    assert.ok(src.includes(call), `the gate never calls ${call}, so the burn window, the spark instant or the advance it expects is typed here instead of read from the module that publishes it`);
+  assert.ok(src.includes('SPEC.plug.glowR'), 'the region the flash is measured in is not derived from the published glow sphere (SPEC.plug.glowR), so a pixel box was invented here');
+  assert.ok(src.includes('shots.sparkLit.pixels.hash !== shots.sparkSlow.pixels.hash'), 'the gate does not compare the 1/10 picture with the 1/50 picture, so a flash that depends on the wall clock instead of the crank angle would pass');
+  assert.ok(/\.disc\.mean > /.test(src) && src.includes('.disc.ringMean'), 'the gate never compares the lit tip against the ring around it, so "visible in CUTAWAY" is never measured');
+  assert.ok(src.includes('off.disc.mean'), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
+});
