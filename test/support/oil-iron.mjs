@@ -21,7 +21,7 @@ import {
   SPEC, DEG, MAIN_CAPS_X, bankUp, bankOut, camAxisBank, endDiscFaceX, HEAD_TOP_A,
   idHalfDepth, mainCapLug, supportColumn,
 } from '../../src/engine/spec.js';
-import { ohvBearings, ohvHousing, panPlanes } from '../../src/engine/layout.js';
+import { ohvBearings, ohvHousing, ohvLifterGallery, panPlanes } from '../../src/engine/layout.js';
 import { bearingStack } from '../../src/engine/bearings.js';
 import { createBlock } from '../../src/render/block.js';
 import { createCranktrain } from '../../src/render/cranktrain.js';
@@ -236,6 +236,31 @@ function blockParts(id) {
         return q.a >= web - EPS && q.a <= B.deckA + EPS && q.o <= -B.boreWallHalf + EPS
           && q.o >= -B.deckHalfWidth - EPS && q.x >= s - 5.5 - EPS && q.x <= s + 5.5 + EPS;
       }, claimBank(bank, { a0: web, a1: B.deckA, o0: -B.deckHalfWidth, o1: -B.boreWallHalf, x0: s - 5.5, x1: s + 5.5 }));
+    }
+  }
+
+  if (H) {
+    // Slice 8G (issue #49): the 16 cluster ribs the OHV block casts for its lifter
+    // gallery - src/render/block.js ohvGalleryRib machines each as a mouth block and
+    // an outboard guide wall, both extruded in the bank frame (x across the cluster,
+    // out from the cast face to ribOut, along the tunnel-side span measured off the
+    // cam axis). The two lifter bores a rib bores through its own iron are machined
+    // voids, so they are not iron here; every number is read from ohvLifterGallery().
+    const GAL = ohvLifterGallery();
+    for (const bank of ['L', 'R']) {
+      const g = GAL.banks[bank];
+      const f = F[bank];
+      for (const [i, [x0, x1]] of g.clusters.entries()) {
+        const bores = g.bores.filter((b) => b.x >= x0 && b.x <= x1);
+        const rib = (tag, a0, a1, o0) => push(tag, (p) => {
+          const q = f.of(p);
+          return q.x >= x0 - EPS && q.x <= x1 + EPS && q.a >= a0 - EPS && q.a <= a1 + EPS
+            && q.o >= o0 - EPS && q.o <= g.ribOut + EPS
+            && bores.every((b) => Math.hypot(q.x - b.x, q.o - g.axisOut) >= GAL.boreRadius + EPS);
+        }, claimBank(bank, { a0, a1, o0, o1: g.ribOut, x0, x1 }));
+        rib(`gallery-${bank}-${i + 1}`, g.axisAlong + g.guideFrom, g.axisAlong + g.stepT, g.ribIn);
+        rib(`gallery-${bank}-${i + 1}-guide`, g.axisAlong + g.stepT, g.axisAlong + g.guideTo, g.wallIn);
+      }
     }
   }
 
@@ -785,7 +810,12 @@ export function oilOracle(id = SPEC.build.variant) {
     const MULTI_OK = /^(main-neck-x|wall-|plate$|shell-|tab-|bolt-hole-)/;
     for (const [name, meshes] of drawn) {
       const fam = name.replace(/[-+][0-9.+-]+$/, '');
-      if (!known.has(name) && !known.has(fam) && !NOT_CAST_IRON.test(name) && !/[+]/.test(name)) {
+      // Slice 8G (issue #49): this clause used to also skip every name containing a
+      // plus sign. An exemption keyed on spelling lets a drawn part dodge the map by
+      // what it is called - measured at 3742215 with the exemption out, both variants
+      // are clean, so it was hiding nothing today and could not be trusted to keep
+      // hiding nothing tomorrow.
+      if (!known.has(name) && !known.has(fam) && !NOT_CAST_IRON.test(name)) {
         problems.push(`the map does not know drawn part ${name}`);
       }
       const claimed = iron.filter((e) => (e.drawn ?? e.name) === name).length

@@ -77,8 +77,10 @@ import {
   crankSwings,
   ohvBearings,
   ohvHousing,
+  ohvLifterGallery,
   panPlanes,
 } from '../src/engine/layout.js';
+import { readFileSync } from 'node:fs';
 import { createBlock } from '../src/render/block.js';
 import { createCranktrain } from '../src/render/cranktrain.js';
 import { createHeads } from '../src/render/heads.js';
@@ -1020,3 +1022,62 @@ test('oil 8D-2a: the drawn oil system rides the published material families and 
 // published through-crank terminus today; the rod-body way gets its own law with
 // its own RED when that clause is built.
 
+
+/* ---- slice 8G (issue #49): the drawn warrant has to know the gallery iron ----
+ *
+ * test/support/oil-iron.mjs builds a drawn warrant: every mesh the block and heads
+ * cast must be known to the map as iron, as a solid a drill must miss, or as the
+ * boundary of a named oil space, and every iron claim must match the drawn part
+ * measured in its own frame. The mechanism existed; no law in this file ever ran
+ * it. Measured at e01084e: warrant('dohc') is ok with 0 problems, warrant('ohv')
+ * is NOT ok - 16 problems, all of them "the map does not know drawn part
+ * gallery-{L,R}-{1..4}(-guide)", the 16 cluster ribs src/render/block.js casts
+ * since slice 8C-3a. The map's ignorance was invisible because nothing gated it.
+ */
+
+test('oil 8G: the drawn warrant is clean in both variants - every part the tree casts is known to the map', async () => {
+  const bad = [];
+  for (const id of ['dohc', 'ohv']) {
+    const w = oilOracle(id).warrant();
+    if (!w.ok) bad.push(`${id}: ${w.problems.length} problem(s): ${w.problems.slice(0, 3).join(' | ')}`);
+  }
+  assert.deepEqual(bad, [],
+    'warrant() is the drawn-vs-map audit the support oracle already computes; a casting the map '
+    + 'does not know is a part no bore law can see through, so the audit has to be a law, not a probe');
+});
+
+test('oil 8G: the 16 gallery ribs the OHV block casts are iron claims in the map, in the bank frame the ribs are cast in', async () => {
+  const G = ohvLifterGallery();
+  const iron = oilOracle('ohv').iron;
+  const missing = [];
+  const wrong = [];
+  for (const bank of ['L', 'R']) {
+    const b = G.banks[bank];
+    b.clusters.forEach(([x0, x1], i) => {
+      const parts = [
+        [`gallery-${bank}-${i + 1}`, [b.guideFrom, b.stepT], b.ribIn],
+        [`gallery-${bank}-${i + 1}-guide`, [b.stepT, b.guideTo], b.wallIn],
+      ];
+      for (const [tag, span, inFace] of parts) {
+        const e = iron.find((p) => (p.drawn ?? p.name) === tag);
+        if (!e) { missing.push(tag); continue; }
+        const c = e.claim;
+        if (!c || c.frame !== 'bank' || c.bank !== bank) { wrong.push(`${tag}: claim ${JSON.stringify(c)}`); continue; }
+        const want = { a0: b.axisAlong + span[0], a1: b.axisAlong + span[1], o0: inFace, o1: b.ribOut, x0, x1 };
+        for (const k of Object.keys(want)) {
+          if (Math.abs(c[k] - want[k]) > 1e-9) wrong.push(`${tag}: claim ${k} ${c[k]} against the published ${want[k]}`);
+        }
+        if (typeof e.test !== 'function') wrong.push(`${tag}: an iron entry with no point predicate`);
+      }
+    });
+  }
+  assert.deepEqual(missing, [], 'the OHV block draws these ribs and the map has no iron entry for them');
+  assert.deepEqual(wrong, [], 'a rib claim that disagrees with ohvLifterGallery() is a map that mis-states the casting it names');
+});
+
+test('oil 8G: a drawn part cannot hide from the drawn warrant by its spelling', () => {
+  const src = readFileSync('test/support/oil-iron.mjs', 'utf8');
+  assert.equal(src.includes('!/[+]/.test(name)'), false,
+    'the known-part clause skipped every drawn name containing a plus sign; an exemption keyed on '
+    + 'spelling lets a part dodge the map by what it is called, not by what it is');
+});
