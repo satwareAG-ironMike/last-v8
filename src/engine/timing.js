@@ -116,6 +116,25 @@ export function camAzimuth(bank, theta) {
 export const lobeHalfCamDeg = (valve) => eventDuration(valve) / 4;
 
 /**
+ * The lift the grinder machines onto this variant's cam, at the follower.
+ *
+ * valves.maxLift is the lift at the VALVE, which is what the head's
+ * crown-clearance law is measured at and what row A1-G3 closed. A DOHC bucket
+ * sits between the lobe and the valve, so its cam is ground to that lift
+ * directly. The OHV variant puts a rocker lever in that place (issue #45,
+ * slice 8I): the lever multiplies the follower's travel by SPEC.variants.ohv
+ * .rockerRatio, so its cam is ground to maxLift / ratio and no more. Every
+ * lobe function below takes the grind as a parameter and defaults to the
+ * committed one, so a variant's grind cannot leak into the other variant's
+ * geometry by accident.
+ */
+export function camLiftCm(id = SPEC.build.variant) {
+  const ratio = SPEC.variants[id]?.rockerRatio ?? 1;
+  if (!(ratio >= 1)) throw new Error(`camLiftCm('${id}'): rockerRatio ${ratio} is not a lever ratio of at least 1`);
+  return V.maxLift / ratio;
+}
+
+/**
  * Grinder exponent of this lobe's lift law, derived from the machined nose arc.
  * The law is lift(psi) = maxLift * (1 - x^2)^p with x = |psi| / lobeHalfCamDeg
  * (psi in CAM degrees, 0 = the nose). It opens and closes with zero slope onto
@@ -124,28 +143,28 @@ export const lobeHalfCamDeg = (valve) => eventDuration(valve) / 4;
  * h(0) + h''(0) = camBaseRadius + maxLift - 2 p maxLift / halfCamRad^2 IS the
  * ground nose radius, so p follows from the one machined value named in SPEC.
  */
-export function lobeNoseExponent(valve) {
+export function lobeNoseExponent(valve, liftCm = V.maxLift) {
   const halfRad = (lobeHalfCamDeg(valve) * Math.PI) / 180;
-  return ((H.camBaseRadius + V.maxLift - V.lobeNoseRadius) * halfRad * halfRad) / (2 * V.maxLift);
+  return ((H.camBaseRadius + liftCm - V.lobeNoseRadius) * halfRad * halfRad) / (2 * liftCm);
 }
 
 /** p that would shrink the nose arc to zero: above this a flat face undercuts. */
-export function lobeUndercutExponent(valve) {
+export function lobeUndercutExponent(valve, liftCm = V.maxLift) {
   const halfRad = (lobeHalfCamDeg(valve) * Math.PI) / 180;
-  return ((H.camBaseRadius + V.maxLift) * halfRad * halfRad) / (2 * V.maxLift);
+  return ((H.camBaseRadius + liftCm) * halfRad * halfRad) / (2 * liftCm);
 }
 
-const lawTerms = (valve, psiDeg) => {
+const lawTerms = (valve, psiDeg, liftCm = V.maxLift) => {
   const hw = lobeHalfCamDeg(valve);
   const halfRad = (hw * Math.PI) / 180;
-  const p = lobeNoseExponent(valve);
+  const p = lobeNoseExponent(valve, liftCm);
   const a = Math.abs(signedAngle(psiDeg));
   if (a >= hw) return { lift: 0, dLift: 0, d2Lift: 0, x: 1 };
   const x = a / hw;
   const u = 1 - x * x;
-  const lift = V.maxLift * u ** p;
-  const dLift = -(V.maxLift / halfRad) * 2 * p * x * u ** (p - 1); // cm per cam radian
-  const d2Lift = (V.maxLift / (halfRad * halfRad)) * 2 * p * u ** (p - 2) * ((2 * p - 1) * x * x - 1);
+  const lift = liftCm * u ** p;
+  const dLift = -(liftCm / halfRad) * 2 * p * x * u ** (p - 1); // cm per cam radian
+  const d2Lift = (liftCm / (halfRad * halfRad)) * 2 * p * u ** (p - 2) * ((2 * p - 1) * x * x - 1);
   return { lift, dLift, d2Lift, x };
 };
 
@@ -155,17 +174,17 @@ const lawTerms = (valve, psiDeg) => {
  * The old law used the radius along the follower ray - a knife-edge follower -
  * and that plane cut 0.5005 cm into every bucket it drove.
  */
-export function lobeFaceDistance(valve, psiDeg) {
-  return H.camBaseRadius + lawTerms(valve, psiDeg).lift;
+export function lobeFaceDistance(valve, psiDeg, liftCm = V.maxLift) {
+  return H.camBaseRadius + lawTerms(valve, psiDeg, liftCm).lift;
 }
 
 /** Contact law: the lift the follower actually rides on. */
-export const lobeContactLift = (valve, psiDeg) => lobeFaceDistance(valve, psiDeg) - H.camBaseRadius;
+export const lobeContactLift = (valve, psiDeg, liftCm = V.maxLift) => lobeFaceDistance(valve, psiDeg, liftCm) - H.camBaseRadius;
 
 /** dh/dpsi in cm per cam radian = how far the contact point walks off the
  *  follower ray, measured across the flat face. */
-export function lobeContactWalk(valve, psiDeg) {
-  const t = lawTerms(valve, psiDeg);
+export function lobeContactWalk(valve, psiDeg, liftCm = V.maxLift) {
+  const t = lawTerms(valve, psiDeg, liftCm);
   return psiDeg < 0 ? -t.dLift : t.dLift;
 }
 
@@ -174,17 +193,17 @@ export function lobeContactWalk(valve, psiDeg) {
  * point. Zero or negative is an undercut - a flat face would intersect the
  * lobe instead of riding it. Equals the ground nose radius at psi = 0.
  */
-export function lobeContactCurvature(valve, psiDeg) {
-  const t = lawTerms(valve, psiDeg);
+export function lobeContactCurvature(valve, psiDeg, liftCm = V.maxLift) {
+  const t = lawTerms(valve, psiDeg, liftCm);
   return H.camBaseRadius + t.lift + t.d2Lift;
 }
 
-const scanLobe = (valve, fn, pick, samples = 6000) => {
+const scanLobe = (valve, fn, pick, samples = 6000, liftCm = V.maxLift) => {
   const hw = lobeHalfCamDeg(valve);
   let out = null;
   for (let i = 0; i <= samples; i++) {
     const psi = (i / samples) * hw;
-    const v = fn(valve, psi);
+    const v = fn(valve, psi, liftCm);
     if (out === null || pick(v, out.v)) out = { v, psi };
   }
   return out;
@@ -194,17 +213,17 @@ const widest = (v, best) => Math.abs(v) > Math.abs(best);
 const tightest = (v, best) => v < best;
 
 /** Largest contact walk over the event, cm: must stay inside the tappet face. */
-export const lobeMaxWalk = (valve) => Math.abs(scanLobe(valve, lobeContactWalk, widest).v);
+export const lobeMaxWalk = (valve, liftCm = V.maxLift) => Math.abs(scanLobe(valve, lobeContactWalk, widest, 6000, liftCm).v);
 
 /** Tightest outline curvature over the event, cm: > 0 means no undercut. */
-export const lobeMinCurvature = (valve) => scanLobe(valve, lobeContactCurvature, tightest).v;
+export const lobeMinCurvature = (valve, liftCm = V.maxLift) => scanLobe(valve, lobeContactCurvature, tightest, 6000, liftCm).v;
 
 /** Polar angle (cam deg from the nose) of the outline point whose tangent plane
  *  has its normal at psi: beta = psi + atan2(h', h). Monotone while the law is
  *  convex, which is what makes the outline a single closed curve. */
-function lobeContactAzimuth(valve, psiRad) {
-  const h = lobeFaceDistance(valve, (psiRad * 180) / Math.PI);
-  const dh = lobeContactWalk(valve, (psiRad * 180) / Math.PI);
+function lobeContactAzimuth(valve, psiRad, liftCm = V.maxLift) {
+  const h = lobeFaceDistance(valve, (psiRad * 180) / Math.PI, liftCm);
+  const dh = lobeContactWalk(valve, (psiRad * 180) / Math.PI, liftCm);
   return psiRad + Math.atan2(dh, h);
 }
 
@@ -213,7 +232,7 @@ function lobeContactAzimuth(valve, psiRad) {
  * nose): the envelope of the flat-follower tangent planes, hypot(h, h'). This
  * is what the cam was cut to, and what the render extrudes.
  */
-export function lobeProfileRadius(valve, alpha) {
+export function lobeProfileRadius(valve, alpha, liftCm = V.maxLift) {
   const hw = lobeHalfCamDeg(valve);
   const a = Math.abs(signedAngle(alpha));
   if (a >= hw) return H.camBaseRadius;
@@ -221,16 +240,16 @@ export function lobeProfileRadius(valve, alpha) {
   let lo = 0, hi = (hw * Math.PI) / 180;
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (lobeContactAzimuth(valve, mid) < target) lo = mid; else hi = mid;
+    if (lobeContactAzimuth(valve, mid, liftCm) < target) lo = mid; else hi = mid;
   }
   const psi = (lo + hi) / 2;
-  const h = lobeFaceDistance(valve, (psi * 180) / Math.PI);
-  const dh = lobeContactWalk(valve, (psi * 180) / Math.PI);
+  const h = lobeFaceDistance(valve, (psi * 180) / Math.PI, liftCm);
+  const dh = lobeContactWalk(valve, (psi * 180) / Math.PI, liftCm);
   return Math.hypot(h, dh);
 }
 
 /** Largest outline radius: the machined nose sits on the index azimuth. */
-export const lobeMaxRadius = (valve) => lobeFaceDistance(valve, 0);
+export const lobeMaxRadius = (valve, liftCm = V.maxLift) => lobeFaceDistance(valve, 0, liftCm);
 
 /** Fixed angular position of a lobe on its camshaft. */
 export function lobeIndexAngle(cyl, valve) {

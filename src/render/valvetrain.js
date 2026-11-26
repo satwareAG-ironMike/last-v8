@@ -18,7 +18,7 @@ import { latheX } from './parts.js';
 import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
 import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
 import { variantEntry, camGroupNames, ohvLifters } from '../engine/layout.js';
-import { ohvCamAxis, ohvCamLayout, ohvLift, TURNED_SEGMENTS } from '../engine/ohv.js';
+import { ohvCamAxis, ohvCamLayout, ohvCamLiftCm, ohvLift, TURNED_SEGMENTS } from '../engine/ohv.js';
 
 const H = SPEC.head;
 const V = SPEC.valves;
@@ -45,7 +45,7 @@ const disc = (rTop, rBot, h, seg = 32) =>
  * maps through alignX to (y,z) = (v,-u), so the baked nose sits at the index
  * azimuth in the cam group's own frame.
  */
-function lobeShape(valve, idx, samples = 180) {
+function lobeShape(valve, idx, samples = 180, liftCm = SPEC.valves.maxLift) {
   const shape = new THREE.Shape();
   // Sampling runs forward FROM the nose, so vertex 0 is the machined nose tip:
   // the outline's max-radius vertex lands exactly on the index azimuth.
@@ -53,7 +53,7 @@ function lobeShape(valve, idx, samples = 180) {
   for (let i = 0; i < samples; i++) {
     const alpha = i * step;
     const az = idx + alpha;
-    const r = lobeProfileRadius(valve, signedAngle(alpha));
+    const r = lobeProfileRadius(valve, signedAngle(alpha), liftCm);
     const u = -r * Math.cos(az * DEG);
     const v = r * Math.sin(az * DEG);
     if (i === 0) shape.moveTo(u, v);
@@ -219,7 +219,7 @@ function buildOhvCam(name, materials) {
     // puts the drawn nose past the machined face plane (A1-G1). A cam is ground.
     // The contour step is the one ohvCamLayout derives against this tunnel's own
     // turned-bore facet error, so the drawn outline is no coarser than the bore.
-    const g = extrude(lobeShape(l.valve, l.index, plan.profileSamples), plan.lobeWidthCm, { bevel: 0 });
+    const g = extrude(lobeShape(l.valve, l.index, plan.profileSamples, ohvCamLiftCm()), plan.lobeWidthCm, { bevel: 0 });
     alignX(g);
     g.computeBoundingBox();
     const measured = (g.boundingBox.min.x + g.boundingBox.max.x) / 2;

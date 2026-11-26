@@ -283,7 +283,7 @@ test(`${LAW}: 16 lobes stand at the 4 published cylinder stations at this varian
         const r = radiusOf(p, axis), az = azOf(p, axis);
         if (r < lo) lo = r;
         if (r > hi) { hi = r; noseAz = az; }
-        const want = lobeProfileRadius(line.valve, signedAngle(az - idx));
+        const want = E.ohvLobeProfileRadius(line.valve, signedAngle(az - idx));
         if (kind === 'c') {
           const err = Math.abs(r - want);
           if (err > cornerErr) cornerErr = err;
@@ -303,11 +303,11 @@ test(`${LAW}: 16 lobes stand at the 4 published cylinder stations at this varian
       // it rides in.
       assert.ok(plan.profileChordErrCm <= plan.turnedBoreChordErrCm,
         `${mesh.name}: this cam's ${plan.profileSamples}-step lobe contour publishes ${plan.profileChordErrCm.toFixed(6)} cm of chord error against the ${plan.turnedBoreChordErrCm.toFixed(6)} cm a ${E.TURNED_SEGMENTS}-facet ${B.boreR.toFixed(4)} cm tunnel bore presents at ${plan.profileStepDeg.toFixed(4)} cam deg steps - lobes ground coarser than the bores they run in`);
-      const base = SPEC.head.camBaseRadius, nose = lobeMaxRadius(line.valve);
+      const base = SPEC.head.camBaseRadius, nose = base + E.ohvCamLiftCm(); // this variant's grind: maxLift / rockerRatio
       assert.ok(angDiff(noseAz, idx) <= 0.6, `${mesh.name}: machined nose at ${noseAz.toFixed(2)} deg, index angle ${idx.toFixed(2)} deg`);
       assert.ok(Math.abs(hi - nose) <= FACET, `${mesh.name}: outline max ${hi.toFixed(4)} instead of the machined nose ${nose.toFixed(4)}`);
       assert.ok(Math.abs(lo - base) <= FACET, `${mesh.name}: outline min ${lo.toFixed(4)} instead of the ground base circle ${base}`);
-      assert.ok(hi - lo >= V.maxLift - FACET, `${mesh.name}: nose to base circle is ${(hi - lo).toFixed(4)} cm of lift, not the published ${V.maxLift}`);
+      assert.ok(hi - lo >= E.ohvCamLiftCm() - FACET, `${mesh.name}: nose to base circle is ${(hi - lo).toFixed(4)} cm of lift, not this variant's ${E.ohvCamLiftCm().toFixed(4)} cm grind (${V.maxLift} cm of valve lift over the ${SPEC.variants.ohv.rockerRatio}:1 rocker)`);
       // Stepped the way a cam grinder machines it: nose, flank, opening and
       // closing ramp, base circle - the machined profile descends monotonically
       // from nose to base circle, and the drawn contour carries material in every
@@ -316,7 +316,7 @@ test(`${LAW}: 16 lobes stand at the 4 published cylinder stations at this varian
       // where its corners may land, so an azimuth window would gate the sampling
       // instead of the outline.
       const half = lobeHalfCamDeg(line.valve);
-      const descent = [0, 0.25, 0.5, 0.75, 0.9, 1].map((f) => lobeProfileRadius(line.valve, signedAngle(half * f)));
+      const descent = [0, 0.25, 0.5, 0.75, 0.9, 1].map((f) => E.ohvLobeProfileRadius(line.valve, signedAngle(half * f)));
       assert.ok(descent.every((r, i) => i === 0 || r < descent[i - 1] - 1e-6),
         `${mesh.name}: the machined profile does not step down from nose through flank and ramp onto the base circle: ${descent.map((r) => r.toFixed(4)).join(' > ')}`);
       assert.ok(Math.abs(descent[5] - base) <= 1e-9, `${mesh.name}: the closing ramp does not land on the ground base circle ${base}, it lands at ${descent[5].toFixed(4)}`);
@@ -345,8 +345,13 @@ test(`${LAW}: lift comes from the lifter's own contact law - published max lift,
         if (l > 1e-9) open += 1;
         if (l > max) { max = l; atTheta = th; }
       }
-      assert.ok(Math.abs(max - V.maxLift) <= 1e-6,
-        `cyl ${cyl.num} ${valve}: the lifter contact law peaks at ${max.toFixed(4)} cm, not the published ${V.maxLift} cm of lift`);
+      // Slice 8I (issue #45): the lift this variant's cam is ground to at its
+      // followers is maxLift / rockerRatio, and the rocker restores the published
+      // maxLift at the valve - gated by name in the 8I laws below. The title's
+      // "published max lift" is the lift at the valve; at the follower it is the
+      // grind derived from the published ratio, and that is what this loop measures.
+      assert.ok(Math.abs(max - E.ohvCamLiftCm()) <= 1e-6,
+        `cyl ${cyl.num} ${valve}: the lifter contact law peaks at ${max.toFixed(4)} cm, not the ${E.ohvCamLiftCm().toFixed(4)} cm this variant's cam is ground to (${V.maxLift} cm of valve lift over the ${SPEC.variants.ohv.rockerRatio}:1 rocker)`);
       const pub = eventDuration(valve);
       assert.ok(Math.abs(open - pub) <= 3, `cyl ${cyl.num} ${valve}: the lobe holds its lifter off the base circle for ${open} crank deg, not the published ${pub}`);
       const azFollower = E.lifterAzimuth(cyl.bank);
@@ -361,7 +366,7 @@ test(`${LAW}: lift comes from the lifter's own contact law - published max lift,
       const nose = mesh.userData.noseDir.clone().applyQuaternion(q);
       assert.ok(angDiff(dirAz(nose), azFollower) <= 0.6,
         `cyl ${cyl.num} ${valve} at crank ${atTheta}: the drawn nose stands at ${dirAz(nose).toFixed(2)} deg off the cam axis, its lifter axis is ${azFollower.toFixed(2)} deg`);
-      rows.push(`cyl ${cyl.num} ${valve[0]} ${max.toFixed(3)} @ ${atTheta}`);
+      rows.push(`cyl ${cyl.num} ${valve[0]} ${max.toFixed(3)}x${SPEC.variants.ohv.rockerRatio}=${(max * SPEC.variants.ohv.rockerRatio).toFixed(3)} @ ${atTheta}`);
     }
   }
   console.log(`${LAW} lift from the contact law: ${rows.join('; ')}; lifter axes L ${E.lifterAzimuth('L')} deg, R ${E.lifterAzimuth('R')} deg`);
