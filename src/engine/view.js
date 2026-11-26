@@ -24,6 +24,7 @@
 //    which is exactly what a service manual draws, and what makes an exploded
 //    view legible rather than a pile.
 import { SPEC, bankOut, bankUp } from './spec.js';
+import { shellDatums } from './variant.js';
 
 const V = SPEC.view;
 
@@ -293,7 +294,7 @@ export function explodeOffsets(extents, opts = {}) {
  */
 export function explodeLift(lowest, opts = {}) {
   const S = { ...explodeSpecs(), ...opts };
-  const floor = SPEC.stand.floorZ + S.floorMargin;
+  const floor = shellDatums().floorZ + S.floorMargin;
   let min = Infinity;
   for (const l of lowest) min = Math.min(min, l.minZ);
   if (!Number.isFinite(min)) return 0;

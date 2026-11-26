@@ -109,7 +109,10 @@ export async function withPage(opts = {}, fn) {
   watchdog.unref();
 
   const server = await startServer(0);
-  const pageUrl = `http://127.0.0.1:${server.address().port}/`;
+  // opts.query is what a gate asks the page to boot with, e.g. '?variant=ohv'. It exists
+  // so a gate measures the same address a reader types (issue #16 decision 2C) instead of
+  // poking the app from the console and calling that the same thing.
+  const pageUrl = `http://127.0.0.1:${server.address().port}/${opts.query ?? ''}`;
   const profile = mkdtempSync(join(tmpdir(), 'v8-browser-'));
   let browser = null;
   let cdp = null;

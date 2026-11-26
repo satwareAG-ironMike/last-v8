@@ -498,9 +498,12 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
     if (H) {
       for (const sgn of [1, -1]) {
         // boot legs standing on the housing wall beside the bored tunnel, from
-        // the skirt's tie-in on the OD circle up to the bearing shell flank
+        // the skirt's tie-in on the OD circle up to the bearing shell flank. Named
+        // for its side like the cap bar and cap bolt it carries: two drawn solids
+        // cannot share one name, because PART INSPECTION and the explode chain
+        // address a member by name (issue #16 slice 8C-3e).
         const [ly0, ly1] = band(sgn, H.skirtInboardY, H.skirtHalfY);
-        put(`main-neck-x${c}`, worldBox(c - 0.8, c + 0.8, ly0, ly1, H.skirtCornerZ, shellTopZ, 0.2), materials.castIronBlock);
+        put(`main-neck-x${c}${sgn > 0 ? '+' : '-'}`, worldBox(c - 0.8, c + 0.8, ly0, ly1, H.skirtCornerZ, shellTopZ, 0.2), materials.castIronBlock);
         // the cap bar: bottom face on the cast crown of the bored tunnel, top face
         // bored at the published seat radius so it carries the shell on a machined
         // arc - it reaches the full lug width

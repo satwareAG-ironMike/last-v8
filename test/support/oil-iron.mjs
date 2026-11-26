@@ -242,13 +242,18 @@ function blockParts(id) {
   for (const c of MAIN_CAPS_X) {
     if (c === MAIN_CAPS_X[0] || c === MAIN_CAPS_X[4]) continue; // fore/aft ride the end discs
     if (H) {
-      // two boot legs share the name, one standing on each side of the bored tunnel;
-      // they are outboard of the seat crossing window (|y| >= 3.6754 > 3.45), so the
-      // bore cannot reach them and they keep their flat cast top
-      push(`main-neck-x${c}`, (p) => Math.abs(p[0] - c) <= 0.8 + EPS
-        && Math.abs(p[1]) >= OHV.skirtInboardY - EPS && Math.abs(p[1]) <= OHV.skirtHalfY + EPS
-        && p[2] >= OHV.skirtCornerZ - EPS && p[2] <= SHELL_TOP + EPS,
-        claimWorld(c - 0.8, c + 0.8, -OHV.skirtHalfY, OHV.skirtHalfY, OHV.skirtCornerZ, SHELL_TOP));
+      // one boot leg on each side of the bored tunnel, each named for its side like the
+      // cap bar and cap bolt it carries (issue #16 slice 8C-3e: two drawn solids cannot
+      // share one name, because PART INSPECTION and the explode chain address a member
+      // by name). Both stand outboard of the seat crossing window (|y| >= 3.6754 > 3.45),
+      // so the bore cannot reach them and they keep their flat cast top.
+      for (const sgn of [1, -1]) {
+        const [ly0, ly1] = sgn > 0 ? [OHV.skirtInboardY, OHV.skirtHalfY] : [-OHV.skirtHalfY, -OHV.skirtInboardY];
+        push(`main-neck-x${c}${sgn > 0 ? '+' : '-'}`, (p) => Math.abs(p[0] - c) <= 0.8 + EPS
+          && p[1] >= ly0 - EPS && p[1] <= ly1 + EPS
+          && p[2] >= OHV.skirtCornerZ - EPS && p[2] <= SHELL_TOP + EPS,
+          claimWorld(c - 0.8, c + 0.8, ly0, ly1, OHV.skirtCornerZ, SHELL_TOP));
+      }
       const crownZ = -(OHV.belowCrankCm - OHV.tunnelWallR); // the cast crown of the tunnel
       for (const sgn of [1, -1]) {
         const [y0, y1] = sgn > 0 ? [0, LUG.y1] : [-LUG.y1, 0]; // the cap bar reaches the full lug width

@@ -22,6 +22,15 @@ import { createPanel } from './ui/panel.js';
 import { createViewControls } from './ui/viewControls.js';
 import { SPEC, bankOut, bankUp } from './engine/spec.js';
 import { hudTitle } from './engine/layout.js';
+import { VARIANT_PARAM, setVariant, shellDatums, variantFromSearch } from './engine/variant.js';
+
+// Which build this page draws (issue #16, decision 2C): the address is the door a human
+// and test/screenshots.mjs both walk through, and the write goes through engine/variant.js
+// so SPEC.build.variant is one published fact rather than a field every caller pokes.
+// It happens before anything is named or drawn: the HUD title, the id plate and every
+// render factory read the switch.
+const variantChoice = variantFromSearch(globalThis.location?.search ?? '');
+setVariant(variantChoice.id);
 
 const container = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
@@ -71,10 +80,11 @@ const rim = new THREE.DirectionalLight(0xffc27a, 1.3);
 rim.position.set(-35, 20, 110);
 scene.add(rim);
 
-// floor is the XY plane at SPEC.stand.floorZ (world Z is up, see engine/spec.js);
-// the stand's feet sit exactly on it
+// floor is the XY plane the drawn variant's stand is built on (world Z is up, see
+// engine/spec.js and engine/variant.js shellDatums); the stand's feet sit exactly on it,
+// and a variant whose skirt reaches deeper moves the whole cell with it
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), materials.floorPlate);
-floor.position.z = SPEC.stand.floorZ;
+floor.position.z = shellDatums().floorZ;
 floor.receiveShadow = true;
 scene.add(floor);
 
@@ -161,6 +171,12 @@ const say = (msg) => {
   statusUntil = performance.now() + STATUS_HOLD_MS;
 };
 const panel = createPanel({ state, view, rig, say });
+
+// An address that asked for a build this tree does not publish gets the one it is drawn
+// with, and is told so on the line a reader is looking at rather than silently.
+if (variantChoice.rejected !== null) {
+  say(`variant "${variantChoice.rejected}" is not published - drawing ${SPEC.build.variant} (SPEC.variants publishes ${Object.keys(SPEC.variants).join(', ')})`);
+}
 
 // --- input: mouse orbit, wheel zoom, WASD + QE walk, R = RESET CAMERA --------
 // Every input is a GOAL for the rig; the loop chases it, which is what makes the
@@ -339,9 +355,16 @@ window.__v8 = {
   // to `v` + the package.json version, so the console stamp a reader sees and the version the
   // tag carries are one fact rather than a load-phase marker that drifts.
   SPEC,
-  SPEC,
   bankOut,
   bankUp,
+  /** the build this page draws, and the ones it can draw (issue #16 decision 2C): the
+   * gates and a reader name the same word the address uses. */
+  variant: () => SPEC.build.variant,
+  variants: () => Object.keys(SPEC.variants),
+  variantParam: VARIANT_PARAM,
+  /** what the address asked for that this tree does not publish, or null. The status line
+   * says it to the reader for its hold window; this is the fact that outlives it. */
+  variantRejected: () => variantChoice.rejected,
   THREE,
   renderer,
   scene,
