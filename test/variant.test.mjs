@@ -8,10 +8,12 @@
 // variants" half both wait on this.
 //
 // Decision 2C (recorded on issue #8): the variant is reached two ways through ONE
-// authority - a `?variant=` read in src/main.js so test/screenshots.mjs and a human
-// get the same build, and a control in the panel. These laws gate the authority and
-// the two shell guards that have to follow it; the panel control itself is the next
-// slice and is named as open here rather than assumed.
+// authority - a `?variant=` read in src/main.js so test/screenshots.mjs and a human get
+// the same build, and a control in the panel. These seven laws gate the authority, the two
+// shell guards that have to follow it, the shell accepting each build's engine, and
+// CUTAWAY / EXPLODED VIEW / ASSEMBLE / PART INSPECTION on both builds. The panel control
+// is the half this slice does not land; it is named open on issue #16 rather than assumed
+// here, and test/variant.smoke.mjs measures the address half in the live page.
 //
 // What is measured, not asserted: the cell floor is not a constant this shell may
 // reuse. src/engine/layout.js standDatums(id) shifts the whole stand by the depth the
@@ -67,6 +69,35 @@ function withVariant(id, body) {
   } finally {
     SPEC.build.variant = DEFAULT_ID;
   }
+}
+
+/**
+ * The engine, stand, camera and rig exactly as src/main.js hangs them together, for the
+ * build `id` names. The two shell laws share this builder so they measure the same world:
+ * the casting as the group every assembly joins, the variant's own stand beside it, the
+ * rig landed on the published home pose.
+ */
+function shellWorld(materials, id) {
+  const units = engineUnits(materials, id);
+  const engine = units.block;
+  engine.name = 'v8-block';
+  engine.add(units.cranktrain);
+  engine.add(units.valvetrain);
+  engine.add(createDrive(materials, id).group);
+  engine.add(units.heads);
+  engine.add(units.manifolds);
+  engine.add(createPlugs(materials).group);
+  engine.add(units.oil);
+  engine.add(units.coolant);
+  const scene = new THREE.Scene();
+  scene.add(engine);
+  const { group: stand } = createStand(materials, id);
+  stand.updateMatrixWorld(true);
+  scene.add(stand);
+  const camera = new THREE.PerspectiveCamera(SPEC.view.fov, 16 / 9, 0.5, 3000);
+  const rig = createCameraRig(camera);
+  rig.update(0);
+  return { units, engine, scene, stand, camera, rig };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,27 +216,7 @@ test('both builds assemble into the shell: no two drawn members share the name t
   const { shellDatums } = await authority('the assembled shell');
   const materials = proxyMaterials();
   const rows = ['dohc', 'ohv'].map((id) => {
-    // The engine exactly as src/main.js hangs it together: the casting as the group the
-    // assemblies join, the stand beside it, the rig on the published home pose.
-    const units = engineUnits(materials, id);
-    const engine = units.block;
-    engine.name = 'v8-block';
-    engine.add(units.cranktrain);
-    engine.add(units.valvetrain);
-    engine.add(createDrive(materials, id).group);
-    engine.add(units.heads);
-    engine.add(units.manifolds);
-    engine.add(createPlugs(materials).group);
-    engine.add(units.oil);
-    engine.add(units.coolant);
-    const scene = new THREE.Scene();
-    scene.add(engine);
-    const { group: stand } = createStand(materials, id);
-    stand.updateMatrixWorld(true);
-    scene.add(stand);
-    const camera = new THREE.PerspectiveCamera(SPEC.view.fov, 16 / 9, 0.5, 3000);
-    const rig = createCameraRig(camera);
-    rig.update(0);
+    const { engine, scene, stand, camera, rig } = shellWorld(materials, id);
 
     // PART INSPECTION and the explode chain address a member by its name, so a name two
     // drawn solids carry is not a cosmetic clash: src/ui/viewControls.js buildMembers
@@ -234,6 +245,60 @@ test('both builds assemble into the shell: no two drawn members share the name t
     return `${id}: ${seen.size} distinct member names, ${insp.length} inspectable members, floor ${shellDatums(id).floorZ.toFixed(4)}`;
   });
   console.log(`shell assembly: ${rows.join(' | ')}`);
+});
+
+test('CUTAWAY, EXPLODED VIEW and ASSEMBLE run on both builds, and the teardown stays off the floor of the build it shows', async () => {
+  const { shellDatums } = await authority('the view controls');
+  const materials = proxyMaterials();
+  const rows = ['dohc', 'ohv'].map((id) => {
+    const { engine, scene, stand, camera, rig } = shellWorld(materials, id);
+    let view = null;
+    try {
+      view = createViewControls({ engine, materials, rig, camera, scene, stand });
+    } catch (e) {
+      assert.fail(`${id}: createViewControls threw "${e.message}", so this build has no CUTAWAY, EXPLODED VIEW or PART INSPECTION at all`);
+    }
+
+    // CUTAWAY: one plane containing the crank axis. The axis is the line y 0, z 0, so a
+    // plane holding it carries no x in its normal and a zero constant.
+    view.setCutaway(true);
+    const cut = view.state();
+    assert.equal(cut.cutaway, true, `${id}: CUTAWAY did not engage`);
+    assert.ok(cut.cutawayPlane, `${id}: CUTAWAY engaged without publishing a section plane`);
+    const n = cut.cutawayPlane.normal;
+    assert.ok(Math.abs(n[0]) < 1e-9 && Math.abs(cut.cutawayPlane.constant) < 1e-9,
+      `${id}: the section plane normal ${JSON.stringify(n)} constant ${cut.cutawayPlane.constant.toFixed(4)} does not contain the crank axis (the line y 0, z 0), so this build is not being sectioned along its own axis`);
+    view.setCutaway(false);
+    assert.equal(view.state().cutaway, false, `${id}: CUTAWAY will not close`);
+
+    // EXPLODED VIEW: the chain runs to its goal, and the hoist derived from this
+    // variant's own floor keeps the whole teardown above that variant's plate.
+    view.explode();
+    for (let i = 0; i < 900 && view.state().fraction < 1; i++) view.update(1 / 60);
+    const ex = view.state();
+    assert.ok(ex.fraction > 0.999, `${id}: EXPLODED VIEW settles at fraction ${ex.fraction.toFixed(4)}, not fully open`);
+    assert.ok(ex.moved > 0, `${id}: EXPLODED VIEW moved ${ex.moved} members, so nothing came apart`);
+    const b = view.explodedBounds();
+    const floor = shellDatums(id).floorZ;
+    assert.ok(b.min[2] > floor, `${id}: the exploded assembly reaches down to z ${b.min[2].toFixed(4)}, through its own cell floor plate at ${floor.toFixed(4)} (src/engine/view.js explodeLift reads the floor the hoist lifts off)`);
+
+    // PART INSPECTION while the engine is taken apart - the row's inspectability clause.
+    const hit = view.inspectables().find((p) => p.name === 'main-shell-x11');
+    assert.ok(hit, `${id}: PART INSPECTION does not offer main-shell-x11 while the engine is exploded`);
+    const focused = view.focusPart(hit.name);
+    assert.ok(focused, `${id}: inspecting "${hit.name}" while exploded produced ${JSON.stringify(focused)}`);
+    assert.ok(focused.explode, `${id}: ${hit.name} is inspected but has no place in the teardown chain: ${JSON.stringify(focused.explode)}`);
+    view.clearInspect();
+
+    // ASSEMBLE: back to the installed datum with nothing left hanging.
+    view.assemble();
+    for (let i = 0; i < 900 && view.state().fraction > 1e-6; i++) view.update(1 / 60);
+    const rest = view.state();
+    assert.ok(rest.fraction < 1e-6, `${id}: ASSEMBLE leaves the teardown at fraction ${rest.fraction.toFixed(6)}`);
+    assert.ok(same(rest.engineZ, 0), `${id}: ASSEMBLE leaves the casting hoisted ${rest.engineZ.toFixed(4)} cm off its installed datum`);
+    return `${id}: cutaway plane ${JSON.stringify(n)} c ${cut.cutawayPlane.constant.toFixed(3)}, ${ex.moved} members exploded to z ${b.max[2].toFixed(2)} with its lowest face at ${b.min[2].toFixed(2)} above floor ${floor.toFixed(2)}, assembled at fraction ${rest.fraction.toFixed(6)}`;
+  });
+  console.log(`view controls on both builds: ${rows.join(' | ')}`);
 });
 
 test('the explode hoist lifts off the floor of the variant it draws, so the same chain needs the same lift', async () => {
