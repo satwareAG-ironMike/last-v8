@@ -562,6 +562,13 @@ test('the recorded spark tip line carries the region and its verdicts, and the m
   const dDef = src.slice(dAt, src.indexOf('`;', dAt));
   for (const part of ['${t.disc.mean}', '${t.disc.ringMean}'])
     assert.ok(dDef.includes(part), `tipDetail dropped ${part}:\n  ${dDef}`);
+  // The word and its label need a boundary. Measured at bf6464f the guard printed
+  // `  detaillit 1/10 disc mean 187.92 over 13 px, ring mean 41.37 over 56 px, disc against ring
+  // true` (tmp/v8-8f5d-detail.out:67-69): `detail` runs into the label, so the line has no field
+  // between them - the reader built to quote these readings (tmp/8f5c-quote.py) matched 0 of the
+  // 3 lines it needs with `^\s+detail\s+(lit 1/(10|50)|off)\s`.
+  assert.ok(/^const tipDetail = \([^)]*\) => `detail \$\{label\}/.test(dDef),
+    `tipDetail welds the word to its label, so the --detail tip line has no field boundary:\n  ${dDef}`);
   const lines = src.split('\n');
   let calls = 0;
   for (let i = 0; i < lines.length; i++) {
