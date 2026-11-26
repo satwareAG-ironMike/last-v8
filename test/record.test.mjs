@@ -387,7 +387,16 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   for (const call of ['firingProgress(', 'sparkAngle(', 'totalAdvance('])
     assert.ok(src.includes(call), `the gate never calls ${call}, so the burn window, the spark instant or the advance it expects is typed here instead of read from the module that publishes it`);
   assert.ok(src.includes('SPEC.plug.glowR'), 'the region the flash is measured in is not derived from the published glow sphere (SPEC.plug.glowR), so a pixel box was invented here');
-  assert.ok(src.includes('shots.sparkLit.pixels.hash !== shots.sparkSlow.pixels.hash'), 'the gate does not compare the 1/10 picture with the 1/50 picture, so a flash that depends on the wall clock instead of the crank angle would pass');
+  // Amended after measuring (tmp/spark-probe20.mjs -> tmp/spark-probe20.out): two renders of ONE
+  // pinned pose at ONE speed already differ on 21 of 101626 sampled pixels (worst luminance
+  // delta 35) and two renders at 1/50 differ on 82, so demanding one hash for both spark frames
+  // is not a claim this product's rasteriser can be held to - this gate's own determinism law
+  // compares against published floors (0.5% of samples, delta 60) for exactly that reason. The
+  // claim row P1-G6 makes is about the flash, and the flash is measured bit-exact: disc 187.92
+  // against ring 41.42 at 1/10 and the same numbers at 1/50 (tmp/v8-8f4-shots1.out).
+  assert.ok(src.includes('shots.sparkSlow.pixels.diff'), 'the gate does not compare the 1/10 picture with the 1/50 picture sample to sample, so a flash that depends on the wall clock instead of the crank angle would pass');
+  assert.ok(/compareLine\('spark pair 1\/10 vs 1\/50/.test(src), 'the spark pair is compared without a published floor to state, so the record would print counts a reviewer cannot re-derive (issue #43)');
+  assert.ok(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)/.test(src), "the gate never requires the flash's measured light to be the same number at 1/10 as at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes");
   assert.ok(/\.disc\.mean > /.test(src) && src.includes('.disc.ringMean'), 'the gate never compares the lit tip against the ring around it, so "visible in CUTAWAY" is never measured');
   assert.ok(src.includes('off.disc.mean'), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
 });
