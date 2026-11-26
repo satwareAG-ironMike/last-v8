@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
  *  pose `0 differing, worst luminance delta 0` against `120 differing, worst luminance
  *  delta 23` - every one inside the published tolerances, so none of them is a fact
  *  about the pose. */
-export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls', 'differing', 'pct', 'maxDelta', 'meanDelta'];
+export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls', 'differing', 'pct', 'maxDelta', 'meanDelta', 'litSpan'];
 
 /** Shots the gate captures at a live rpm instead of at a pinned crank angle. Their
  *  picture is a function of where the animation stood when the shutter opened, so
@@ -52,8 +52,16 @@ const PROCESS_HANDLE = /0x[0-9a-f]{6,}/gi;
  * compare is the coverage against the published floor, so the line states that verdict and
  * detailLine keeps the number.
  *
- * A shot taken at a live rpm has no pose, so its luminance trio and lit span are stopwatch
- * readings in the same sense (tmp/nc8f3b-restored-a.out `lit 27.6%` against
+ * The lit span left the line for the same reason (slice 8F-5b). Two runs of the gate at one head
+ * differed on exactly one line - `shot ohv-exploded ... lit span 513x1194` against `573x1194`
+ * (tmp/v8-8f5-pair-a.out against tmp/v8-8f5-pair-b.out) - because the span is the bounding box of
+ * pixels over the lit threshold (test/screenshots.mjs:480), and one sparse pixel at the extremity
+ * of an exploded view crossing the threshold moves the box by 60 rows. No law of this gate
+ * compares it; the claim it used to carry - that the gate's views are different pictures - is now
+ * printed as the verdict the gate's own seven picture comparisons reach.
+ *
+ * A shot taken at a live rpm has no pose, so its luminance trio is a stopwatch
+ * reading in the same sense (tmp/nc8f3b-restored-a.out `lit 27.6%` against
  * tmp/nc8f3b-restored-b.out `lit 27.7%`, ceilings 250.9 against 249.1): a live-rpm line
  * states the verdicts and nothing else. The floors come from the caller, which is where the
  * gate holds them.
@@ -67,16 +75,17 @@ export const shotLine = (name, s, floors = {}) => {
   assert(cleared.length, 'shotLine was given a shot and no published floor to state');
   if (LIVE_POSE.includes(name))
     return `${base}, clears the published floors (${cleared.join(', ')}) (live rpm, pose not pinned)`;
-  return format('%s, clears the published floors (%s), luminance %s..%s contrast %s, lit span %dx%d',
-    base, cleared.join(', '), s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
+  return format('%s, clears the published floors (%s), luminance %s..%s contrast %s',
+    base, cleared.join(', '), s.pixels.min, s.pixels.max, s.pixels.contrast);
 };
 
 /** The volatile extras, for a human reading the gate rather than for a record. The lit
  *  coverage sits here too since 8F-5: it is a rendered-frame reading, not a fact about the
  *  pose, and the record states its verdict instead. */
 export const detailLine = (name, s) => format(
-  'detail %s %d bytes, pixel hash %d, mean %s, lit %s%%, draw calls %d',
-  name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, (s.pixels.litFraction * 100).toFixed(1), s.pixels.drawCalls,
+  'detail %s %d bytes, pixel hash %d, mean %s, lit %s%%, lit span %dx%d, draw calls %d',
+  name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, (s.pixels.litFraction * 100).toFixed(1),
+  s.pixels.litSpan.rows, s.pixels.litSpan.cols, s.pixels.drawCalls,
 );
 
 /** One pixel comparison of two renders, printed as the verdict its laws state against

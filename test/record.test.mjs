@@ -95,9 +95,10 @@ test('the default shot line carries only what a law compares, and two runs of on
 test('the gate records the view-distinctness verdict its own comparisons reach', () => {
   const src = readFileSync('test/screenshots.mjs', 'utf8');
   const lines = src.split('\n');
-  const def = lines.find((l) => l.includes('const viewsDiffer ='));
-  assert.ok(def, 'the gate compares its pictures in seven separate if-statements and never records the verdict they reach');
-  assert.ok(/same picture/.test(def), `the shared comparison does not name what it is looking for:\n  ${def}`);
+  const at = lines.findIndex((l) => l.includes('const viewsDiffer ='));
+  assert.ok(at >= 0, 'the gate compares its pictures in seven separate if-statements and never records the verdict they reach');
+  const def = lines.slice(at, at + 5).join('\n');
+  assert.ok(/shots\[a\]\.pixels\.hash === shots\[b\]\.pixels\.hash/.test(def), `the shared comparison does not actually compare the two pictures' pixels:\n  ${def}`);
   const calls = lines.filter((l) => /viewsDiffer\(/.test(l) && !l.includes('const viewsDiffer ='));
   assert.ok(calls.length >= 7, `the gate registers ${calls.length} picture comparisons, so the record's claim that its views differ covers fewer pictures than the gate takes`);
   for (const l of calls) {
@@ -491,7 +492,7 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   assert.ok(/lit\.disc\.mean > lit\.disc\.ringMean/.test(src), 'the gate never compares the lit tip against the ring of pixels around it, so "visible in CUTAWAY" is never measured');
   assert.ok(/lit\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
   assert.ok(/slow\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never requires the flash to read at the clamp floor 1/50 as well as at 1/10, so a flash that only survives at one frame rate would pass');
-  assert.ok(/shots\.sparkLit\.pixels\.hash === shots\.sparkOff\.pixels\.hash/.test(src), 'the gate never compares the lit picture with the picture past the burn window, so a flash that changes nothing on screen would pass');
+  assert.ok(/viewsDiffer\('sparkLit', 'sparkOff'/.test(src), 'the gate never compares the lit picture with the picture past the burn window, so a flash that changes nothing on screen would pass');
 });
 
 // Slice 8F-5, measured on the same pair the law above names. The tip line printed the disc and

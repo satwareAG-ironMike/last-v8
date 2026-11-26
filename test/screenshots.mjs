@@ -636,7 +636,17 @@ const takeSettle = (evalJs) => async () => {
     throw new Error(`the view transition did not reach its goal: settleView() returned fraction ${settled} against goal ${st.goal}`);
   return st;
 };
+const distinctPairs = [];
+let viewsAlike = 0;
+/** Two shots taken at different poses must not come out as the same picture. Every pair this
+ *  gate compares is recorded, so the verdict the comparisons reach - not the lit span that used
+ *  to stand in for it - is what lands in the record (slice 8F-5b). */
+const viewsDiffer = (a, b, samePicture) => {
+  distinctPairs.push(`${a} vs ${b}`);
+  if (shots[a].pixels.hash === shots[b].pixels.hash) { viewsAlike += 1; samePicture(); }
+};
 const finish = () => {
+  console.log(`views distinct: ${distinctPairs.length} pairs of this gate's pictures compared, ${viewsAlike} came out the same picture`);
   if (bad.length) {
     console.log('\nSHOTS INCOMPLETE:');
     for (const b of bad) console.log('  ' + b);
@@ -931,8 +941,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   await settle();
   await pin(0);
   shots.cutaway = { ...(await shot('08-cutaway.png')), pixels: await evalJs(`(${PIXELS})`), theta: 0 };
-  if (shots.home.pixels.hash === shots.cutaway.pixels.hash)
-    bad.push('CUTAWAY changed no pixel: the section is not visible in the picture');
+  viewsDiffer('home', 'cutaway', () => bad.push('CUTAWAY changed no pixel: the section is not visible in the picture'));
 
   // The same section at the OPPOSITE dead centres: at crank 0 cylinder 1 is at top dead
   // centre and cylinder 4 at bottom dead centre; at crank 180 they swap. Two shots of the
@@ -941,8 +950,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // claims it is - and the pair is compared only after both pictures exist.
   await pin(180);
   shots.bdc = { ...(await shot('09-cutaway-tdc-bdc.png')), pixels: await evalJs(`(${PIXELS})`), theta: 180 };
-  if (shots.cutaway.pixels.hash === shots.bdc.pixels.hash)
-    bad.push('the two cutaway shots at crank 0 and crank 180 produced the same picture: the pistons did not travel to the opposite dead centres');
+  viewsDiffer('cutaway', 'bdc', () => bad.push('the two cutaway shots at crank 0 and crank 180 produced the same picture: the pistons did not travel to the opposite dead centres'));
 
   // How far apart the two dead centres are IN THE PICTURE, measured sample to sample
   // against the crank 0 cutaway read that immediately preceded this one (PIXELS keeps
@@ -1085,8 +1093,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   await evalJs(`window.__v8.focusCameraOn(new window.__v8.THREE.Vector3(${fb.center.join(',')}), ${(span * 1.35).toFixed(2)}); "ok"`);
   await settle();
   shots.fluids = { ...(await shot('13-cutaway-fluids.png')), pixels: await evalJs(`(${PIXELS})`) };
-  if (shots.fluids.pixels.hash === shots.cutaway.pixels.hash)
-    bad.push('the fluid capture produced the same picture as the plain cutaway: the framing never reached the galleries');
+  viewsDiffer('fluids', 'cutaway', () => bad.push('the fluid capture produced the same picture as the plain cutaway: the framing never reached the galleries'));
   await resetView();
   await settle();
 
@@ -1137,8 +1144,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (!(apart.worstNdc <= 1))
     bad.push(`the separated assembly is cropped on screen: its farthest corner projects to ${apart.worstNdc} in ndc`);
   if (apart.moved === 0) bad.push('EXPLODED VIEW moved 0 members');
-  if (shots.exploded.pixels.hash === shots.home.pixels.hash)
-    bad.push('the separated assembly produced the same picture as the assembled one');
+  viewsDiffer('exploded', 'home', () => bad.push('the separated assembly produced the same picture as the assembled one'));
   console.log(`spread law: assembled ${home.join(' x ')} cm -> exploded ${apart.span.join(' x ')} cm, worst corner ndc ${apart.worstNdc}, ${apart.moved} members hoisted ${apart.engineZ} cm`);
   await evalJs('window.__v8.assemble(); "ok"');
   await settle();
@@ -1337,8 +1343,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
   await settle();
   await pin(0);
   shots['ohv-cutaway'] = { ...(await shot('15-ohv-cutaway.png')), pixels: await evalJs(`(${PIXELS})`) };
-  if (shots['ohv-cutaway'].pixels.hash === shots.ohv.pixels.hash)
-    bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one');
+  viewsDiffer('ohv-cutaway', 'ohv', () => bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one'));
   await evalJs('window.__v8.cutaway(false); window.__v8.explode(); "ok"');
   await settle();
   const ohvView = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
@@ -1346,8 +1351,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     bad.push(`ohv: EXPLODED left the OHV build where it stood (${JSON.stringify(ohvView)})`);
   await pin(0);
   shots['ohv-exploded'] = { ...(await shot('16-ohv-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
-  if (shots['ohv-exploded'].pixels.hash === shots.ohv.pixels.hash)
-    bad.push('ohv: the separated OHV build produced the same picture as the assembled one');
+  viewsDiffer('ohv-exploded', 'ohv', () => bad.push('ohv: the separated OHV build produced the same picture as the assembled one'));
   for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('ohv'))) {
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
     if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
@@ -1549,8 +1553,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     bad.push(`plug-cyl${sparkCyl.num} reads ${lit.disc.mean} at its spark instant and ${off.disc.mean} past its burn window: a glow that simply stands there lit would pass this row otherwise`);
   if (!(slow.disc.mean > off.disc.mean))
     bad.push(`plug-cyl${sparkCyl.num} at 1/50 reads ${slow.disc.mean} against ${off.disc.mean} past the window: the flash does not read at the clamp floor either`);
-  if (shots.sparkLit.pixels.hash === shots.sparkOff.pixels.hash)
-    bad.push('the lit spark frame and the frame past the burn window produced the same picture: the flash changed nothing on screen');
+  viewsDiffer('sparkLit', 'sparkOff', () => bad.push('the lit spark frame and the frame past the burn window produced the same picture: the flash changed nothing on screen'));
 
   for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('spark'))) {
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
