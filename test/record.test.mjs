@@ -49,7 +49,7 @@ test('the default shot line carries only what a law compares, and two runs of on
     assert.ok(!a.includes(raw), `the default shot line prints the volatile ${field} (${raw}):\n  ${a}`);
   }
   // the numbers the shot laws actually compare stay in the line
-  for (const part of ['1278x798', '6.4', '244.1', '237.7', '339624'])
+  for (const part of ['1278x798', '339624'])
     assert.ok(a.includes(part), `the default shot line dropped the measured ${part}:\n  ${a}`);
   // Amended again after measuring (slice 8F-5b): the lit span is a rendered-frame reading too.
   // Two runs of `node test/screenshots.mjs` at 1c87dcb differed on exactly one line -
@@ -58,8 +58,9 @@ test('the default shot line carries only what a law compares, and two runs of on
   // - 60 rows of the bounding box of lit pixels, which is the extremity of a threshold: one
   // sparse pixel crossing it moves the box (test/screenshots.mjs:480 computes rows/cols as
   // r1-r0 / c1-c0). No law of this gate compares the span, so it is not a fact the record may
-  // carry. The luminance trio stays: it is what the flatness law reads (contrast > 0) and it has
-  // been identical in every recorded pair measured so far.
+  // carry. (What this law used to claim about the luminance trio - that it "has been identical
+  // in every recorded pair measured so far" - is falsified by slice 8F-5c below: the trio moved
+  // too, and it is the same class of reading.)
   assert.ok(!/lit span/.test(a), `the default shot line prints the lit span, a bounding box no run reproduces:\n  ${a}`);
 
   // Amended after measuring (issue #43 slice 8F-5). The fixture above moves litFraction in
@@ -79,7 +80,25 @@ test('the default shot line carries only what a law compares, and two runs of on
   assert.equal(one, two, `the pinned shot line printed the lit coverage of two renders of one pose:\n  ${one}\n  ${two}`);
   assert.ok(/at least 1000 pixels sampled/.test(one) && /at least 5% lit/.test(one) && /not flat/.test(one),
     `the pinned shot line states no verdict for the coverage its laws compare, so the record carries a number no run reproduces and no law reads either:\n  ${one}`);
-  for (const part of ['1280x713', '101626', '0..255', '255 contrast'])
+  // Amended a second time by slice 8F-5c, on the pair this slice was going to publish: two
+  // runs at ea41c2c both printed `SHOTS OK` at exit 0 and still differed, on
+  //   tmp/v8-8f5c-pair-a.out  shot fluids ... luminance 0..251.2 contrast 251.2
+  //   tmp/v8-8f5c-pair-b.out  shot fluids ... luminance 0..253.9 contrast 253.9
+  // - 2.7 points on the ceiling of a PINNED pose, on a shot whose camera is snapped
+  // (src/ui/cameraRig.js:148 focusOn sets el = elGoal) and whose pose is pinned at crank 0
+  // with rpm 0. The ceiling is `max` over the sampled grid (test/screenshots.mjs:478), i.e.
+  // the brightest pixel that happens to land on the grid: the gate's own determinism law
+  // measures up to 120 of 101626 samples flipping between two renders of one pose, and a
+  // specular highlight at the sampling boundary is exactly the case that moves a max. No law
+  // of this gate compares min or max - the only luminance law is `contrast <= 0` (flatness),
+  // a verdict - so the trio is a third reading of the same class as the coverage and the span.
+  const trio = (max) => ({ pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.38, min: 0, max, contrast: max, mean: 40.1, hash: 2501190001, litSpan: { rows: 711, cols: 1278 }, drawCalls: 300 } });
+  const trioA = shotLine('fluids', trio(251.2), floors);
+  const trioB = shotLine('fluids', trio(253.9), floors);
+  assert.equal(trioA, trioB, `the pinned shot line printed the luminance ceiling two renders of one pose did not reproduce:\n  ${trioA}\n  ${trioB}`);
+  assert.ok(!/luminance \d/.test(trioA), `the pinned shot line prints the luminance trio, a min/max/contrast a run does not reproduce and no law compares:\n  ${trioA}`);
+  assert.ok(!/contrast \d/.test(trioA), `the pinned shot line prints a contrast number instead of the flatness verdict its one luminance law reaches:\n  ${trioA}`);
+  for (const part of ['1280x713', '101626'])
     assert.ok(one.includes(part), `the pinned shot line dropped the measured ${part}:\n  ${one}`);
   assert.ok(!/lit \d/.test(one), `the pinned shot line still prints the lit coverage:\n  ${one}`);
   assert.ok(!/lit span/.test(one), `the pinned shot line still prints the lit span:\n  ${one}`);
@@ -113,7 +132,10 @@ test('the volatile numbers stay readable, behind detailLine only', () => {
   const d = detailLine('cutaway', SHOT_A);
   for (const part of ['307534', '2459187896', '34.523', '412', '640x1100'])
     assert.ok(d.includes(part), `detailLine dropped ${part}:\n  ${d}`);
-  assert.ok(VOLATILE.includes('litSpan'), 'VOLATILE does not name the lit span, so nothing in this suite says the bounding box left the record');
+  assert.ok(/luminance 6\.4\.\.244\.1 contrast 237\.7/.test(d),
+    `detailLine does not carry the luminance trio the shot line just lost:\n  ${d}`);
+  for (const field of ['litSpan', 'min', 'max', 'contrast'])
+    assert.ok(VOLATILE.includes(field), `VOLATILE does not name ${field}, so nothing in this suite says it left the record`);
 });
 
 test('a per-process GL driver handle normalizes to one stable token', () => {
