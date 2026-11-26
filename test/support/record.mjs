@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
  *  pose `0 differing, worst luminance delta 0` against `120 differing, worst luminance
  *  delta 23` - every one inside the published tolerances, so none of them is a fact
  *  about the pose. */
-export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls', 'differing', 'pct', 'maxDelta', 'meanDelta', 'litSpan'];
+export const VOLATILE = ['bytes', 'hash', 'mean', 'drawCalls', 'differing', 'pct', 'maxDelta', 'meanDelta', 'litSpan', 'min', 'max', 'contrast'];
 
 /** Shots the gate captures at a live rpm instead of at a pinned crank angle. Their
  *  picture is a function of where the animation stood when the shutter opened, so
@@ -39,8 +39,22 @@ export const LIVE_POSE = ['running'];
 const PROCESS_HANDLE = /0x[0-9a-f]{6,}/gi;
 
 /**
- * The stable shot line: buffer, sample count, the verdict the shot's own floors reach, and
- * for a pinned pose the luminance floor/ceiling/contrast and the lit span.
+ * The stable shot line: buffer, sample count and the verdicts the shot's own floors reach.
+ * Nothing else - not the coverage, not the lit span, not the luminance trio.
+ *
+ * The luminance min/max/contrast left the line (slice 8F-5c). Two runs of the gate at one head,
+ * both `SHOTS OK` at exit 0, differed on one line: `shot fluids ... luminance 0..251.2 contrast
+ * 251.2` against `0..253.9 contrast 253.9` (tmp/v8-8f5c-pair-a.out against
+ * tmp/v8-8f5c-pair-b.out). That shot's pose is pinned at crank 0 with rpm 0 and its camera is
+ * snapped (src/ui/cameraRig.js:148), so the picture is a function of the pose alone; the ceiling
+ * is `max` over the sampled grid (test/screenshots.mjs:478), and this gate's own determinism law
+ * publishes up to 120 of 101626 samples flipping between two renders of one pose. No law of this
+ * gate compares min or max - the only luminance law is `contrast <= 0`, a verdict the line states
+ * as `not flat`.
+ *
+ * Slice 8F-5b's claim that the trio "has been identical in every recorded pair measured so far"
+ * was true of the pairs measured then and is falsified by this one; it is corrected here rather
+ * than left standing.
  *
  * The lit coverage percentage is not in it. It is a reading of a rendered frame, and slice
  * 8F-5 measured a PINNED pose moving: `shot inspect ... lit 38.0%` against `lit 38.1%` for
@@ -75,17 +89,18 @@ export const shotLine = (name, s, floors = {}) => {
   assert(cleared.length, 'shotLine was given a shot and no published floor to state');
   if (LIVE_POSE.includes(name))
     return `${base}, clears the published floors (${cleared.join(', ')}) (live rpm, pose not pinned)`;
-  return format('%s, clears the published floors (%s), luminance %s..%s contrast %s',
-    base, cleared.join(', '), s.pixels.min, s.pixels.max, s.pixels.contrast);
+  return `${base}, clears the published floors (${cleared.join(', ')})`;
 };
 
-/** The volatile extras, for a human reading the gate rather than for a record. The lit
- *  coverage sits here too since 8F-5: it is a rendered-frame reading, not a fact about the
- *  pose, and the record states its verdict instead. */
+/** The volatile extras, for a human reading the gate rather than for a record. Everything a
+ *  rendered frame can be asked and does not answer twice sits here: the PNG byte count, the
+ *  pixel hash, the mean, the draw calls, the lit coverage (8F-5), the lit span (8F-5b) and the
+ *  luminance trio (8F-5c). The record states the verdict each of those numbers' law reaches. */
 export const detailLine = (name, s) => format(
-  'detail %s %d bytes, pixel hash %d, mean %s, lit %s%%, lit span %dx%d, draw calls %d',
+  'detail %s %d bytes, pixel hash %d, mean %s, lit %s%%, lit span %dx%d, luminance %s..%s contrast %s, draw calls %d',
   name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, (s.pixels.litFraction * 100).toFixed(1),
-  s.pixels.litSpan.rows, s.pixels.litSpan.cols, s.pixels.drawCalls,
+  s.pixels.litSpan.rows, s.pixels.litSpan.cols, s.pixels.min, s.pixels.max, s.pixels.contrast,
+  s.pixels.drawCalls,
 );
 
 /** One pixel comparison of two renders, printed as the verdict its laws state against

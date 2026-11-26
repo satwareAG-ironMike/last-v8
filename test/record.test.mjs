@@ -173,9 +173,14 @@ test('a shot taken at a live rpm prints only what its laws compare, because its 
     assert.ok(a.includes(part), `the live-rpm shot line dropped the measured ${part}:\n  ${a}`);
   assert.ok(/at least 5% lit/.test(a) && /at least 1000 pixels sampled/.test(a),
     `the live-rpm shot line states no published floor, so it records a number no law can re-derive and no verdict either:\n  ${a}`);
-  // and a pinned pose keeps its full set
+  // and a pinned pose keeps the same set: since slice 8F-5c the two forms differ only in the
+  // live-rpm note. The earlier version of this assertion demanded `luminance 0..241.2 contrast
+  // 241.2` in the pinned line; slice 8F-5c measured that ceiling move 251.2 -> 253.9 for a
+  // pinned pose (tmp/v8-8f5c-pair-a.out against tmp/v8-8f5c-pair-b.out), so it is not a fact
+  // either form may carry.
   const p = shotLine('cutaway', { pixels: { w: 1280, h: 713, samples: 101626, litFraction: 0.271, min: 0, max: 241.2, contrast: 241.2, litSpan: { rows: 672, cols: 1011 } } });
-  assert.ok(p.includes('luminance 0..241.2 contrast 241.2'), `the pinned shot line dropped its luminance trio:\n  ${p}`);
+  assert.ok(!/luminance \d/.test(p) && !/contrast \d/.test(p), `the pinned shot line prints the luminance trio:\n  ${p}`);
+  assert.ok(p.includes('not flat'), `the pinned shot line dropped the flatness verdict its one luminance law reaches:\n  ${p}`);
   // the live-rpm set must be exactly the shots the gate takes with the animation
   // running: the nearest preceding pin() is followed by a start() for a live shot
   const src = readFileSync('test/screenshots.mjs', 'utf8');
@@ -186,6 +191,22 @@ test('a shot taken at a live rpm prints only what its laws compare, because its 
     const between = src.slice(Math.max(0, pinAt), at);
     assert.ok(/start\(\)/.test(between), `the gate never starts the animation before shot "${name}", so it is not a live-rpm shot`);
     assert.ok(!/setSlowmo\((?!1\))/.test(between), `the gate slows the animation down before shot "${name}"`);
+  }
+});
+
+// Slice 8F-5c. The trio left the record and the flatness verdict took its place, so the verdict
+// has to be backed by the measurement: every shot line the gate prints must sit in a block that
+// actually reads `contrast` against zero. A record that prints `not flat` without measuring it is
+// the dead-gate class this ledger already names, wearing the shape of a verdict.
+test('every shot line the gate prints is backed by the flatness measurement it states', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  const lines = src.split('\n');
+  const calls = lines.map((l, i) => ({ l, i })).filter(({ l }) => /console\.log\(shotLine\(/.test(l));
+  assert.ok(calls.length >= 3, `the gate prints ${calls.length} recorded shot lines; the three shot-law blocks (default, ohv, spark) should each print one`);
+  for (const { i } of calls) {
+    const block = lines.slice(Math.max(0, i - 12), i).join('\n');
+    assert.ok(/pixels\.contrast <= 0/.test(block),
+      `the shot line at line ${i + 1} prints the verdict "not flat" while the 12 lines above it never read contrast against zero:\n  ${lines[i]}`);
   }
 });
 
