@@ -1129,10 +1129,13 @@ test(`${OHV_LAW}: the switch is published, names exactly two variants, and every
     assert.equal(L.lobes(id) % L.cams(id), 0, `${id}: the ${L.lobes(id)} lobes have to divide evenly over ${L.cams(id)} cam(s)`);
   }
   assert.equal(L.lobes('ohv'), 16, 'the addendum names a central 16-lobe cam');
-  assert.deepEqual(L.followers('dohc'), { lifters: 0, pushrods: 0, rockers: 0, covers: 0 },
-    'the DOHC build rides lobes and buckets: it casts and draws no lifters, pushrods, rockers or rocker covers');
-  assert.deepEqual(L.followers('ohv'), { lifters: 16, pushrods: 16, rockers: 16, covers: 2 },
-    'the OHV build owes one lifter, one pushrod and one rocker per valve, and one cover per bank');
+  assert.deepEqual(L.followers('dohc'), { lifters: 0, pushrods: 0, rockers: 0, covers: 0, valves: 16, springs: 16 },
+    'the DOHC build rides lobes and buckets: it casts and draws no lifters, pushrods, rockers or rocker '
+    + 'covers, and it does owe the 16 valves and 16 springs it draws');
+  assert.deepEqual(L.followers('ohv'), { lifters: 16, pushrods: 16, rockers: 16, covers: 2, valves: 16, springs: 16 },
+    'the OHV build owes one lifter, one pushrod and one rocker per valve, one cover per bank, and the '
+    + '16 valves and 16 springs its head seats: issue #51 option B publishes the valve families as '
+    + 'owed so the gap the screenshot gate counts is a declared gap of this variant');
   assert.throws(() => L.cams('flathead'), /unknown build variant "flathead"/,
     'a switch value nobody published has to be refused by name, not answered with a silent default');
   console.log(`${OHV_LAW} counts: switch ${SPEC.build.variant}; dohc ${L.cams('dohc')} cams / ${L.lobes('dohc')} lobes / `
@@ -1290,8 +1293,21 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
     assert.ok(p.why && p.why.length > 10, `pendingHardware family "${p.family}" names no reason a reader can check`);
   }
   const named = pending.map((p) => p.family).sort();
-  assert.deepEqual([...named].sort(), ['covers', 'pushrods', 'rockers'],
-    `pendingHardware has to name exactly the follower families the OHV build does not draw, measured ${named.join(', ')}`);
+  assert.deepEqual([...named].sort(), ['covers', 'pushrods', 'rockers', 'springs', 'valves'],
+    `pendingHardware has to name exactly the valvetrain families the OHV build does not draw, measured ${named.join(', ')}`);
+  // issue #51 option B: the screenshot gate counts `0 valve meshes and 0 springs drawn for 8
+  // cylinders` on every OHV run. A gap the gate measures has to be a family this variant's own
+  // spec names as owed, with a reason a reader can check - and the reason is the rocker iron
+  // #45 measured missing, because a valve with no rocker has nothing pushing it.
+  for (const family of ['valves', 'springs']) {
+    const p = pending.find((e) => e.family === family);
+    assert.ok(p, `the OHV build draws no ${family} and pendingHardware does not name them either: `
+      + 'the gap the screenshot gate counts would be silent in the spec and in the record');
+    assert.ok(/rocker/i.test(p.why), `pendingHardware names "${family}" owed without naming the rocker `
+      + `iron that is the reason (${p.why})`);
+    assert.ok(/#51|#45/.test(p.issue), `the "${family}" family is tied to ${p.issue}; the issue that `
+      + 'measures this gap is #51 and the iron it waits on is #45');
+  }
 
   // the DOHC build beside it: four camshafts, buckets, and no lifter in it
   const dohc = (await buildValvetrain('dohc')).group;
@@ -1320,7 +1336,7 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
   assert.deepEqual(lifters.sort(), bores,
     `the lifters drawn in the OHV valve train (${lifters.length}: ${lifters.slice(0, 3).join(', ')}...) have to be exactly the ${bores.length} bores the block machines`);
   assert.equal(lifters.length, owed.lifters, `the OHV build draws ${lifters.length} lifters for the ${owed.lifters} its own contract counts`);
-  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover']) {
+  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'valve-', 'spring']) {
     let hits = 0;
     ohv.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
     assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: `
