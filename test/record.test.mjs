@@ -265,3 +265,18 @@ test('the screenshot gate boots the OHV build through the address, not only the 
   for (const f of ['14-ohv.png', '15-ohv-cutaway.png', '16-ohv-exploded.png'])
     assert.ok(src.includes(f), `the gate writes no ${f}: the OHV build is never pictured in CUTAWAY or EXPLODED`);
 });
+
+test('the OHV pass prints its valvetrain census and names the valve and spring gap it measures', () => {
+  const src = readFileSync('test/screenshots.mjs', 'utf8');
+  // The pass measured 0 valves and 0 springs in the OHV build while
+  // SPEC.variants.ohv.pendingHardware names only pushrods, rockers and covers. The gap
+  // belongs in the record a reader can re-derive, not in a comment.
+  assert.ok(/ohv valvetrain: /.test(src), 'the gate writes no OHV valvetrain census line');
+  const census = (src.match(/console\.log\(`ohv valvetrain: [^\n]*/g) || []);
+  assert.equal(census.length, 1, `the gate prints ${census.length} OHV census lines, expected one`);
+  for (const field of ['lifters', 'gallery', 'journals', 'lobes', 'necks', 'valves', 'springs'])
+    assert.ok(census[0].includes(`\${ohv.counts.${field}}`), `the OHV census does not count ${field}`);
+  assert.ok(/SPEC\.variants\.ohv\.pendingHardware/.test(src), 'the OHV pass never reads the pending hardware this build publishes');
+  assert.ok(/ohv undeclared gap/.test(src), 'the gate does not name the valve and spring gap it measured');
+  assert.ok(/pendingOhv\.some\(\(f\) => \/valve\|spring\/i\.test\(f\)\)/.test(src), 'the gap clause does not check the published pending list for a valve or spring family');
+});

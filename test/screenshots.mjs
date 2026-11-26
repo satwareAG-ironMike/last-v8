@@ -31,6 +31,11 @@ import { crankEvent, eventMid } from '../src/engine/timing.js';
 // published table of additive light families. Read from the module rather than
 // typed here, so the gate and the renderer cannot drift apart.
 import { GLOW_SPECS } from '../src/render/materials.js';
+// The authorities for the second build this gate boots (row A1-G5 "in DOHC and in OHV",
+// row P1-G6 "the OHV valvetrain in CUTAWAY and EXPLODED"). Read from the modules that
+// publish them, so the gate never types a count the engine already owns.
+import { ohvBearings, ohvLifterGallery, ohvLifters, standDatums } from '../src/engine/layout.js';
+import { ohvCamLayout } from '../src/engine/ohv.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -581,18 +586,40 @@ const FLUIDS = `(async () => {
   };
 })()`;
 
+// One finding list and one shot table for every build this gate boots - the default and
+// `/?variant=ohv` - because rows A1-G5 ("... in DOHC and in OHV") and P1-G6 ("the OHV
+// valvetrain in CUTAWAY and EXPLODED") pin their CHECK string with
+// gate-sig=c5527127c3f7ff77: the OHV pass cannot be a second script, and the verdict text
+// below is the one those rows cite, so it stays word for word.
+const bad = [];
+const shots = {};
+const takeShot = (capture) => async (file) => {
+  const png = await capture();
+  const path = join(ROOT, 'shots', file);
+  writeFileSync(path, png);
+  return { path, bytes: png.length };
+};
+const finish = () => {
+  if (bad.length) {
+    console.log('\nSHOTS INCOMPLETE:');
+    for (const b of bad) console.log('  ' + b);
+    console.log(`shots: ${Object.keys(shots).length} written, laws sampled at ${ANGLES.length} pinned crank angles`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    '\nSHOTS OK: the rendered assembly is driven by one crank angle - rods on their crankpins, rods on their pistons, ' +
+      'pistons in their bores, cams at half crank speed, lobes lifting the valves the timing module says, ' +
+      'nothing left floating apart, and the same pose gives the same picture'
+  );
+};
+
 // Same watchdog reasoning as the control gate: the box is not idle (a local inference
 // server measured at 273% CPU), the page runs at 1.6 fps under software rasterisation
 // (tmp/hud-fps-probe.out), and the hang guard has to sit above the measured wall time
 // of the gate rather than below it. No measured threshold in any law changed.
 await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
-  const bad = [];
-  const shot = async (file) => {
-    const png = await capture();
-    const path = join(ROOT, 'shots', file);
-    writeFileSync(path, png);
-    return { path, bytes: png.length };
-  };
+  const shot = takeShot(capture);
   /** Pin the crank angle and let the loop repaint the poses from it. */
   const pin = async (theta) => {
     const from = await evalJs('window.__v8.frameCount()');
@@ -859,7 +886,6 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (!seen.has(stroke)) bad.push(`cylinder 1 never showed the ${stroke} stroke across the sampled crank angles`);
 
   // ---- shots, and what the pixels say about them ------------------------------
-  const shots = {};
   await resetView();
   await evalJs('window.__v8.stop(); window.__v8.state.theta = 0; "ok"');
   await pin(0);
@@ -1136,16 +1162,159 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   console.log(`console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
   if (errors.length) bad.push(`${errors.length} console/CDP error(s) while the gate rendered its pictures`);
 
-  if (bad.length) {
-    console.log('\nSHOTS INCOMPLETE:');
-    for (const b of bad) console.log('  ' + b);
-    console.log(`shots: ${Object.keys(shots).length} written, laws sampled at ${ANGLES.length} pinned crank angles`);
-    process.exitCode = 1;
-    return;
-  }
-  console.log(
-    '\nSHOTS OK: the rendered assembly is driven by one crank angle - rods on their crankpins, rods on their pistons, ' +
-      'pistons in their bores, cams at half crank speed, lobes lifting the valves the timing module says, ' +
-      'nothing left floating apart, and the same pose gives the same picture'
-  );
 });
+
+// ---- rows A1-G5 "in DOHC and in OHV" and P1-G6 "the OHV valvetrain in CUTAWAY and
+// EXPLODED": the same gate, the other build, reached the way a reader reaches it - the
+// address. Every count below is read from the modules that publish it.
+const OHV_READ = `(() => {
+  const v = window.__v8, THREE = v.THREE;
+  const names = { lifters: [], journals: [], lobes: [], necks: [], valves: [], springs: [], buckets: [], camshafts: [], gallery: [], chains: [] };
+  let rollers = 0, meshes = 0;
+  v.engine.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const n = String(o.name);
+    if (/^lifter-cyl/.test(n)) names.lifters.push(n);
+    if (/^cam-V-journal/.test(n)) names.journals.push(n);
+    if (/^lobe-cyl/.test(n)) names.lobes.push(n);
+    if (/^cam-V-neck/.test(n)) names.necks.push(n);
+    if (/^valve-cyl/.test(n)) names.valves.push(n);
+    if (/^spring-cyl/.test(n)) names.springs.push(n);
+    if (/^bucket-/.test(n)) names.buckets.push(n);
+    if (/^camshaft-/.test(n)) names.camshafts.push(n);
+    if (/^gallery-/.test(n)) names.gallery.push(n);
+  });
+  for (const [name, o] of v.view.members) {
+    if (!/^cam-chain/.test(name)) continue;
+    names.chains.push(name);
+    o.traverse((x) => { if (x.isMesh && /-roller-/.test(x.name)) rollers++; });
+  }
+  const inspectable = new Set(v.view.inspectables().map((i) => i.name));
+  let lowest = Infinity;
+  v.engine.traverse((o) => {
+    if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+    o.updateWorldMatrix(true, false);
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const z = new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).z;
+      if (z < lowest) lowest = z;
+    }
+  });
+  return {
+    variant: v.variant(),
+    rejected: v.variantRejected(),
+    meshes,
+    counts: {
+      lifters: names.lifters.length, journals: names.journals.length, lobes: names.lobes.length,
+      necks: names.necks.length, valves: names.valves.length, springs: names.springs.length,
+      buckets: names.buckets.length, camshafts: names.camshafts.length, gallery: names.gallery.length,
+      chains: names.chains.length,
+    },
+    offMenu: names.lifters.filter((n) => !inspectable.has(n)),
+    galleryOffMenu: names.gallery.filter((n) => !inspectable.has(n)),
+    rollers,
+    inspectables: v.view.inspectables().length,
+    lowestEngineZ: +lowest.toFixed(4),
+  };
+})()`;
+
+await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
+  const shot = takeShot(capture);
+  const want = standDatums('ohv');
+  const published = {
+    lifters: ohvLifters().lifters,
+    cam: ohvCamLayout(ohvBearings()),
+    ribs: ['L', 'R'].flatMap((b) => ohvLifterGallery().banks[b].clusters).length * 2,
+  };
+  const ohv = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${OHV_READ})))()`, { timeoutMs: 180000 }));
+  console.log(`ohv build: variant ${ohv.variant}${ohv.rejected ? ` (refused ${ohv.rejected})` : ''}, ${ohv.meshes} drawn engine meshes, ${ohv.counts.lifters} lifters, ${ohv.counts.journals} cam journals, ${ohv.counts.lobes} lobes, ${ohv.counts.necks} necks, ${ohv.counts.valves} valves, ${ohv.counts.buckets} DOHC buckets, ${ohv.counts.camshafts} DOHC camshafts, ${ohv.counts.gallery} cast gallery ribs, ${ohv.counts.chains} cam chain with ${ohv.rollers} rollers, ${ohv.inspectables} inspectables`);
+  if (ohv.variant !== 'ohv') bad.push(`ohv: the page drew "${ohv.variant()}" while the address asked for ohv`);
+  if (ohv.rejected) bad.push(`ohv: the page refused the variant "${ohv.rejected}" it was asked for`);
+  if (ohv.counts.lifters !== published.lifters.length)
+    bad.push(`ohv: the build draws ${ohv.counts.lifters} lifters while src/engine/layout.js ohvLifters() publishes ${published.lifters.length}`);
+  if (ohv.offMenu.length)
+    bad.push(`ohv: ${ohv.offMenu.length} drawn lifters are not on the inspection menu (${ohv.offMenu.slice(0, 6).join(', ')})`);
+  if (ohv.counts.journals !== published.cam.journals.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.journals} journals while ohvCamLayout() derives ${published.cam.journals.length}`);
+  if (ohv.counts.lobes !== published.cam.lobes.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.lobes} lobes while ohvCamLayout() derives ${published.cam.lobes.length}`);
+  if (ohv.counts.necks !== published.cam.necks.length)
+    bad.push(`ohv: the central cam draws ${ohv.counts.necks} necks while ohvCamLayout() derives ${published.cam.necks.length}`);
+  if (ohv.counts.camshafts !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.camshafts} DOHC camshafts`);
+  if (ohv.counts.buckets !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.buckets} DOHC spring buckets`);
+  // The valve gap this pass found, printed rather than assumed away: src/render/valvetrain.js
+  // returns from its central-cam branch (line 284) before the valve and spring loop, so the
+  // OHV build draws no valve and no spring at all, while SPEC.variants.ohv.pendingHardware
+  // names only pushrods, rockers and covers as pending. A build that draws some of the
+  // valves and not all of them is a disagreement and is refused; drawing none is a published
+  // gap of this variant and is named in the record, which is what keeps row P1-G6 open.
+  const pendingOhv = (SPEC.variants.ohv.pendingHardware || []).map((p) => p.family);
+  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${ohv.counts.valves} valve meshes and ${ohv.counts.springs} springs drawn for ${SPEC.cylinders.length} cylinders`);
+  console.log(`ohv pending hardware published by SPEC.variants.ohv.pendingHardware: ${pendingOhv.join(', ')}`);
+  if (ohv.counts.valves === 0 && !pendingOhv.some((f) => /valve|spring/i.test(f)))
+    console.log(`ohv undeclared gap: the build draws no valve and no spring while the published pending list names only ${pendingOhv.join(', ')}`);
+  if (ohv.counts.valves > 0 && ohv.counts.valves !== SPEC.cylinders.length * 2)
+    bad.push(`ohv: the OHV build draws ${ohv.counts.valves} valve meshes for ${SPEC.cylinders.length} cylinders`);
+  if (ohv.counts.gallery !== published.ribs)
+    bad.push(`ohv: the block casts ${ohv.counts.gallery} gallery ribs while ohvLifterGallery() publishes ${published.ribs} (rib + guide per cluster)`);
+  console.log(`ohv gallery ribs on the inspection menu: ${ohv.counts.gallery - ohv.galleryOffMenu.length} of ${ohv.counts.gallery}${ohv.galleryOffMenu.length ? ` (${ohv.galleryOffMenu.slice(0, 6).join(', ')} off the menu)` : ''}`);
+  if (ohv.counts.chains === 0 || ohv.rollers === 0)
+    bad.push('ohv: nothing drives the central cam - the live tree holds no cam chain and no rollers');
+
+  // the same loop-vs-published-pitch law the DOHC chains are held to, on this build's chain
+  const ohvDrive = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${FLUIDS})))()`, { timeoutMs: 120000 }));
+  console.log(`ohv coolant: ${ohvDrive.coolant.drawn} of ${ohvDrive.coolant.want} published members drawn in the sectioned casting, ${ohvDrive.coolant.offMenu.length} off the inspection menu, ${ohvDrive.headCrossing.links} head links + ${ohvDrive.headCrossing.galleries} head galleries beyond the gasket`);
+  if (ohvDrive.coolant.missing.length)
+    bad.push(`ohv coolant: ${ohvDrive.coolant.missing.length} published members are not in the live tree (${ohvDrive.coolant.missing.slice(0, 6).join(', ')})`);
+  if (!(ohvDrive.headCrossing.links > 0 && ohvDrive.headCrossing.galleries > 0))
+    bad.push(`ohv coolant: the passages stop at the gasket - ${ohvDrive.headCrossing.links} head links and ${ohvDrive.headCrossing.galleries} head galleries are published`);
+  console.log(`ohv oil: ${ohvDrive.oil.drawn} of ${ohvDrive.oil.want} published bores drawn, ${ohvDrive.oil.offMenu.length} off the inspection menu`);
+  if (ohvDrive.oil.missing.length)
+    bad.push(`ohv oil: ${ohvDrive.oil.missing.length} published bores are not in the live tree (${ohvDrive.oil.missing.slice(0, 6).join(', ')})`);
+  for (const c of ohvDrive.chains) {
+    console.log(`  chain ${c.name}: ${c.rollers} rollers, ${c.plates} plate layers, guide ${c.guide ? 'yes' : 'no'}, tensioner ${c.tensioner ? 'yes' : 'no'}, closed roller loop ${c.loop} cm = ${c.linksAtPitch} links at the published ${c.pitch} cm pitch`);
+    if (c.rollers === 0) bad.push(`drive: chain ${c.name} draws no rollers`);
+    if (!(c.loop > 0)) bad.push(`drive: chain ${c.name}'s roller loop measures ${c.loop} cm`);
+    if (Math.abs(c.linksAtPitch - c.rollers) > 0.02)
+      bad.push(`drive: chain ${c.name}'s closed roller loop of ${c.loop} cm is ${c.linksAtPitch} links at the published ${c.pitch} cm pitch, but the chain draws ${c.rollers} rollers - those links would overlap or stretch`);
+  }
+
+  console.log(`ohv stand: lowest drawn engine face ${ohv.lowestEngineZ} cm against this build's floor ${+want.floorZ.toFixed(4)} cm`);
+  if (!(ohv.lowestEngineZ > want.floorZ))
+    bad.push(`ohv: the engine reaches ${ohv.lowestEngineZ} cm, below the ${+want.floorZ.toFixed(4)} cm floor plate this build's stand is built on`);
+
+  await evalJs('window.__v8.setRpm(0); window.__v8.start(); window.__v8.state.theta = 0; window.__v8.settleView(); "ok"');
+  await sleep(1400);
+  shots.ohv = { ...(await shot('14-ohv.png')), pixels: await evalJs(`(${PIXELS})`) };
+  await evalJs('window.__v8.cutaway(true); "ok"');
+  await sleep(700);
+  shots['ohv-cutaway'] = { ...(await shot('15-ohv-cutaway.png')), pixels: await evalJs(`(${PIXELS})`) };
+  if (shots['ohv-cutaway'].pixels.hash === shots.ohv.pixels.hash)
+    bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one');
+  await evalJs('window.__v8.cutaway(false); window.__v8.explode(); "ok"');
+  let ohvView = null;
+  for (let i = 0; i < 80; i++) {
+    await sleep(100);
+    ohvView = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+    if (1 - ohvView.fraction < 1e-6 && ohvView.moved > 0) break;
+    if (i === 79) bad.push(`ohv: EXPLODED never settled for the OHV build (${JSON.stringify(ohvView)})`);
+  }
+  if (!(ohvView.moved > 0))
+    bad.push(`ohv: EXPLODED left the OHV build where it stood (${JSON.stringify(ohvView)})`);
+  shots['ohv-exploded'] = { ...(await shot('16-ohv-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
+  if (shots['ohv-exploded'].pixels.hash === shots.ohv.pixels.hash)
+    bad.push('ohv: the separated OHV build produced the same picture as the assembled one');
+  for (const [name, s] of Object.entries(shots).filter(([k]) => k.startsWith('ohv'))) {
+    if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
+    if (s.pixels.contrast <= 0) bad.push(`shot ${name} is flat: every sampled pixel is the same luminance`);
+    if (s.pixels.litFraction < 0.05) bad.push(`shot ${name} covers only ${(s.pixels.litFraction * 100).toFixed(1)}% lit pixels`);
+    console.log(shotLine(name, s));
+    if (process.argv.includes('--detail')) console.log(detailLine(name, s));
+  }
+  if (warnings.length) console.log(`ohv warnings: ${warnings.length} (${warnings.map(normalizeWarning).slice(0, 3).join(' | ')})`);
+  console.log(`ohv console/CDP errors: ${errors.length}${errors.length ? '\n  ' + errors.join('\n  ') : ''}`);
+  if (errors.length) bad.push(`ohv: ${errors.length} console/CDP error(s) while the gate rendered its OHV pictures`);
+});
+
+finish();
