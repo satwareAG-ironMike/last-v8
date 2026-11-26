@@ -545,12 +545,17 @@ export const SPEC = {
       // Slice 8C-3b (issue #16 option B): the follower hardware whose host iron
       // this casting machines IS drawn - 16 lifters standing in the 16 bores
       // ohvLifterGallery() cuts. What is not drawn is named beside the flag, so
-      // drawn: true cannot read as "the whole train is done".
+      // drawn: true cannot read as "the whole train is done". Slice 8H (issue #51
+      // option B) adds the valve families the same way: the screenshot gate counts
+      // 0 valve meshes and 0 springs on every OHV run, and a gap a gate measures
+      // has to be a declared family with the reason #45 measured.
       drawn: true,
       pendingHardware: [
         { family: 'pushrods', issue: '#16', why: 'no pushrod host iron is cast in this block' },
         { family: 'rockers', issue: '#16', why: 'no rocker stud or pedestal is cast in this block' },
         { family: 'covers', issue: '#16', why: 'the rocker covers that replace the cam bosses stand on the rocker iron this block does not cast yet' },
+        { family: 'valves', issue: '#51', why: 'the head seats 16 valves and the build draws none: a valve needs a rocker to act on it, and #45 measured that no rocker stud or pedestal is cast in this block' },
+        { family: 'springs', issue: '#51', why: 'a valve spring seats on the retainer a rocker pad loads, so while no rocker iron is cast in this block the 16 springs have nothing to hold them' },
       ],
       belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
       // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
