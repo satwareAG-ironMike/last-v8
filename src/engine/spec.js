@@ -558,6 +558,18 @@ export const SPEC = {
         { family: 'springs', issue: '#51', why: 'a valve spring seats on the retainer a rocker pad loads, so while no rocker iron is cast in this block the 16 springs have nothing to hold them' },
       ],
       belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
+      // Issue #45 (slice 8I): the rocker lever ratio, valve arm over pushrod arm.
+      // It is a measured number, not a preference (tmp/8c3c-rocker-fit.mjs ->
+      // tmp/v8-8c3c-fit.out): a flat tappet of this cam stands at out 7.63675 off
+      // its bank's bore axis, an intake valve tip at -5.024..-4.761, so the pivot
+      // has to cross the cylinder axis - which is where the spark plug of issue
+      // #11 stands. At 1:1 the rocker shaft would stand 0.1563 cm inside the
+      // plug's own 0.70 boot; at 1.5:1 it stands 1.4224 cm clear of it. 1.6:1
+      // buys 0.19 cm more air and grinds the lobe flatter than the train needs.
+      // The ratio is what the cam grind derives from: valves.maxLift stays the
+      // lift at the valve, and this variant's cam is ground to maxLift / ratio
+      // (src/engine/timing.js camLiftCm, src/engine/ohv.js ohvCamLiftCm).
+      rockerRatio: 1.5,
       // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
       // lobes swing in is BORED - its machined face is the swept outline plus this
       // much air - and the room between the crank-side swings and the cam is the

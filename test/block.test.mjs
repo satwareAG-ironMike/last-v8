@@ -209,7 +209,7 @@ test(`${OHV_CAST}: the switch publishes the walls a cam tunnel is bored to, and 
   const H = L.ohvHousing();
   const V = SPEC.variants.ohv;
   const C = V.belowCrankCm;
-  const worst = L.worstOutlineR();
+  const worst = L.worstOutlineR('ohv'); // this variant's own grind: maxLift / rockerRatio
   const air = V.tunnel.lobeAirCm;
   const wall = SPEC.cam.bearing.housingWall;
   const railThk = B.panFlangeZ - B.panRailZ;

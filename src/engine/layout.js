@@ -14,7 +14,7 @@ import { SPEC, DEG, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
 import {
   boreR as lineBoreR, boltCircumR, castOdR, noseR, housingInRel, housingOutRel,
 } from './bearings.js';
-import { lobeProfileRadius } from './timing.js';
+import { camLiftCm, lobeProfileRadius } from './timing.js';
 import { chainPitch } from './drive.js';
 
 /** the variant entry a switch value selects - unpublished names are refused by name */
@@ -86,25 +86,36 @@ export function drive(id = SPEC.build.variant) {
 /** the published OHV cam axis position and the tunnel floor it implies (issue #16) */
 export function ohvCam() {
   const v = variantEntry('ohv');
-  const faceR = lineBoreR; // the machined bearing column face IS the line bore the shell presses into
+  const H = ohvHousing(); // this variant's own bored tunnel, sized by its own grind
   const C = v.belowCrankCm;
   return {
     belowCrankCm: C,
-    tunnelFloorZ: -(C + faceR), // bored column bore; the lobe-passage boring goes deeper still
-    lobeTunnelFloorZ: -(C + castOdR), // floor a tunnel bored wide enough for the noses needs
+    tunnelFloorZ: H.floorZ, // bored column bore; the lobe-passage boring goes deeper still
+    lobeTunnelFloorZ: -(C + H.tunnelWallR), // floor a tunnel bored wide enough for the noses needs
   };
 }
 
 /** the bored tunnel a variant's cam rides in, from the published bearing stack */
 export function camTunnel(id = SPEC.build.variant) {
   variantEntry(id);
-  const floorZ = id === 'ohv' ? ohvCam().tunnelFloorZ : null;
-  return { boreR: lineBoreR, faceR: lineBoreR, lobeClearBoreR: castOdR, floorZ };
+  if (id === 'ohv') {
+    // This variant's tunnel is a bored cylinder in its own casting, sized by
+    // ohvHousing() from this variant's own grind. The DOHC bearing radii beside
+    // it are that build's cam bosses and are not this tunnel's authority.
+    const H = ohvHousing();
+    return { boreR: H.tunnelBoreR, faceR: H.tunnelBoreR, lobeClearBoreR: H.tunnelWallR, floorZ: H.floorZ };
+  }
+  return { boreR: lineBoreR, faceR: lineBoreR, lobeClearBoreR: castOdR, floorZ: null };
 }
 
 /** the ground nose the bearing stack already publishes: the widest outline the cam has */
-export function noseMaxRadius() {
-  return noseR;
+export function noseMaxRadius(id = SPEC.build.variant) {
+  variantEntry(id);
+  const nose = SPEC.head.camBaseRadius + camLiftCm(id);
+  if (id === 'dohc' && Math.abs(nose - noseR) > 1e-9) {
+    throw new Error(`the DOHC bearing stack publishes a ${noseR} cm nose while the committed grind machines ${nose} cm`);
+  }
+  return nose;
 }
 
 /** the narrowest outline the cam presents: the base circle it is ground on */
@@ -113,16 +124,24 @@ export function bestOutlineR() {
 }
 
 /**
- * The widest outline a cam built from these lobes can present in ANY direction:
- * a lobe is rotationally symmetric about its own axis, so the maximum over all
- * follower directions is the maximum of the profile over cam angle - its nose.
- * A clearance law that reads the base circle instead saves exactly this much
- * centre distance the engine does not have.
+ * The widest outline a cam built from these lobes can present in ANY direction,
+ * for the variant named: a lobe is rotationally symmetric about its own axis, so
+ * the maximum over all follower directions is the maximum of the profile over cam
+ * angle - its nose. A clearance law that reads the base circle instead saves
+ * exactly this much centre distance the engine does not have.
+ *
+ * The grind is variant-scoped (issue #45 / slice 8I): the OHV cam is ground to
+ * maxLift / rockerRatio, the DOHC cams to maxLift, and a clearance law has to
+ * read the nose the cam it clears actually has. Callers in an OHV context name
+ * 'ohv'; the default is the build the switch selects.
  */
-export function worstOutlineR() {
-  const nose = Math.max(lobeProfileRadius('intake', 0), lobeProfileRadius('exhaust', 0));
-  if (Math.abs(nose - noseR) > 1e-9) {
-    throw new Error(`the lobes' own profile peaks at ${nose} cm, not at the published nose ${noseR} cm`);
+export function worstOutlineR(id = SPEC.build.variant) {
+  variantEntry(id);
+  const lift = camLiftCm(id);
+  const nose = Math.max(lobeProfileRadius('intake', 0, lift), lobeProfileRadius('exhaust', 0, lift));
+  const published = id === 'ohv' ? SPEC.head.camBaseRadius + lift : noseR;
+  if (Math.abs(nose - published) > 1e-9) {
+    throw new Error(`the ${id} lobes' own profile peaks at ${nose} cm, not at the published nose ${published} cm of that variant's ${lift} cm grind`);
   }
   return nose;
 }
@@ -178,7 +197,7 @@ export function ohvHousing() {
   const C = v.belowCrankCm;
   const OD = B.caseOuterRadius;
   const ID = B.crankcaseRadius;
-  const worst = worstOutlineR();
+  const worst = worstOutlineR('ohv');
   const wall = SPEC.cam.bearing.housingWall;
   const railThk = B.panFlangeZ - B.panRailZ;
 

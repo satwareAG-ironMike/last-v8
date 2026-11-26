@@ -1183,7 +1183,7 @@ test(`${OHV_LAW}: the published OHV cam axis clears everything that swings past 
   const cam = L.ohvCam();
   const Cc = cam.belowCrankCm;
   const tunnel = L.camTunnel('ohv');
-  const worst = L.worstOutlineR();
+  const worst = L.worstOutlineR('ohv');
   const K = SPEC.crank;
   const swings = [
     ['connecting-rod big end', K.radius + SPEC.rod.bigEndRadius],
@@ -1256,27 +1256,35 @@ test(`${OHV_LAW}: the published OHV cam axis clears everything that swings past 
 
 test(`${OHV_LAW}: a cam clearance law reads the widest outline the cam can present, and a base-circle law reports a clearance the cam does not have`, async () => {
   const L = await ohvLayout();
-  const { lobeProfileRadius, lobeHalfCamDeg } = await import('../src/engine/timing.js');
+  const { lobeProfileRadius, lobeHalfCamDeg, camLiftCm } = await import('../src/engine/timing.js');
   const { noseR } = await import('../src/engine/bearings.js');
   const base = SPEC.head.camBaseRadius;
-  assert.ok(Math.abs(L.noseMaxRadius() - noseR) < 1e-9,
-    `the cam's widest outline is the ground nose the bearing stack already publishes (${noseR}), measured ${L.noseMaxRadius()}`);
-  assert.ok(Math.abs(L.worstOutlineR() - Math.max(lobeProfileRadius('intake', 0), lobeProfileRadius('exhaust', 0))) < 1e-9,
-    'the widest outline a 16-lobe cam built from these lobes can present in ANY direction is the ground nose of its own lobes');
-  assert.ok(Math.abs(L.worstOutlineR() - L.noseMaxRadius()) < 1e-9, 'worstOutlineR and noseMaxR are one published number, not two tunable ones');
-  assert.ok(Math.abs(L.bestOutlineR() - base) < 1e-9, 'and the narrowest it can present is the base circle it is ground on');
-  assert.ok(L.worstOutlineR() > L.bestOutlineR(), 'if the two were equal the direction would not matter, and it does');
+  const R = SPEC.variants.ohv.rockerRatio;
+  const dohc = { lift: camLiftCm('dohc'), nose: L.noseMaxRadius('dohc') };
+  const ohv = { lift: camLiftCm('ohv'), nose: L.worstOutlineR('ohv') };
+  assert.ok(Math.abs(dohc.nose - noseR) < 1e-9,
+    `the DOHC cam's widest outline is the ground nose the bearing stack already publishes (${noseR}), measured ${dohc.nose}`);
+  assert.ok(Math.abs(ohv.nose - Math.max(lobeProfileRadius('intake', 0, ohv.lift), lobeProfileRadius('exhaust', 0, ohv.lift))) < 1e-9,
+    `the widest outline this variant's 16-lobe cam can present in ANY direction is the ground nose of its own lobes on its own ${ohv.lift.toFixed(4)} cm grind`);
+  assert.ok(Math.abs(ohv.nose - L.noseMaxRadius('ohv')) < 1e-9, 'worstOutlineR and noseMaxR are one published number per variant, not two tunable ones');
+  assert.ok(Math.abs(ohv.lift * R - SPEC.valves.maxLift) < 1e-12,
+    `the OHV grind of ${ohv.lift.toFixed(4)} cm over the ${R}:1 rocker restores ${ohv.lift.toFixed(4)} x ${R} = ${(ohv.lift * R).toFixed(4)} cm, not the published ${SPEC.valves.maxLift} cm of valve lift`);
+  assert.ok(ohv.nose < dohc.nose,
+    `a rocker ratio of ${R}:1 has to move this variant's nose inwards: measured ${ohv.nose.toFixed(4)} against the DOHC nose ${dohc.nose.toFixed(4)} its buckets ride directly`);
+  assert.ok(Math.abs(L.bestOutlineR() - base) < 1e-9, 'and the narrowest either cam presents is the base circle it is ground on');
+  assert.ok(ohv.nose > L.bestOutlineR(), 'if the two were equal the direction would not matter, and it does');
   const halfCam = lobeHalfCamDeg('intake');
-  assert.ok(Math.abs(lobeProfileRadius('intake', halfCam) - base) < 1e-6,
+  assert.ok(Math.abs(lobeProfileRadius('intake', halfCam, ohv.lift) - base) < 1e-6,
     `a lobe is a base circle with a nose on it: ${halfCam.toFixed(2)} cam degrees off its nose it has to be back on ${base}`);
-  const gap = L.worstOutlineR() - L.bestOutlineR();
+  const gap = ohv.nose - L.bestOutlineR();
   const baseCircleLaw = SPEC.crank.radius + SPEC.rod.bigEndRadius + L.bestOutlineR();
-  const realLaw = SPEC.crank.radius + SPEC.rod.bigEndRadius + L.worstOutlineR();
+  const realLaw = SPEC.crank.radius + SPEC.rod.bigEndRadius + ohv.nose;
   assert.ok(Math.abs(realLaw - baseCircleLaw - gap) < 1e-9, 'the two readings differ by exactly the nose over the base circle');
   assert.ok(realLaw > baseCircleLaw,
     `a law that clears the rod big end against the base circle (${baseCircleLaw.toFixed(3)} cm of centre distance) `
     + `asks for ${gap.toFixed(3)} cm less than the same law reading the outline the cam actually presents (${realLaw.toFixed(3)} cm)`);
-  console.log(`${OHV_LAW} outline: base circle ${L.bestOutlineR().toFixed(4)} cm, ground nose ${L.worstOutlineR().toFixed(4)} cm, `
+  console.log(`${OHV_LAW} outline: base circle ${L.bestOutlineR().toFixed(4)} cm, DOHC nose ${dohc.nose.toFixed(4)} cm (${dohc.lift} cm grind), `
+    + `OHV nose ${ohv.nose.toFixed(4)} cm (${ohv.lift.toFixed(4)} cm grind on a ${R}:1 rocker), `
     + `direction worth ${gap.toFixed(4)} cm of centre distance; rod-big-end floor ${baseCircleLaw.toFixed(3)} cm as a base-circle law, `
     + `${realLaw.toFixed(3)} cm as the law this row gates`);
 });

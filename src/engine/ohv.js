@@ -15,11 +15,28 @@
 // ---------------------------------------------------------------------------
 import { SPEC, wrap360, signedAngle } from './spec.js';
 import { ohvBearings, camGroupNames } from './layout.js';
-import { camAzimuth, crankEvent, eventMid, lobeFaceDistance, lobeProfileRadius } from './timing.js';
+import {
+  camAzimuth, camLiftCm, crankEvent, eventMid, lobeFaceDistance, lobeProfileRadius,
+} from './timing.js';
 
 const V = SPEC.variants.ohv;
 const H = SPEC.head;
 const DEG = Math.PI / 180;
+
+/**
+ * The lift this variant's cam is ground to at its followers (issue #45, slice
+ * 8I): the published valve lift divided by the published rocker ratio. A DOHC
+ * bucket rides the lift directly; here a rocker lever stands between the lobe
+ * and the valve, so the nose gets smaller and the valve lift stays what the
+ * head's crown-clearance law is measured at. Derived, never typed.
+ */
+export const ohvCamLiftCm = () => camLiftCm('ohv');
+
+/** The outline radius of one of this variant's 16 lobes at polar angle alpha. */
+export const ohvLobeProfileRadius = (valve, alpha) => lobeProfileRadius(valve, alpha, ohvCamLiftCm());
+
+/** The tangent-plane distance of that lobe at psi cam degrees off its nose. */
+export const ohvLobeFaceDistance = (valve, psiDeg) => lobeFaceDistance(valve, psiDeg, ohvCamLiftCm());
 
 /**
  * The angular resolution this tree's turned bores are machined at: every lathe in
@@ -45,12 +62,12 @@ export function lobeChordError(valve, samples) {
   let worst = 0, at = null;
   for (let i = 0; i < samples; i++) {
     const a0 = i * step, a1 = a0 + step;
-    const r0 = lobeProfileRadius(valve, signedAngle(a0));
-    const r1 = lobeProfileRadius(valve, signedAngle(a1));
+    const r0 = ohvLobeProfileRadius(valve, signedAngle(a0));
+    const r1 = ohvLobeProfileRadius(valve, signedAngle(a1));
     const my = (r0 * Math.sin(a0 * DEG) + r1 * Math.sin(a1 * DEG)) / 2;
     const mz = (r0 * Math.cos(a0 * DEG) + r1 * Math.cos(a1 * DEG)) / 2;
     const midR = Math.hypot(my, mz);
-    const dev = lobeProfileRadius(valve, signedAngle(wrap360(Math.atan2(my, mz) / DEG))) - midR;
+    const dev = ohvLobeProfileRadius(valve, signedAngle(wrap360(Math.atan2(my, mz) / DEG))) - midR;
     if (dev > worst) { worst = dev; at = a0 + step / 2; }
   }
   return { err: worst, at };
@@ -125,7 +142,7 @@ export function ohvLobeAzimuth(cyl, valve, theta) {
  */
 export function ohvLift(cyl, valve, theta) {
   const psi = signedAngle(ohvLobeAzimuth(cyl, valve, theta) - lifterAzimuth(cyl.bank));
-  return Math.max(0, lobeFaceDistance(valve, psi) - H.camBaseRadius);
+  return Math.max(0, ohvLobeFaceDistance(valve, psi) - H.camBaseRadius);
 }
 
 /**
