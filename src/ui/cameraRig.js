@@ -11,14 +11,19 @@
 // has to stay above the test-cell floor while walking, and the pose model has to
 // be assertable under Node.
 //
-// World convention (src/engine/spec.js): X = crank axis, Z up, floor plate at
-// SPEC.stand.floorZ. The eye guard is DERIVED from that plane, never a magic
-// elevation constant.
+// World convention (src/engine/spec.js): X = crank axis, Z up, floor plate on the
+// plane the drawn variant's stand is built on. The eye guard is DERIVED from that
+// plane, never a magic elevation constant - and the plane belongs to the variant this
+// rig is framing, so it is read per call through engine/variant.js rather than pinned
+// at module load: the OHV casting reaches 3.2 cm deeper, and its stand feet are drawn
+// on that lower plane by render/stand.js.
 import * as THREE from 'three';
 import { SPEC } from '../engine/spec.js';
+import { shellDatums } from '../engine/variant.js';
 
 const V = SPEC.view;
-const FLOOR = SPEC.stand.floorZ;
+/** The plane the eye has to stay `SPEC.view.eyeMin` above, for the variant being drawn. */
+const EYE_FLOOR = () => shellDatums().eyeFloorZ;
 const TAU = Math.PI * 2;
 const clamp = THREE.MathUtils.clamp;
 
@@ -39,7 +44,7 @@ export function focusLimits(spec = V) {
   return {
     x: spec.walkBounds.x,
     y: spec.walkBounds.y,
-    zMin: FLOOR + spec.eyeMin,
+    zMin: EYE_FLOOR(),
     zMax: spec.walkBounds.zMax,
   };
 }
@@ -63,7 +68,7 @@ export function clampFocus(t, spec = V) {
  *    clampFocus forbids; the honest answer is the pitch limit.
  */
 export function minElevation(targetZ, dist, spec = V) {
-  const s = (FLOOR + spec.eyeMin - targetZ) / dist;
+  const s = (EYE_FLOOR() - targetZ) / dist;
   if (s >= 1) return spec.pitchLimit;
   if (s <= -1) return -spec.pitchLimit;
   return clamp(Math.asin(s), -spec.pitchLimit, spec.pitchLimit);

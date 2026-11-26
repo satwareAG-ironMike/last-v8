@@ -86,7 +86,9 @@ test('the page address selects the build variant, and a value it does not publis
 
 test('switching the variant renames the shell through the one published helper', async () => {
   const { setVariant, shellDatums } = await authority('the switch');
-  const names = (id) => [hudTitle(id), badge(id), engineName(id), plateLines(id).join(' | ')];
+  // plateLines is the id plate the shell stamps: each line carries its text plus its
+  // weight and size, so the name read takes the text out of it.
+  const names = (id) => [hudTitle(id), badge(id), engineName(id), plateLines(id).map((l) => l.text).join(' | ')];
   const before = names(DEFAULT_ID);
   const got = setVariant('ohv');
   try {
