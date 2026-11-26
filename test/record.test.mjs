@@ -287,7 +287,10 @@ test('the OHV pass prints its valvetrain census and names the valve and spring g
   assert.equal(census.length, 1, `the gate prints ${census.length} OHV census lines, expected one`);
   for (const field of ['lifters', 'gallery', 'journals', 'lobes', 'necks', 'valves', 'springs'])
     assert.ok(census[0].includes(`\${ohv.counts.${field}}`), `the OHV census does not count ${field}`);
-  assert.ok(/SPEC\.variants\.ohv\.pendingHardware/.test(src), 'the OHV pass never reads the pending hardware this build publishes');
+  // Same control finding as the published-read block: the name also stands in a comment and
+  // in the printed label, so a law that only searches for it passes even when the read is
+  // gone (measured: the poke ohv-pending-not-read replaced the read with ([])) .
+  assert.ok(/const pendingOhv = \(SPEC\.variants\.ohv\.pendingHardware \|\| \[\]\)\.map\(\(p\) => p\.family\);/.test(src), 'the OHV pass never reads the pending hardware families this build publishes into a variable the gap clause can check:');
   assert.ok(/ohv undeclared gap/.test(src), 'the gate does not name the valve and spring gap it measured');
   assert.ok(/pendingOhv\.some\(\(f\) => \/valve\|spring\/i\.test\(f\)\)/.test(src), 'the gap clause does not check the published pending list for a valve or spring family');
 });
