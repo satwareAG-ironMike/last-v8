@@ -617,6 +617,22 @@ const takePin = (evalJs) => async (theta) => {
   }
   throw new Error('the page produced no animation frames after pinning crank ' + theta);
 };
+/**
+ * Wait for a view transition to reach its published goal, and prove it did. The cutaway
+ * section is a function of that transition: src/ui/viewControls.js:296 builds it from
+ * `cutawaySpecs({ lift: lift * fraction })` and :525 re-derives `plane.constant` from the
+ * same product, while :511-513 walk `fraction` toward its goal one frame at a time. A
+ * section captured mid-transition therefore stands at a height set by elapsed wall clock -
+ * measured as `lit 26.7%` against `lit 26.8%` for one CUTAWAY pose (tmp/v8-8f3-shots5.out
+ * against tmp/v8-8f3-shots6.out), same buffer, same samples, same lit span.
+ */
+const takeSettle = (evalJs) => async () => {
+  const settled = await evalJs('window.__v8.settleView()');
+  const st = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+  if (Math.abs(st.goal - settled) > 1e-6)
+    throw new Error(`the view transition did not reach its goal: settleView() returned fraction ${settled} against goal ${st.goal}`);
+  return st;
+};
 const finish = () => {
   if (bad.length) {
     console.log('\nSHOTS INCOMPLETE:');
@@ -639,6 +655,7 @@ const finish = () => {
 await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
   const shot = takeShot(capture);
   const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
   // The measurement walks live vertices of 136 members plus 8 cylinders x 37 piston
   // poses inside one evaluate, which is heavier than any other call this gate makes.
   // It gets a per-call timeout instead of the harness default, so a slow SwiftShader
@@ -900,7 +917,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   shots.home = { ...(await shot('07-home.png')), pixels: await evalJs(`(${PIXELS})`) };
 
   await evalJs('window.__v8.cutaway(true); "ok"');
-  await sleep(400);
+  await settle();
+  await pin(0);
   shots.cutaway = { ...(await shot('08-cutaway.png')), pixels: await evalJs(`(${PIXELS})`), theta: 0 };
   if (shots.home.pixels.hash === shots.cutaway.pixels.hash)
     bad.push('CUTAWAY changed no pixel: the section is not visible in the picture');
@@ -951,7 +969,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   }
 
   await evalJs('window.__v8.cutaway(false); "ok"');
-  await sleep(300);
+  await settle();
 
   // Cylinders 1 and 4 are the pair the gate pinned: crank 0 leaves 1 at top dead centre
   // and 4 at bottom dead centre (measured off the meshes, not assumed), and crank 180 must
@@ -1001,7 +1019,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   // coolant/jacket/gallery/oil returned one contact pair, ['oil-pan', 'crankcase'].
   // The networks are read in the page, so the authority is the published list.
   await evalJs('window.__v8.cutaway(true); "ok"');
-  await sleep(400);
+  await settle();
   const fluids = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${FLUIDS})))()`, { timeoutMs: 120000 }));
   console.log(`coolant: ${fluids.coolant.drawn} of ${fluids.coolant.want} published members drawn in the sectioned casting, ${fluids.coolant.offMenu.length} off the inspection menu, ${fluids.coolant.empty.length} without vertices, ${fluids.headCrossing.links} head links + ${fluids.headCrossing.galleries} head galleries beyond the gasket`);
   if (fluids.coolant.missing.length)
@@ -1054,12 +1072,12 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   const span = Math.max(...fb.size);
   console.log(`fluid bounds: ${fb.min.join(',')} .. ${fb.max.join(',')} (${fb.size.join(' x ')} cm), framed at centre ${fb.center.join(',')} range ${(span * 1.35).toFixed(2)} cm`);
   await evalJs(`window.__v8.focusCameraOn(new window.__v8.THREE.Vector3(${fb.center.join(',')}), ${(span * 1.35).toFixed(2)}); "ok"`);
-  await sleep(1200);
+  await settle();
   shots.fluids = { ...(await shot('13-cutaway-fluids.png')), pixels: await evalJs(`(${PIXELS})`) };
   if (shots.fluids.pixels.hash === shots.cutaway.pixels.hash)
     bad.push('the fluid capture produced the same picture as the plain cutaway: the framing never reached the galleries');
   await resetView();
-  await sleep(600);
+  await settle();
 
   await evalJs('window.__v8.setRpm(1800); window.__v8.setSlowmo(1); window.__v8.start(); "ok"');
   await sleep(700);
@@ -1067,12 +1085,9 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   await evalJs('window.__v8.stop(); "ok"');
 
   await evalJs('window.__v8.explode(); "ok"');
-  for (let i = 0; i < 160; i++) {
-    await sleep(100);
-    const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
-    if (1 - vs.fraction < 1e-6 && vs.moved > 0) break;
-    if (i === 159) bad.push('EXPLODED VIEW never settled to the published 34.25 cm hoist');
-  }
+  await settle();
+  const vs = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
+  if (vs.moved === 0) bad.push('EXPLODED VIEW moved 0 members');
   await pin(0);
   shots.exploded = { ...(await shot('11-exploded.png')), pixels: await evalJs(`(${PIXELS})`) };
   const apart = JSON.parse(
@@ -1107,11 +1122,13 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   if (shots.exploded.pixels.hash === shots.home.pixels.hash)
     bad.push('the separated assembly produced the same picture as the assembled one');
   console.log(`spread law: assembled ${home.join(' x ')} cm -> exploded ${apart.span.join(' x ')} cm, worst corner ndc ${apart.worstNdc}, ${apart.moved} members hoisted ${apart.engineZ} cm`);
-  await evalJs('window.__v8.assemble(); window.__v8.settleView(); "ok"');
-  await sleep(1500);
+  await evalJs('window.__v8.assemble(); "ok"');
+  await settle();
 
   await evalJs('window.__v8.inspect("piston-cyl1"); "ok"');
-  await sleep(1200);
+  // src/ui/cameraRig.js:151-152 snaps focus to its goal on focusCameraOn, so the framing
+  // is settled the moment the call returns; what still has to land is the pose.
+  await settle();
   await pin(0);
   shots.inspect = { ...(await shot('12-inspect-piston.png')), pixels: await evalJs(`(${PIXELS})`) };
   const framed = await measure();
@@ -1123,7 +1140,7 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     `${(framed.coverHome.fraction * 100).toFixed(1)}% when inspected`
   );
   await evalJs('window.__v8.clearInspect(); window.__v8.rig.reset(); "ok"');
-  await sleep(1400);
+  await settle();
 
   for (const [name, s] of Object.entries(shots)) {
     if (s.pixels.samples < 1000) bad.push(`shot ${name}: only ${s.pixels.samples} pixels sampled`);
@@ -1230,6 +1247,7 @@ const OHV_READ = `(() => {
 await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async ({ evalJs, capture, errors, warnings }) => {
   const shot = takeShot(capture);
   const pin = takePin(evalJs);
+  const settle = takeSettle(evalJs);
   const want = standDatums('ohv');
   const published = {
     lifters: ohvLifters().lifters,
@@ -1298,18 +1316,14 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
   await pin(0);
   shots.ohv = { ...(await shot('14-ohv.png')), pixels: await evalJs(`(${PIXELS})`) };
   await evalJs('window.__v8.cutaway(true); "ok"');
+  await settle();
   await pin(0);
   shots['ohv-cutaway'] = { ...(await shot('15-ohv-cutaway.png')), pixels: await evalJs(`(${PIXELS})`) };
   if (shots['ohv-cutaway'].pixels.hash === shots.ohv.pixels.hash)
     bad.push('ohv: the sectioned OHV build produced the same picture as the assembled one');
   await evalJs('window.__v8.cutaway(false); window.__v8.explode(); "ok"');
-  let ohvView = null;
-  for (let i = 0; i < 80; i++) {
-    await sleep(100);
-    ohvView = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
-    if (1 - ohvView.fraction < 1e-6 && ohvView.moved > 0) break;
-    if (i === 79) bad.push(`ohv: EXPLODED never settled for the OHV build (${JSON.stringify(ohvView)})`);
-  }
+  await settle();
+  const ohvView = JSON.parse(await evalJs('JSON.stringify(window.__v8.viewState())'));
   if (!(ohvView.moved > 0))
     bad.push(`ohv: EXPLODED left the OHV build where it stood (${JSON.stringify(ohvView)})`);
   await pin(0);
