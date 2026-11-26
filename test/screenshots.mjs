@@ -1450,7 +1450,22 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (Math.abs(got - want) > 1e-12)
       bad.push(`spark ${label}: the page is running slowmo ${got} although the gate asked for ${want} (src/engine/animation.js:54 clamps to 0.02..1)`);
   };
-  const tipLine = (label, t) => `${label} plug-cyl${t.cyl} op ${t.opacity} at crank ${t.theta} slowmo ${t.slowmo} plane ${String(t.planeDist).padStart(7)} r ${t.radiusPx}px | disc ${t.disc.mean} (${t.disc.peak}, ${t.disc.samples} px) ring ${t.disc.ringMean} (${t.disc.ringPeak}, ${t.disc.ringSamples} px) | ${t.disc.mean > t.disc.ringMean ? 'READS' : 'dark'}`;
+  // The two published numbers this row's spark clauses are held to, declared here because the
+  // printed line states the verdict against them.
+  //   FLOOR: the lit tip's own light. Derived from the fixed build's measured 187.92
+  //     (tmp/v8-8f4-shots2.out) with 1.5 points of rasteriser slack. The ring stays the
+  //     relative reference it is measured against, without an equality demand of its own:
+  //     tmp/v8-8f4-nc-live.out showed a flash culled down to 172.6 still printing READS
+  //     against a 41-point ring, so "disc > ring" alone is not a floor.
+  //   TOLERANCE: how far the tip's measured light may move between the 1/10 and the 1/50
+  //     frame of ONE pinned pose. Derived from the spread five recorded runs measured -
+  //     187.92/187.92, 187.92/187.92, 187.93/187.92, 188.15/187.92 - worst 0.23 points,
+  //     published at 1.0. The number is a reading of a rendered frame, not a fact about the
+  //     pose; the pose itself is held to equality by the opacity and crank-angle clauses.
+  const SPARK_DISC_FLOOR = 185;
+  const SPARK_DISC_TOLERANCE = 1.0;
+  const tipLine = (label, t) => `${label} plug-cyl${t.cyl} op ${t.opacity} at crank ${t.theta} slowmo ${t.slowmo} plane ${String(t.planeDist).padStart(7)} r ${t.radiusPx}px | disc peak ${t.disc.peak} over ${t.disc.samples} px, ring peak ${t.disc.ringPeak} over ${t.disc.ringSamples} px | ${t.disc.mean > t.disc.ringMean ? 'READS' : 'dark'} | ${t.opacity > 0 ? (t.disc.mean >= SPARK_DISC_FLOOR ? `clears the ${SPARK_DISC_FLOOR} floor` : `BELOW the ${SPARK_DISC_FLOOR} floor`) : 'flash off, floor not applicable'}`;
+  const tipDetail = (label, t) => `detail${label}disc mean ${t.disc.mean} over ${t.disc.samples} px, ring mean ${t.disc.ringMean} over ${t.disc.ringSamples} px, disc against ring ${t.disc.mean > t.disc.ringMean}`;
 
   await evalJs(`window.__v8.setThrottle(${SPARK_THROTTLE}); window.__v8.setRpm(${SPARK_RPM}); "ok"`);
   await evalJs('window.__v8.setSlowmo(1 / 10); "ok"');
@@ -1506,8 +1521,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
     if (sparkPair.maxDelta > 60)
       bad.push(`the worst luminance delta between the 1/10 and the 1/50 frame of one pinned pose is ${sparkPair.maxDelta}: a flash that decays on the wall clock would land at a different point of its burn window here`);
   }
-  if (Math.abs(lit.disc.mean - slow.disc.mean) > 0.01)
-    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} at 1/10 and ${slow.disc.mean} at 1/50: the flash's own light depends on the frame rate and not on the crank angle`);
+  if (Math.abs(lit.disc.mean - slow.disc.mean) > SPARK_DISC_TOLERANCE)
+    bad.push(`plug-cyl${sparkCyl.num} reads disc ${lit.disc.mean} at 1/10 and ${slow.disc.mean} at 1/50, ${Math.abs(lit.disc.mean - slow.disc.mean).toFixed(2)} points apart against the ${SPARK_DISC_TOLERANCE} this row publishes from the measured 0.23 spread: the flash's own light depends on the frame rate and not on the crank angle`);
   if (Math.abs(lit.theta - slow.theta) > 1e-9 || Math.abs(lit.opacity - slow.opacity) > 1e-9)
     bad.push(`plug-cyl${sparkCyl.num} sat at crank ${lit.theta} opacity ${lit.opacity} at 1/10 and crank ${slow.theta} opacity ${slow.opacity} at 1/50: the two pictures were not the same pose`);
 
@@ -1522,11 +1537,10 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
   console.log('  ' + tipLine('lit 1/10 ', lit));
   console.log('  ' + tipLine('lit 1/50 ', slow));
   console.log('  ' + tipLine('off      ', off));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('lit 1/10 ', lit));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('lit 1/50 ', slow));
+  if (process.argv.includes('--detail')) console.log('  ' + tipDetail('off      ', off));
 
-  // The floor is this row's own published number, derived from the fixed build's measured
-  // 187.92 (tmp/v8-8f4-shots2.out) with 1.5 points of rasteriser slack; the ring stays the
-  // relative reference it is measured against, without an equality demand of its own.
-  const SPARK_DISC_FLOOR = 185;
   if (!(lit.disc.mean >= SPARK_DISC_FLOOR))
     bad.push(`plug-cyl${sparkCyl.num} at its own spark instant reads disc mean ${lit.disc.mean} against its ring mean ${lit.disc.ringMean}, below the ${SPARK_DISC_FLOOR} this row publishes from the fixed build's measured 187.92: the flash is being culled by the metal it emits from (issue #52 measured 172.6 with the depth test answered)`);
   if (!(lit.disc.mean > lit.disc.ringMean))

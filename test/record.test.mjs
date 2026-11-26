@@ -71,7 +71,7 @@ test('the default shot line carries only what a law compares, and two runs of on
     `the pinned shot line states no verdict for the coverage its laws compare, so the record carries a number no run reproduces and no law reads either:\n  ${one}`);
   for (const part of ['1280x713', '101626', '0..255', '255 contrast', '711x1278'])
     assert.ok(one.includes(part), `the pinned shot line dropped the measured ${part}:\n  ${one}`);
-  assert.ok(!/38%/.test(one) && !/38\.1%/.test(one), `the pinned shot line still prints the lit coverage:\n  ${one}`);
+  assert.ok(!/lit \d/.test(one), `the pinned shot line still prints the lit coverage:\n  ${one}`);
 });
 
 test('the volatile numbers stay readable, behind detailLine only', () => {
@@ -475,7 +475,7 @@ test('the recorded spark tip line carries the region and its verdicts, and the m
   assert.ok(def.length > 80, `tipLine is not a line builder:\n  ${def}`);
   for (const leak of ['${t.disc.mean}', '${t.disc.ringMean}'])
     assert.ok(!def.includes(leak), `the recorded tip line prints ${leak}: five runs of one pinned pose measured the disc between 187.92 and 188.15 and the ring between 41.12 and 41.37, so a hash of that transcript is a snapshot of the rasteriser (issue #43)`);
-  for (const keep of ['${t.cyl}', '${t.opacity}', '${t.theta}', '${t.slowmo}', '${t.planeDist}', '${t.radiusPx}', '${t.disc.peak}', '${t.disc.samples}', '${t.disc.ringPeak}', '${t.disc.ringSamples}'])
+  for (const keep of ['${t.cyl}', '${t.opacity}', '${t.theta}', '${t.slowmo}', 't.planeDist', '${t.radiusPx}', '${t.disc.peak}', '${t.disc.samples}', '${t.disc.ringPeak}', '${t.disc.ringSamples}'])
     assert.ok(def.includes(keep), `the recorded tip line dropped ${keep}, which every one of those five runs reproduced:\n  ${def}`);
   assert.ok(/READS/.test(def) && /SPARK_DISC_FLOOR/.test(def), `the recorded tip line states no verdict against the published floor, so the record carries drifting numbers instead of the facts the laws reach:\n  ${def}`);
   const dAt = src.indexOf('const tipDetail = ');

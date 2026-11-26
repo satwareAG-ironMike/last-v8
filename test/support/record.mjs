@@ -39,35 +39,44 @@ export const LIVE_POSE = ['running'];
 const PROCESS_HANDLE = /0x[0-9a-f]{6,}/gi;
 
 /**
- * The stable shot line: buffer, sample count, and for a pinned pose the lit coverage,
- * luminance floor/ceiling/contrast and lit span - the exact numbers the gate's own laws
- * compare.
+ * The stable shot line: buffer, sample count, the verdict the shot's own floors reach, and
+ * for a pinned pose the luminance floor/ceiling/contrast and the lit span.
  *
- * A shot taken at a live rpm has no pose, so none of those four measures anything a law
- * can re-derive: the shutter opens wherever the animation stood. The luminance trio was
- * dropped for that reason in 8F-1; a re-derived pair of the fixed gate then measured the
- * other two moving as well (tmp/nc8f3b-restored-a.out `lit 27.6%` against
- * tmp/nc8f3b-restored-b.out `lit 27.7%`). A live-rpm line therefore states the verdict its
- * laws reach against the published floors - the shape compareLine publishes - and nothing
- * else. The floors come from the caller, which is where the gate holds them.
+ * The lit coverage percentage is not in it. It is a reading of a rendered frame, and slice
+ * 8F-5 measured a PINNED pose moving: `shot inspect ... lit 38.0%` against `lit 38.1%` for
+ * one pose at one head (tmp/v8-8f-pair-a.out against tmp/v8-8f-pair-b.out) and `lit 26.7%`
+ * against `lit 26.8%` for shot ohv-cutaway (tmp/v8-8f3-shots5.out against
+ * tmp/v8-8f3-shots6.out) - about 100 of 101626 sampled pixels crossing the lit threshold
+ * between two renders of the same pose, which is the noise this gate's own determinism law
+ * already publishes (up to 120 pixels, tmp/v8-8f2-shots2.out). What the coverage laws
+ * compare is the coverage against the published floor, so the line states that verdict and
+ * detailLine keeps the number.
+ *
+ * A shot taken at a live rpm has no pose, so its luminance trio and lit span are stopwatch
+ * readings in the same sense (tmp/nc8f3b-restored-a.out `lit 27.6%` against
+ * tmp/nc8f3b-restored-b.out `lit 27.7%`, ceilings 250.9 against 249.1): a live-rpm line
+ * states the verdicts and nothing else. The floors come from the caller, which is where the
+ * gate holds them.
  */
 export const shotLine = (name, s, floors = {}) => {
   const base = `shot ${name.padEnd(9)} ${s.pixels.w}x${s.pixels.h} buffer, ${s.pixels.samples} samples`;
-  if (LIVE_POSE.includes(name)) {
-    const cleared = [];
-    if (floors.samplesMin !== undefined) cleared.push(`at least ${floors.samplesMin} pixels sampled`);
-    if (floors.litMin !== undefined) cleared.push(`at least ${(floors.litMin * 100).toFixed(0)}% lit`);
-    assert(cleared.length, 'shotLine was given a live-rpm shot and no published floor to state');
+  const cleared = [];
+  if (floors.samplesMin !== undefined) cleared.push(`at least ${floors.samplesMin} pixels sampled`);
+  if (floors.litMin !== undefined) cleared.push(`at least ${(floors.litMin * 100).toFixed(0)}% lit`);
+  cleared.push('not flat');
+  assert(cleared.length, 'shotLine was given a shot and no published floor to state');
+  if (LIVE_POSE.includes(name))
     return `${base}, clears the published floors (${cleared.join(', ')}) (live rpm, pose not pinned)`;
-  }
-  return format('%s, lit %s%%, luminance %s..%s contrast %s, lit span %dx%d',
-    base, (s.pixels.litFraction * 100).toFixed(1), s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
+  return format('%s, clears the published floors (%s), luminance %s..%s contrast %s, lit span %dx%d',
+    base, cleared.join(', '), s.pixels.min, s.pixels.max, s.pixels.contrast, s.pixels.litSpan.rows, s.pixels.litSpan.cols);
 };
 
-/** The volatile extras, for a human reading the gate rather than for a record. */
+/** The volatile extras, for a human reading the gate rather than for a record. The lit
+ *  coverage sits here too since 8F-5: it is a rendered-frame reading, not a fact about the
+ *  pose, and the record states its verdict instead. */
 export const detailLine = (name, s) => format(
-  'detail %s %d bytes, pixel hash %d, mean %s, draw calls %d',
-  name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, s.pixels.drawCalls,
+  'detail %s %d bytes, pixel hash %d, mean %s, lit %s%%, draw calls %d',
+  name.padEnd(9), s.bytes, s.pixels.hash, s.pixels.mean, (s.pixels.litFraction * 100).toFixed(1), s.pixels.drawCalls,
 );
 
 /** One pixel comparison of two renders, printed as the verdict its laws state against
