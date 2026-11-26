@@ -380,13 +380,22 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
     assert.ok(src.includes(`setSlowmo(${f})`), `the gate never calls setSlowmo(${f}), so row P1-G6's clause "the spark visible in CUTAWAY at 1/10 and 1/50" has no picture behind it`);
   for (const f of ['17-cutaway-spark-10.png', '18-cutaway-spark-50.png', '19-cutaway-spark-off.png'])
     assert.ok(src.includes(f), `the gate writes no ${f}: the lit frame, the same pose at the clamp floor, or the same tip past its burn window is never pictured`);
+  // Every clause below is scoped to the CALL SITE, not to the bare name. Measured on the
+  // first control pass (tmp/8f4-controls.mjs): a clause that greps the file for a name which
+  // also sits in a comment or in the gate's own refusal text stays green after the call is
+  // deleted - the same class of dead gate this file already names for the OHV reads, and here
+  // `GLOW_TIP = /^plug-cyl(\d+)-flash$/` in the older glow audit satisfied the tip-name clause
+  // while the spark read itself was gone.
   assert.ok(/const SPARK_READ = /.test(src), 'there is no spark read: the flash is asserted in the gate rather than measured off the live tree');
-  assert.ok(src.includes('/^plug-cyl(\\d+)-flash$/'), 'the gate never names the tip glow mesh it measures (src/render/plugs.js:102 names it plug-cyl{N}-flash)');
-  assert.ok(src.includes('.material.opacity'), 'the gate never reads a glow opacity off the live material, so the flash is typed rather than measured (src/render/plugs.js:119-120 writes it there)');
-  assert.ok(src.includes('state.slowmo'), 'the gate never reads the page live slowmo factor, so the speed in the record is a number typed here rather than the factor the animation is really running at (src/engine/animation.js:54)');
-  for (const call of ['firingProgress(', 'sparkAngle(', 'totalAdvance('])
-    assert.ok(src.includes(call), `the gate never calls ${call}, so the burn window, the spark instant or the advance it expects is typed here instead of read from the module that publishes it`);
-  assert.ok(src.includes('SPEC.plug.glowR'), 'the region the flash is measured in is not derived from the published glow sphere (SPEC.plug.glowR), so a pixel box was invented here');
+  assert.ok(/TIP_NAME\.test\(t\.name\)/.test(src), 'the gate never checks the mesh it read against the name src/render/plugs.js:102 gives the tip glow (plug-cyl{N}-flash), so the read could come from any object');
+  assert.ok(/opacity: o\.material\.opacity/.test(src), 'the gate never reads a glow opacity off the live material, so the flash is typed rather than measured (src/render/plugs.js:119-120 writes it there)');
+  assert.ok(/theta: v\.state\.theta,/.test(src), 'the gate truncates the crank angle it reads, so the pose is compared against a burn window the gate itself rounded (measured: a 6-decimal theta of 609.485714 sits outside the window src/engine/timing.js opens at 720 - totalAdvance, and the gate refused its own lit frame)');
+  assert.ok(/slowmo: v\.state\.slowmo,/.test(src), 'the gate never reads the page live slowmo factor, so the speed in the record is a number typed here rather than the factor the animation is really running at (src/engine/animation.js:54)');
+  assert.ok(/const progress = firingProgress\(cyl, t\.theta, adv\);/.test(src), 'the gate does not take the burn window from src/engine/timing.js for the angle it read, so the progress it expects is typed here');
+  assert.ok(/const sparkAt = sparkAngle\(sparkCyl, SPARK_RPM, SPARK_THROTTLE\);/.test(src), 'the gate does not take the spark instant from src/engine/ignition.js for the cylinder it pictures, so the pose is a typed crank angle');
+  assert.ok(/const adv = totalAdvance\(SPARK_RPM, SPARK_THROTTLE\);/.test(src), 'the gate does not take the advance from src/engine/ignition.js, so the window it checks is a typed number');
+  assert.ok(/v\.SPEC\.plug\.glowR \* \(h \/ 2\)/.test(src), 'the region the flash is measured in is not the published glow sphere projected through the page camera (SPEC.plug.glowR), so a pixel box was invented here');
+  assert.ok(/plane\.distanceToPoint\(p\)/.test(src) && /t\.planeDist > 0/.test(src), 'the gate types which plugs the CUTAWAY section keeps instead of measuring it off the published plane, so it could picture a flash on a side the section removes');
   // Amended after measuring (tmp/spark-probe20.mjs -> tmp/spark-probe20.out): two renders of ONE
   // pinned pose at ONE speed already differ on 21 of 101626 sampled pixels (worst luminance
   // delta 35) and two renders at 1/50 differ on 82, so demanding one hash for both spark frames
@@ -397,8 +406,15 @@ test('the screenshot gate pictures the spark in CUTAWAY at the two slowmo factor
   assert.ok(src.includes('shots.sparkSlow.pixels.diff'), 'the gate does not compare the 1/10 picture with the 1/50 picture sample to sample, so a flash that depends on the wall clock instead of the crank angle would pass');
   assert.ok(/compareLine\('spark pair 1\/10 vs 1\/50/.test(src), 'the spark pair is compared without a published floor to state, so the record would print counts a reviewer cannot re-derive (issue #43)');
   assert.ok(/Math\.abs\(lit\.disc\.mean - slow\.disc\.mean\)/.test(src), "the gate never requires the flash's measured light to be the same number at 1/10 as at 1/50, which is the crank-not-wall-clock claim row P1-G6 makes");
-  assert.ok(/\.disc\.mean > /.test(src) && src.includes('.disc.ringMean'), 'the gate never compares the lit tip against the ring around it, so "visible in CUTAWAY" is never measured');
-  assert.ok(src.includes('off.disc.mean'), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
+  // Same scoping for the three comparisons that make "visible", "decays" and "the flash
+  // changed the picture" measurements. Measured in the loose control phase: deleting the
+  // ring comparison stayed green because `lit.disc.mean > off.disc.mean` still matched
+  // `\.disc\.mean > `, and deleting the lit-against-off comparison stayed green because the
+  // 1/50-against-off line still spelled `off.disc.mean`.
+  assert.ok(/lit\.disc\.mean > lit\.disc\.ringMean/.test(src), 'the gate never compares the lit tip against the ring of pixels around it, so "visible in CUTAWAY" is never measured');
+  assert.ok(/lit\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never compares the lit tip against the same tip past its burn window, so a glow that simply stands there lit would pass');
+  assert.ok(/slow\.disc\.mean > off\.disc\.mean/.test(src), 'the gate never requires the flash to read at the clamp floor 1/50 as well as at 1/10, so a flash that only survives at one frame rate would pass');
+  assert.ok(/shots\.sparkLit\.pixels\.hash === shots\.sparkOff\.pixels\.hash/.test(src), 'the gate never compares the lit picture with the picture past the burn window, so a flash that changes nothing on screen would pass');
 });
 
 // src/ui/viewControls.js:477-490: explode() frames the camera on explodedBounds(), and
