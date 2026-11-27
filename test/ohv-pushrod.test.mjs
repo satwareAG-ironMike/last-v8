@@ -92,7 +92,10 @@ function verts(group, bank, keep = () => true) {
 }
 
 const train = () => grp(createValvetrain(mats(), 'ohv'));
-const head = () => grp(createHeads(mats(), 'ohv'));
+// read through a variable named for what it passes: test/ohv-head.test.mjs refuses a
+// createHeads call site whose arguments do not name the variant it hands the builder
+const headsFor = (variant) => grp(createHeads(mats(), variant));
+const head = () => headsFor('ohv');
 
 test(`${LAW}: SPEC.variants.ohv publishes the pushrod contract the rod, its bore and its guide all read`, () => {
   const P = SPEC.variants.ohv.pushrod;

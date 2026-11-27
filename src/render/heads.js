@@ -418,9 +418,20 @@ function headCasting(bank, materials, camCarrier) {
   // (SPEC.head wall fields): a re-proportioned valve row moves these with it.
   const guideOd = H.guideBoreR + H.guideWall; // 1.05
   const pilotOd = guideOd + H.seatPilotClr; // 1.60
-  const floorOd = H.bucketBoreR + H.springFloorWall; // 2.70
   const tubeId = V.springRadius + V.springWireRadius + H.springTubeClr; // 1.90 over the 1.57 coil OD
   const tubeOd = tubeId + H.springTubeWall; // 2.20
+  // The floor is machined around the bore the follower stands in, so it is a
+  // variant fact: only the DOHC variant has a bucket bore in its head. Slice 8K
+  // took the 16 bucket-bore collars out of the OHV head - its follower is a lifter
+  // standing in the block - so an OHV floor machined around a bucket bore it does
+  // not have is the same defect, one ring later. tmp/8l-route.mjs ->
+  // tmp/v8-8l-rowmatrix.out measured what inheriting it costs: with the DOHC floor
+  // (2.5500) the published 0.9500 cm exhaust port bore is a legal swept duct in 9 of
+  // 24000 candidates at the thinnest floor tested, worst clearance 0.3168 cm over the
+  // 0.3000 cm cast wall; with the floor standing on this variant's own 1.9000 cm
+  // machined spring bore (2.2000) it is legal in 87 candidates at every floor
+  // thickness, worst clearance 0.6075 cm.
+  const floorOd = camCarrier ? H.bucketBoreR + H.springFloorWall : tubeId + H.springFloorWall; // 2.55 / 2.20
   const collarOd = H.bucketBoreR + H.collarWall; // 2.80
   for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
     for (const valve of valves) {
