@@ -8,15 +8,19 @@
 // bank azimuths SPEC.banks publishes - the renderer and the laws read these
 // values and may not type a cam radius, station, width or angle of their own.
 //
-// The follower train (16 lifters, 16 pushrods, 16 rockers, 2 rocker covers) is
-// NOT here yet: SPEC.variants.ohv.drawn is still false, because the block has
-// not machined its lifter bores. This file publishes the cam and the axis a
-// lifter of each bank stands on, which is what the cam's phasing needs.
+// The follower train: the 16 lifters that ride this cam stand in the bores this
+// variant's casting machines (slice 8C-3a/3b) and the 16 valves and 16 springs
+// they act on through the lever are posed here (slice 8J). The 16 pushrods, the
+// 16 rockers and the 2 rocker covers are the measured remainder, named in
+// SPEC.variants.ohv.pendingHardware (slice 8K). This file publishes the cam, the
+// axis a lifter of each bank stands on and the lift law the valve row is posed
+// with - the renderer and the laws read these values and may not type their own.
 // ---------------------------------------------------------------------------
 import { SPEC, wrap360, signedAngle } from './spec.js';
 import { ohvBearings, camGroupNames } from './layout.js';
 import {
   camAzimuth, camLiftCm, crankEvent, eventMid, lobeFaceDistance, lobeProfileRadius,
+  valveAxisDir, valveSeatPoint,
 } from './timing.js';
 
 const V = SPEC.variants.ohv;
@@ -143,6 +147,35 @@ export function ohvLobeAzimuth(cyl, valve, theta) {
 export function ohvLift(cyl, valve, theta) {
   const psi = signedAngle(ohvLobeAzimuth(cyl, valve, theta) - lifterAzimuth(cyl.bank));
   return Math.max(0, ohvLobeFaceDistance(valve, psi) - H.camBaseRadius);
+}
+
+/**
+ * The lift the valve sees: the follower's travel through the lever.
+ *
+ * `ohvLift` is what the flat tappet rides at - the cam's own grind, 0.733333 cm
+ * at the published ratio (issue #45, slice 8I). The valve sits on the other end
+ * of SPEC.variants.ohv.rockerRatio, so this is the number the valve row is posed
+ * with and the number the head's crown-clearance law is measured at: it peaks at
+ * exactly SPEC.valves.maxLift, the same lift the DOHC buckets produce, because
+ * the grind was derived as maxLift / ratio rather than typed beside it.
+ *
+ * It is NOT timing.js valveLift: that reads the DOHC cam and the DOHC bucket
+ * face, and this variant has neither.
+ */
+export function ohvValveLift(cyl, valve, theta) {
+  return ohvLift(cyl, valve, theta) * SPEC.variants.ohv.rockerRatio;
+}
+
+/**
+ * Point on an OHV valve, `s` cm from the seat along the axis at zero lift,
+ * translated down the axis by the lever's live lift. The twin of timing.js
+ * valveAxisPoint with this variant's lift law in place of the DOHC one.
+ */
+export function ohvValvePoint(cyl, valve, s, theta) {
+  const seat = valveSeatPoint(cyl, valve);
+  const d = valveAxisDir(cyl, valve);
+  const off = s - ohvValveLift(cyl, valve, theta);
+  return { x: seat.x + off * d[0], y: seat.y + off * d[1], z: seat.z + off * d[2] };
 }
 
 /**
