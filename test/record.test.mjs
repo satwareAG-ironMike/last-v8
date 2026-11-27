@@ -386,22 +386,36 @@ test('the screenshot gate boots the OHV build through the address, not only the 
     assert.ok(read.includes(call), `the OHV pass never calls ${call} where it reads the published lists, so ${what} is a typed number in the gate rather than a published one:\n  ${read}`);
 });
 
-test('the OHV pass prints its valvetrain census and names the valve and spring gap it measures', () => {
+test('the OHV pass prints its valvetrain census and refuses a gap the live tree contradicts', () => {
   const src = readFileSync('test/screenshots.mjs', 'utf8');
-  // The pass measured 0 valves and 0 springs in the OHV build while
-  // SPEC.variants.ohv.pendingHardware names only pushrods, rockers and covers. The gap
-  // belongs in the record a reader can re-derive, not in a comment.
+  // Slice 8J (issue #51 option A): this pass used to print 0 valves and 0 springs and
+  // name the gap in the record. The row is drawn now, so the law pins the measurement
+  // and both refusals - a family pendingHardware still names while the live tree draws
+  // it, and a gap the live tree draws none of and leaves unlisted.
   assert.ok(/ohv valvetrain: /.test(src), 'the gate writes no OHV valvetrain census line');
   const census = (src.match(/console\.log\(`ohv valvetrain: [^\n]*/g) || []);
   assert.equal(census.length, 1, `the gate prints ${census.length} OHV census lines, expected one`);
-  for (const field of ['lifters', 'gallery', 'journals', 'lobes', 'necks', 'valves', 'springs'])
+  for (const field of ['lifters', 'gallery', 'journals', 'lobes', 'necks'])
     assert.ok(census[0].includes(`\${ohv.counts.${field}}`), `the OHV census does not count ${field}`);
+  for (const field of ['valves', 'springs'])
+    assert.ok(census[0].includes(`\${drawnOhv.${field}}`), `the OHV census does not count the drawn ${field} the gap clause refuses on`);
+  assert.ok(census[0].includes('${ohv.counts.valves}'), 'the census does not print the valve meshes the drawn rows are made of');
+  const at = src.indexOf('const drawnOhv = {');
+  assert.ok(at > 0, 'the gate has no single block where the drawn OHV families are measured, so a count can be typed anywhere and no law sees it');
+  const read = src.slice(at, src.indexOf('};', at) + 2);
+  for (const field of ['valveRows', 'springs', 'pushrods', 'rockers', 'covers'])
+    assert.ok(read.includes(`ohv.counts.${field}`), `the drawn-family block does not measure ${field} off the live tree`);
   // Same control finding as the published-read block: the name also stands in a comment and
   // in the printed label, so a law that only searches for it passes even when the read is
   // gone (measured: the poke ohv-pending-not-read replaced the read with ([])) .
   assert.ok(/const pendingOhv = \(SPEC\.variants\.ohv\.pendingHardware \|\| \[\]\)\.map\(\(p\) => p\.family\);/.test(src), 'the OHV pass never reads the pending hardware families this build publishes into a variable the gap clause can check:');
-  assert.ok(/ohv undeclared gap/.test(src), 'the gate does not name the valve and spring gap it measured');
-  assert.ok(/pendingOhv\.some\(\(f\) => \/valve\|spring\/i\.test\(f\)\)/.test(src), 'the gap clause does not check the published pending list for a valve or spring family');
+  assert.ok(/pendingOhv\.includes\(family\) && n > 0/.test(src), 'the gate does not refuse a family pendingHardware names owed while the live tree draws it: the list has to be the measured gap');
+  assert.ok(/!pendingOhv\.includes\(family\) && n === 0/.test(src), 'the gate does not refuse a gap the live tree draws none of and pendingHardware does not name: an undeclared gap is invisible in the record');
+  // The four cam covers this build inherits from the shared head casting are not the
+  // rocker covers pendingHardware names, and the record has to say which is which.
+  const housings = (src.match(/console\.log\(`ohv cam housings drawn today: [^\n]*/g) || []);
+  assert.equal(housings.length, 1, `the gate prints ${housings.length} cam-housing lines, expected the one naming the inherited cam covers and the owed rocker covers`);
+  assert.ok(housings[0].includes('${ohv.counts.camCovers}') && housings[0].includes('${drawnOhv.covers}'), 'the cam-housing line does not print both the inherited cam covers and the drawn rocker covers');
 });
 
 test('every OHV shot follows a pinned crank pose, never a wall clock', () => {

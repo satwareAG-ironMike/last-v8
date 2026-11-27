@@ -1218,7 +1218,8 @@ await withPage({ minFrames: 6, watchdogMs: 900000, window: '1280,800' }, async (
 // address. Every count below is read from the modules that publish it.
 const OHV_READ = `(() => {
   const v = window.__v8, THREE = v.THREE;
-  const names = { lifters: [], journals: [], lobes: [], necks: [], valves: [], springs: [], buckets: [], camshafts: [], gallery: [], chains: [] };
+  const names = { lifters: [], journals: [], lobes: [], necks: [], valves: [], springs: [], buckets: [], camshafts: [], gallery: [], chains: [], pushrods: [], rockers: [], covers: [], camCovers: [] };
+  const rows = { valves: new Set() };
   let rollers = 0, meshes = 0;
   v.engine.traverse((o) => {
     if (!o.isMesh) return;
@@ -1228,7 +1229,7 @@ const OHV_READ = `(() => {
     if (/^cam-V-journal/.test(n)) names.journals.push(n);
     if (/^lobe-cyl/.test(n)) names.lobes.push(n);
     if (/^cam-V-neck/.test(n)) names.necks.push(n);
-    if (/^valve-cyl/.test(n)) names.valves.push(n);
+    if (/^valve-cyl/.test(n)) { names.valves.push(n); rows.valves.add(n.replace(/-(head|stem|retainer)$/, '')); }
     if (/^spring-cyl/.test(n)) names.springs.push(n);
     if (/^bucket-/.test(n)) names.buckets.push(n);
     if (/^camshaft-/.test(n)) names.camshafts.push(n);
@@ -1239,6 +1240,18 @@ const OHV_READ = `(() => {
     names.chains.push(name);
     o.traverse((x) => { if (x.isMesh && /-roller-/.test(x.name)) rollers++; });
   }
+  // the families this variant still owes are counted over every object, mesh or
+  // group: an owed family drawn as a group is still drawn. "covers" is the rocker
+  // covers pendingHardware names; the four cam covers this build inherits from the
+  // shared head casting are counted separately and named in the record, because the
+  // OHV variant's cams stand in the block and those housings are #16's to replace.
+  v.engine.traverse((o) => {
+    const n = String(o.name);
+    if (/^pushrod-/.test(n)) names.pushrods.push(n);
+    if (/rocker-cover|^cover-/.test(n)) names.covers.push(n);
+    else if (/^rocker-/.test(n)) names.rockers.push(n);
+    if (/^cam-cover-/.test(n)) names.camCovers.push(n);
+  });
   const inspectable = new Set(v.view.inspectables().map((i) => i.name));
   let lowest = Infinity;
   v.engine.traverse((o) => {
@@ -1256,7 +1269,9 @@ const OHV_READ = `(() => {
     meshes,
     counts: {
       lifters: names.lifters.length, journals: names.journals.length, lobes: names.lobes.length,
-      necks: names.necks.length, valves: names.valves.length, springs: names.springs.length,
+      necks: names.necks.length, valves: names.valves.length, valveRows: rows.valves.size,
+      springs: names.springs.length, pushrods: names.pushrods.length, rockers: names.rockers.length,
+      covers: names.covers.length, camCovers: names.camCovers.length,
       buckets: names.buckets.length, camshafts: names.camshafts.length, gallery: names.gallery.length,
       chains: names.chains.length,
     },
@@ -1294,19 +1309,33 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     bad.push(`ohv: the central cam draws ${ohv.counts.necks} necks while ohvCamLayout() derives ${published.cam.necks.length}`);
   if (ohv.counts.camshafts !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.camshafts} DOHC camshafts`);
   if (ohv.counts.buckets !== 0) bad.push(`ohv: the OHV build draws ${ohv.counts.buckets} DOHC spring buckets`);
-  // The valve gap this pass found, printed rather than assumed away: src/render/valvetrain.js
-  // returns from its central-cam branch (line 284) before the valve and spring loop, so the
-  // OHV build draws no valve and no spring at all, while SPEC.variants.ohv.pendingHardware
-  // names only pushrods, rockers and covers as pending. A build that draws some of the
-  // valves and not all of them is a disagreement and is refused; drawing none is a published
-  // gap of this variant and is named in the record, which is what keeps row P1-G6 open.
+  // Slice 8J (issue #51 option A): this pass used to print the valve gap because
+  // src/render/valvetrain.js returned from its central-cam branch before the valve
+  // and spring loop. The row is drawn now, so the gate measures it against the seats
+  // the head machines and refuses a family pendingHardware still names while the live
+  // tree draws it - the measured gap test/ohv-valve.test.mjs and the OHV build
+  // contract law hold the spec to, read here off the running page.
   const pendingOhv = (SPEC.variants.ohv.pendingHardware || []).map((p) => p.family);
-  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${ohv.counts.valves} valve meshes and ${ohv.counts.springs} springs drawn for ${SPEC.cylinders.length} cylinders`);
+  const seats = SPEC.cylinders.length * 2;
+  const drawnOhv = {
+    valves: ohv.counts.valveRows, springs: ohv.counts.springs,
+    pushrods: ohv.counts.pushrods, rockers: ohv.counts.rockers, covers: ohv.counts.covers,
+  };
+  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${drawnOhv.valves} valves drawn as ${ohv.counts.valves} meshes (disc, stem, retainer) and ${drawnOhv.springs} springs for ${seats} seats`);
   console.log(`ohv pending hardware published by SPEC.variants.ohv.pendingHardware: ${pendingOhv.join(', ')}`);
-  if (ohv.counts.valves === 0 && !pendingOhv.some((f) => /valve|spring/i.test(f)))
-    console.log(`ohv undeclared gap: the build draws no valve and no spring while the published pending list names only ${pendingOhv.join(', ')}`);
-  if (ohv.counts.valves > 0 && ohv.counts.valves !== SPEC.cylinders.length * 2)
-    bad.push(`ohv: the OHV build draws ${ohv.counts.valves} valve meshes for ${SPEC.cylinders.length} cylinders`);
+  console.log(`ohv cam housings drawn today: ${ohv.counts.camCovers} cam covers inherited from the shared head casting, ${drawnOhv.covers} rocker covers - pendingHardware names the rocker covers owed, and the iron they stand on is #16's`);
+  if (drawnOhv.valves !== seats)
+    bad.push(`ohv: the OHV build draws ${drawnOhv.valves} valve rows for the ${seats} seats its head machines`);
+  if (ohv.counts.valves !== drawnOhv.valves * 3)
+    bad.push(`ohv: ${ohv.counts.valves} valve meshes answer ${drawnOhv.valves} valve rows: a row is a disc, a stem and a retainer`);
+  if (drawnOhv.springs !== seats)
+    bad.push(`ohv: the OHV build draws ${drawnOhv.springs} springs for the ${seats} valves they seat on`);
+  for (const [family, n] of Object.entries(drawnOhv)) {
+    if (pendingOhv.includes(family) && n > 0)
+      bad.push(`ohv: pendingHardware names "${family}" owed while the live tree draws ${n} of them: the list has to be the measured gap`);
+    if (!pendingOhv.includes(family) && n === 0)
+      bad.push(`ohv: the live tree draws no "${family}" and pendingHardware does not name it either: an undeclared gap is invisible in the record`);
+  }
   if (ohv.counts.gallery !== published.ribs)
     bad.push(`ohv: the block casts ${ohv.counts.gallery} gallery ribs while ohvLifterGallery() publishes ${published.ribs} (rib + guide per cluster)`);
   console.log(`ohv gallery ribs on the inspection menu: ${ohv.counts.gallery - ohv.galleryOffMenu.length} of ${ohv.counts.gallery}${ohv.galleryOffMenu.length ? ` (${ohv.galleryOffMenu.slice(0, 6).join(', ')} off the menu)` : ''}`);

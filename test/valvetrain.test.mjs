@@ -1344,7 +1344,7 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
   };
   const FAMILY_RE = {
     lifters: /^lifter-cyl/, valves: /^valve-cyl\d+-(intake|exhaust)$/, springs: /^spring-cyl\d+-(intake|exhaust)$/,
-    pushrods: /pushrod/, rockers: /rocker/, covers: /(^|-)cover/,
+    pushrods: /^pushrod-/, rockers: /^rocker(?!-cover)/, covers: /rocker-cover|^cover-/,
   };
   const drawn = {
     lifters: lifters.length, valves: drawnGroups(FAMILY_RE.valves), springs: drawnCount(FAMILY_RE.springs),

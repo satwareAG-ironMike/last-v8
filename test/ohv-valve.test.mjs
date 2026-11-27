@@ -48,6 +48,13 @@ function family(group, re) {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Drawn parts of an owed family: mesh or group, either is a drawn part. */
+function anyFamily(group, re) {
+  const out = [];
+  group.traverse((o) => { if (re.test(o.name)) out.push(o); });
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Drawn valve groups (a valve is a group of disc + stem + retainer). */
 function valveGroups(group) {
   const out = new Map();
@@ -361,9 +368,9 @@ test(`${LAW}: pendingHardware names exactly the valvetrain families this build d
     lifters: family(group, /^lifter-cyl/).length,
     valves: valveGroups(group).size,
     springs: family(group, /^spring-cyl\d+-(intake|exhaust)$/).length,
-    pushrods: family(group, /pushrod/).length,
-    rockers: family(group, /rocker/).length,
-    covers: family(group, /(^|-)cover/).length,
+    pushrods: anyFamily(group, /^pushrod-/).length,
+    rockers: anyFamily(group, /^rocker(?!-cover)/).length,
+    covers: anyFamily(group, /rocker-cover|^cover-/).length,
   };
   for (const [name, n] of Object.entries(drawn)) {
     const listed = pending.some((p) => p.family === name);
