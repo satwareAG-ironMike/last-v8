@@ -129,34 +129,63 @@ test(`${LAW}: the DOHC head still carries every cam-carrier solid the published 
 test(`every caller hands createHeads the build's variant`, () => {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.m?js$/.test(e.name) ? [`${dir}/${e.name}`] : []);
-  const files = [...walk('src'), ...walk('test')].filter((f) => f !== 'src/render/heads.js' && f !== 'test/ohv-head.test.mjs');
-  let seen = 0;
+  const files = [...walk('src'), ...walk('test')].filter((f) => f !== 'src/render/heads.js');
+
+  /** is index `at` inside a string or template literal on this line? */
+  const inString = (line, at) => {
+    let quote = null;
+    for (let i = 0; i < at; i++) {
+      const c = line[i];
+      if (c === '\\') { i++; continue; }
+      if (quote) { if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'" || c === '`') quote = c;
+    }
+    return quote !== null;
+  };
+
+  let seen = 0, product = 0;
   for (const file of files) {
     const src = readFileSync(file, 'utf8');
     if (!src.includes('createHeads')) continue;
-    for (const line of src.split('\n')) {
+    // the builder under the name it is imported as: an alias is still this function
+    const names = new Set(['createHeads']);
+    for (const imp of src.matchAll(/import\s*\{([^}]*)\}/g))
+      for (const part of imp[1].split(',')) {
+        const as = /(\S+)\s+as\s+(\w+)/.exec(part.trim());
+        if (as && as[1] === 'createHeads') names.add(as[2]);
+      }
+    for (const [no, line] of src.split('\n').entries()) {
       const t = line.trim();
-      if (/^(import|export|\*|\/\/|\/\*)/.test(t)) continue; // imports, the definition, comments
-      for (const m of line.matchAll(/createHeads(\s*\()?/g)) {
-        const at = m.index;
-        const before = line.slice(0, at).trimEnd();
-        if (/(\{|,)$/.test(before)) continue; // a destructured import of the function itself
-        const open = at + m[0].length - 1;
-        if (m[0].trim() === 'createHeads')
-          assert.fail(`${file} passes createHeads as a bare builder reference (${t.slice(0, 80)}), so the call it feeds cannot name a variant`);
-        let depth = 0, end = -1;
-        for (let i = open; i < line.length; i++) {
-          if (line[i] === '(') depth++;
-          else if (line[i] === ')' && --depth === 0) { end = i; break; }
+      if (/^(import|export)\b/.test(t) || /^(\/\/|\/\*|\*)/.test(t)) continue;
+      for (const name of names) {
+        for (const m of line.matchAll(new RegExp(`\\b${name}\\b`, 'g'))) {
+          const at = m.index;
+          if (inString(line, at)) continue; // a test title or an error message, not a call site
+          const before = line.slice(0, at).replace(/\s+$/, '');
+          const after = line.slice(at + name.length);
+          if (/^\s*\(/.test(after)) {
+            const open = at + name.length + after.indexOf('(');
+            let depth = 0, end = -1;
+            for (let i = open; i < line.length; i++) {
+              if (line[i] === '(') depth++;
+              else if (line[i] === ')' && --depth === 0) { end = i; break; }
+            }
+            const args = line.slice(open + 1, end < 0 ? line.length : end);
+            seen++;
+            if (file.startsWith('src/')) product++;
+            assert.ok(/variant/i.test(args),
+              `${file}:${no + 1} calls ${name}(${args.trim()}) with no variant, so the OHV build gets the DOHC head by default - the defect issue #46 names`);
+          } else if (/\{$/.test(before)) {
+            continue; // a destructured binding of the builder itself, its calls are read on their own lines
+          } else {
+            assert.fail(`${file}:${no + 1} hands ${name} to a value (${t.slice(0, 90)}) instead of calling it by name, so the arguments that call site passes are unreadable to this law - the pattern issue #61 files`);
+          }
         }
-        const args = line.slice(open + 1, end < 0 ? line.length : end);
-        seen++;
-        assert.ok(/variant/i.test(args),
-          `${file} calls createHeads(${args.trim()}) with no variant, so the OHV build gets the DOHC head by default - the defect issue #46 names`);
       }
     }
   }
-  assert.ok(seen > 0, 'no createHeads call site was read, so this law is not measuring the callers it names');
+  assert.ok(product >= 1, `no createHeads call site in src/ was read (${seen} read in test/), so this law is not measuring the build it names`);
+  assert.ok(seen >= 5, `only ${seen} createHeads call sites were read across src/ and test/, so this law is measuring a fraction of the callers it names`);
 });
 
 test(`${LAW}: SPEC publishes the rocker iron contract and src/engine/layout.js derives the layout from it`, async () => {

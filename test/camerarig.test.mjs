@@ -53,7 +53,13 @@ const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 function buildScene() {
   const engine = createBlock(materials);
   engine.name = 'v8-block';
-  for (const u of [createCranktrain, createValvetrain, createHeads, createManifolds]) engine.add(u(materials, SPEC.build.variant).group);
+  engine.add(createCranktrain(materials).group);
+  engine.add(createValvetrain(materials).group);
+  // the heads are called by name, not through a builder loop: a builder handed
+  // to a value list hides its arguments from any law that reads call sites
+  // (issue #46 / issue #61), and this one has to name the variant
+  engine.add(createHeads(materials, SPEC.build.variant).group);
+  engine.add(createManifolds(materials).group);
   engine.updateMatrixWorld(true);
   const stand = createStand(materials).group;
   stand.updateMatrixWorld(true);
