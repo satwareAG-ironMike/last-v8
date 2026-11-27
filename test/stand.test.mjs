@@ -377,7 +377,7 @@ test('no frame member touches the engine: >= minAir real air, mounts exempt', as
 });
 
 test('the stand clears the exhaust outlets and crosses the chain band in the free lane only', async () => {
-  const manifolds = createManifolds(materials);
+  const manifolds = createManifolds(materials, SPEC.build.variant);
   const outlets = [];
   for (const bank of ['L', 'R']) {
     const o = manifolds.group.getObjectByName(`outlet-${bank}`);

@@ -30,6 +30,7 @@ import { createManifolds } from '../src/render/manifolds.js';
 import { createValvetrain } from '../src/render/valvetrain.js';
 import { ohvLifterGallery, ohvLifters, ohvRockerLayout } from '../src/engine/layout.js';
 import * as LAYOUT from '../src/engine/layout.js';
+import { partLabel } from '../src/engine/view.js';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -239,4 +240,24 @@ test(`${LAW}: no drawn pushrod cuts the block's lifter gallery iron`, () => {
   // the published pushrod bore, so the guide prism is counter-bored to it.
   assert.ok(worst.air >= P.boreRadius - P.rodRadius - EPS,
     `${worst.at} stands ${worst.air.toFixed(4)} cm against the pushrod of ${worst.rod}; the guide bore owes the rod ${P.boreRadius} - ${P.rodRadius} = ${(P.boreRadius - P.rodRadius).toFixed(4)} cm of running clearance (SPEC.variants.ohv.pushrod), and tmp/8l-rib.mjs measured 0.1250 cm of rib iron sitting on the 0.5250 cm lifter bore`);
+});
+
+test(`${LAW}: every drawn pushrod is an inspectable member with a label a builder can read`, () => {
+  // The menu is built from partLabel(): src/ui/viewControls.js drops a member whose
+  // label answers its own name. The 16 lifters are on the menu because view.js
+  // labels the per-cylinder family; the rods are named pushrod-cyl<N>-<valve> and
+  // were not in that family, so 16 drawn hardware parts were invisible to PART
+  // INSPECTION - measured here, not assumed from the census.
+  const R = published();
+  const group = grp(createValvetrain(mats(), 'ohv'));
+  const drawn = [];
+  group.traverse((o) => { if (o.isMesh && /^pushrod-cyl/.test(o.name)) drawn.push(o.name); });
+  assert.equal(drawn.length, R.rods.length,
+    `the OHV build draws ${drawn.length} pushrods while src/engine/layout.js ohvPushrods() publishes ${R.rods.length}`);
+  for (const name of drawn) {
+    const label = partLabel(name);
+    assert.notEqual(label, name, `${name}: partLabel() answers its own name, so the inspection menu drops this part`);
+    assert.match(label, /^Pushrod - cylinder \d+ (intake|exhaust) - station /,
+      `partLabel("${name}") reads "${label}": a rod label has to name the part, its cylinder and side, and the station it stands at`);
+  }
 });

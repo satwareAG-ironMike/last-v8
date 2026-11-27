@@ -59,7 +59,7 @@ function buildScene() {
   // to a value list hides its arguments from any law that reads call sites
   // (issue #46 / issue #61), and this one has to name the variant
   engine.add(createHeads(materials, SPEC.build.variant).group);
-  engine.add(createManifolds(materials).group);
+  engine.add(createManifolds(materials, SPEC.build.variant).group);
   engine.updateMatrixWorld(true);
   const stand = createStand(materials).group;
   stand.updateMatrixWorld(true);

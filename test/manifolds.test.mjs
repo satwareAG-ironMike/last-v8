@@ -31,7 +31,7 @@ const materials = new Proxy({}, {
   get: (t, k) => (t[k] ??= new THREE.MeshStandardMaterial({ name: String(k) })),
 });
 
-const build = () => createManifolds(materials);
+const build = () => createManifolds(materials, SPEC.build.variant);
 
 const bankVectors = (bank) => ({
   up: new THREE.Vector3().fromArray(bankUp(bank)),
@@ -359,7 +359,7 @@ test('nothing in the pipework touches the block, heads, valvetrain or cranktrain
 // exempt because they mate onto the head port face by design.
 test('A1-G7: every cam bearing housing keeps the pipework out of its casting (exact measure)', async () => {
   const { group: headGroup } = createHeads(materials, SPEC.build.variant);
-  const { group: pipeGroup } = createManifolds(materials);
+  const { group: pipeGroup } = createManifolds(materials, SPEC.build.variant);
   headGroup.updateMatrixWorld(true);
   pipeGroup.updateMatrixWorld(true);
   const housings = [];

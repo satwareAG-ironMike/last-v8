@@ -37,12 +37,13 @@ export const proxyMaterials = () =>
 /**
  * The engine the laws measure, for the build `variantId` names. Only the creators
  * that are variant-aware today read it - src/render/block.js `createBlock`,
- * src/render/valvetrain.js `createValvetrain` and src/render/oil.js `createOil`
- * (each build routes its oil through its own casting); `createCranktrain`, `createHeads`
- * and `createManifolds` still draw one casting for both builds (issue #8 slice
- * 8C-2b / 8C-3 make them variant-aware), so an OHV shell is honest about the
- * units it names: the stand laws ask for block, cranktrain, valvetrain and
- * manifolds, never for an OHV head the tree does not draw yet.
+ * src/render/valvetrain.js `createValvetrain`, src/render/heads.js `createHeads`,
+ * src/render/manifolds.js `createManifolds`, src/render/oil.js `createOil` and
+ * src/render/coolant.js `createCoolant`; `createCranktrain` and `createPlugs` are
+ * shared by both builds. The heads and the pipework a law measures here are the
+ * SHIPPED build's, because that is the casting the head and manifold laws gate -
+ * a law that wants this variant's own head iron names `createHeads(materials,
+ * 'ohv')` itself (test/ohv-head.test.mjs does).
  */
 export function engineUnits(materials, variantId = SPEC.build.variant) {
   return {
@@ -50,7 +51,7 @@ export function engineUnits(materials, variantId = SPEC.build.variant) {
     cranktrain: createCranktrain(materials).group,
     valvetrain: createValvetrain(materials, variantId).group,
     heads: createHeads(materials, SPEC.build.variant).group,
-    manifolds: createManifolds(materials).group,
+    manifolds: createManifolds(materials, SPEC.build.variant).group,
     // The plug unit keeps its update(): a law that gates a tip flash has to pose
     // the flash the way src/main.js does, through the same renderer.
     plugs: createPlugs(materials),
