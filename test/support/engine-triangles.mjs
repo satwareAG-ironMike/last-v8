@@ -49,7 +49,7 @@ export function engineUnits(materials, variantId = SPEC.build.variant) {
     block: createBlock(materials, variantId),
     cranktrain: createCranktrain(materials).group,
     valvetrain: createValvetrain(materials, variantId).group,
-    heads: createHeads(materials).group,
+    heads: createHeads(materials, SPEC.build.variant).group,
     manifolds: createManifolds(materials).group,
     // The plug unit keeps its update(): a law that gates a tip flash has to pose
     // the flash the way src/main.js does, through the same renderer.

@@ -151,7 +151,7 @@ function radialBand(root, name, centre = [0, 0]) {
  * engine calls that group `cam-R-intake`. */
 function drawnCamBearings() {
   const out = new Map();
-  posed(createHeads(mats()).group).traverse((o) => {
+  posed(createHeads(mats(), SPEC.build.variant).group).traverse((o) => {
     if (!o.isMesh) return;
     const m = /^shell-([A-Za-z]+-[A-Za-z]+)-(-?[\d.]+)-(cap|cradle)$/.exec(o.name);
     if (!m) return;
@@ -965,7 +965,7 @@ test('oil 8D-2a: every drawn oil member is inspectable by name and only the sump
     // the iron the feeds are bored in, as the live world draws it: a feed whose
     // userData.part names nothing in the tree is a provenance claim with no object
     const iron = posed(createBlock(mats(), variant));
-    iron.add(posed(createCranktrain(mats()).group), posed(createHeads(mats()).group));
+    iron.add(posed(createCranktrain(mats()).group), posed(createHeads(mats(), SPEC.build.variant).group));
     for (const bore of publishedBores(net)) {
       assert.equal(explodeRuleFor(bore.id), null, `a teardown rule moves ${bore.id} out of ${bore.part}, which it is drilled into`);
       assert.notEqual(partLabel(bore.id), bore.id, `${bore.id} has no menu label, so the inspection list drops it`);

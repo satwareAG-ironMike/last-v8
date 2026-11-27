@@ -79,7 +79,7 @@ function engineShell(bank) {
     block: createBlock(materials),
     cranktrain: createCranktrain(materials).group,
     valvetrain: createValvetrain(materials).group,
-    heads: createHeads(materials).group,
+    heads: createHeads(materials, SPEC.build.variant).group,
   };
   const v = bankVectors(bank);
   const cells = new Set();
@@ -244,7 +244,7 @@ test('intake flanges mate onto the head inboard face and the plenum clears every
   // plane. That reach is measured off the drawn housings of the intake line, not
   // typed - it used to be the old closed boss (bearingR + a typed 0.75 wall) and
   // before the columns existed at all.
-  const heads = createHeads(materials).group;
+  const heads = createHeads(materials, SPEC.build.variant).group;
   const [camA, oCam] = camAxisBank('L', 'intake');
   const vL = bankVectors('L');
   let towerReach = 0;
@@ -358,7 +358,7 @@ test('nothing in the pipework touches the block, heads, valvetrain or cranktrain
 // housing triangles with test/support/engine-triangles.mjs. Flanges and necks are
 // exempt because they mate onto the head port face by design.
 test('A1-G7: every cam bearing housing keeps the pipework out of its casting (exact measure)', async () => {
-  const { group: headGroup } = createHeads(materials);
+  const { group: headGroup } = createHeads(materials, SPEC.build.variant);
   const { group: pipeGroup } = createManifolds(materials);
   headGroup.updateMatrixWorld(true);
   pipeGroup.updateMatrixWorld(true);

@@ -23,6 +23,7 @@ import {
   SPEC, BANKS, DEG, bankPoint, bankOut, bankUp, camAxisBank, HEAD_TOP_A,
 } from '../engine/spec.js';
 import { bearingStack } from '../engine/bearings.js';
+import { variantEntry, ohvRockerLayout } from '../engine/layout.js';
 import { camAxisPoint, valveAxisDir, valveSeatPoint } from '../engine/timing.js';
 import { boxInBank, latheBank, latheX } from './parts.js';
 import { alignYTo, boltGeometry, circleHole, extrude, instancedBolts } from './primitives.js';
@@ -232,7 +233,7 @@ export function headBoltSpecs() {
   return specs; // 32
 }
 
-function headCasting(bank, materials) {
+function headCasting(bank, materials, camCarrier) {
   const head = new THREE.Group();
   head.name = `head-${bank}`;
   const add = (name, geometry, material, kind, userData) =>
@@ -248,13 +249,18 @@ function headCasting(bank, materials) {
   // 2. bulkheads: the fore/aft end walls close the casting over the end cam
   //    bearings, the two centre webs are the exhaust port runners between the
   //    cylinder stations - their outboard faces are the header flange planes.
+  //    Their top face is the DOHC port plane. The OHV build machines it down to the
+  //    plane its rocker shafts need room in: tmp/8k-free.mjs measured the centre webs
+  //    standing 0.3181 cm INSIDE the exhaust shaft line and the end walls 0.6162 cm of
+  //    air against it, both under the 0.78 cm a 0.48 cm bore plus a 0.30 cm wall needs.
+  const portTop = camCarrier ? PORT_TOP : ohvRockerLayout().castingTopA;
   for (const [name, x0, x1, o0, o1] of [
     [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -7.95, 7.95],
     [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -7.95, 7.95],
     [`chimney-${bank}-mid1`, 9.0, 13.0, 6.45, 7.95],
     [`chimney-${bank}-mid2`, -13.0, -9.0, 6.45, 7.95],
   ]) {
-    add(name, boxInBank(bank, FACE, PORT_TOP, o0, o1, x0, x1, 0.3), rib, 'chimney');
+    add(name, boxInBank(bank, FACE, portTop, o0, o1, x0, x1, 0.3), rib, 'chimney');
   }
 
   // 3. bucket-tower ribs: each cylinder stands on an outboard rail rib and a
@@ -278,7 +284,7 @@ function headCasting(bank, materials) {
   //    bearing. userData.boltOn states which halves come off, and the A1-G7 laws measure
   //    that claim against the casting.
   const span = (a, b) => [Math.min(a, b), Math.max(a, b)];
-  for (const valve of valves) {
+  for (const valve of camCarrier ? valves : []) {
     const O = camAxisBank(bank, valve)[1];
     const sgn = Math.sign(O);
     const line = { along: CAM_A, out: O };
@@ -394,8 +400,11 @@ function headCasting(bank, materials) {
       ])), rib, 'springtube');
 
       // the bore is machined straight through from the spring seat to above the
-      // bucket skirt at full lift; this mesh is the wall the flange rides in
-      add(`bucketbore-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
+      // bucket skirt at full lift; this mesh is the wall the flange rides in. Only a
+      // head whose cam sits above the buckets cores it: an OHV valve is held by a
+      // rocker pad on the tip, and tmp/8k-free.mjs measured this collar 0.4232 cm
+      // against an intake rocker lever.
+      if (camCarrier) add(`bucketbore-cyl${cyl.num}-${valve}`, latheValve(cyl, valve, closed([
         [H.bucketBoreR, 5.75], [collarOd, 5.75], [collarOd, 6.95], [H.bucketBoreR, 6.95],
       ])), rib, 'bucketbore',
       { boreR: H.bucketBoreR, boreS0: H.guideLength, boreS1: 9.25 });
@@ -453,12 +462,23 @@ export function camCapBoltSpecs() {
   return specs; // 56
 }
 
-export function createHeads(materials) {
+/**
+ * The two heads this engine is built with (issue #46, slice 8K). A DOHC head carries
+ * the cam: 28 split bearing columns, their caps, cradles, shells and retainer tabs,
+ * the cap bolts and four cam covers. An OHV head does not - its cam turns in the
+ * block's valley tunnel (src/engine/layout.js ohvHousing) and its valves are held by
+ * rockers, so it casts none of that iron, cores no bucket bores, and machines its
+ * bulkheads down to the plane the rocker shafts need room in
+ * (src/engine/layout.js ohvRockerLayout). The valve row - seat insert, guide, spring
+ * floor, spring tube - is the same in both.
+ */
+export function createHeads(materials, variant = SPEC.build.variant) {
+  const camCarrier = variantEntry(variant).centralCam !== true; // DOHC: the cam turns in the head
   const group = new THREE.Group();
   group.name = 'heads';
 
   for (const bank of ['L', 'R']) {
-    group.add(headCasting(bank, materials));
+    group.add(headCasting(bank, materials, camCarrier));
 
     // copper head gaskets: four compression rings standing on the block deck,
     // bore ID clear of the piston at TDC, OD under the deck rails. Each ring is
@@ -474,7 +494,10 @@ export function createHeads(materials) {
     }
     group.add(gasket);
 
-    for (const valve of valves) group.add(camCover(bank, valve, materials));
+    // bolt-on cam covers close the split-cap plane the cam bearings stand under.
+    // An OHV head has no cam boss to close: SPEC.variants.ohv.pendingHardware names
+    // the rocker covers that replace them (issue #46, slice 8K).
+    if (camCarrier) for (const valve of valves) group.add(camCover(bank, valve, materials));
   }
 
   const bolts = instancedBolts(
@@ -492,7 +515,7 @@ export function createHeads(materials) {
   // cradles, so the set has to carry the bank in its name or no label, no teardown
   // rule and no inspection menu entry can be built for it (A1-G7, test/view.test.mjs).
   const capBoltGeo = boltGeometry(2 * ST.boltAcrossR, ST.boltLen / 6, ST.boltHoleR, 2 * (ST.tabInset + ST.tabH) + 0.2);
-  for (const bank of ['L', 'R']) {
+  for (const bank of camCarrier ? ['L', 'R'] : []) {
     const capBolts = instancedBolts(
       camCapBoltSpecs().filter((s) => s.bank === bank),
       capBoltGeo,

@@ -573,6 +573,26 @@ export const SPEC = {
       // lift at the valve, and this variant's cam is ground to maxLift / ratio
       // (src/engine/timing.js camLiftCm, src/engine/ohv.js ohvCamLiftCm).
       rockerRatio: 1.5,
+      // Issue #46 (slice 8K): the iron the rocker train stands on, and the clearances
+      // its host casting has to machine around it. The shaft radius and the pad
+      // stand-off are the two numbers issue #45 measured the lever against and
+      // test/ohv-valve.test.mjs still measures its interface law with - they are
+      // published here so the head, the layout and that law read one authority
+      // (test/ohv-head.test.mjs refuses a drift between them). The stagger is measured,
+      // not chosen: with both shafts on the one plane an intake rocker's pushrod arm
+      // stands 0.4799 cm INSIDE the same cylinder's exhaust valve (tmp/8k-fit.mjs ->
+      // tmp/v8-8k-fit.out); raising the intake shaft 2.0 cm along the bore axis is the
+      // least step on that sweep that clears 1.0 cm of air, and it does not move a
+      // shaft into the plug's terminal band (1.4224 cm against the boot is kept).
+      rocker: {
+        shaftR: 0.45, // the 9 mm rocker shaft the #45 decision measured with
+        pad: 0.55, // stand-off from the shaft plane down to the pad under it
+        shaftClear: 0.03, // running clearance: the pedestal bore is machined over the shaft
+        armHalfWidth: 0.55, // half the rocker arm section across the shaft
+        supportHalfWidth: 0.45, // half the support the shaft turns in
+        castWall: 0.30, // least cast wall between a machined bore and other iron
+        stagger: 2.0, // fore-aft offset between the intake and exhaust shaft planes
+      },
       // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
       // lobes swing in is BORED - its machined face is the swept outline plus this
       // much air - and the room between the crank-side swings and the cam is the
