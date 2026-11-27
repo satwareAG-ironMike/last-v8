@@ -1071,8 +1071,12 @@ test(`${OHV_GAL}: the drawn OHV block casts those ribs and bores those lifter bo
         const r = Math.hypot(along, out);
         if (r < G.reliefR - DRAW_EPS) offRoom++;
         if (Math.hypot(along - g.axisAlong, out - g.axisOut) < G.tunnelBoreR - DRAW_EPS) inTunnel++;
-        if (Math.abs(Math.abs(out - g.axisOut) - G.boreRadius) < DRAW_EPS
-          && Math.abs(along - (g.axisAlong + mid)) < half + DRAW_EPS) {
+        // Slice 8L-a (issue #46) machines the guide prism's end of each bore at the
+        // published pushrod bore, so a lifter bore is now a stepped bore: its cylinder
+        // surface answers either radius.
+        const onBoreR = [G.boreRadius, SPEC.variants.ohv.pushrod.boreRadius]
+          .some((r) => Math.abs(Math.abs(out - g.axisOut) - r) < DRAW_EPS);
+        if (onBoreR && Math.abs(along - (g.axisAlong + mid)) < half + DRAW_EPS) {
           for (const b of g.bores) if (Math.abs(pos.getX(i) - b.x) < DRAW_EPS) onBore.set(b.name, onBore.get(b.name) + 1);
         }
         if (r > maxR) maxR = r;

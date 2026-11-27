@@ -225,7 +225,7 @@ function ohvEndWall(H, x0, x1, mainBoreR) {
  * past the crankcase void wall ID at the mouth - that is what ties the gallery
  * into the casting.
  */
-function ohvGalleryRib(G, bank, cluster, span, inFace, name) {
+function ohvGalleryRib(G, bank, cluster, span, inFace, name, boreR = G.boreRadius) {
   const g = G.banks[bank];
   const sgn = SPEC.banks[bank].outSign;
   const up = bankUp(bank);
@@ -239,7 +239,10 @@ function ohvGalleryRib(G, bank, cluster, span, inFace, name) {
   shape.lineTo(x0, sgn * ribOut);
   shape.closePath();
   const bored = g.bores.filter((b) => b.x >= x0 && b.x <= x1);
-  for (const b of bored) shape.holes.push(circleHole(b.x, sgn * g.axisOut, G.boreRadius));
+  // boreR is the machined radius of this prism's bores: the lifter bore by default,
+  // or the counter-bore a guide is machined to where a pushrod leaves the bore it
+  // shares with its lifter (slice 8L-a, issue #46).
+  for (const b of bored) shape.holes.push(circleHole(b.x, sgn * g.axisOut, boreR));
   const geo = extrude(shape, span[1] - span[0], { bevel: 0, curveSegments: 24 });
   geo.translate(0, 0, g.axisAlong + (span[0] + span[1]) / 2); // local z is `along`
   geo.applyMatrix4(new THREE.Matrix4().makeBasis(
@@ -421,7 +424,18 @@ export function createBlock(materials, variantId = SPEC.build.variant) {
       GAL.banks[bank].clusters.forEach(([x0, x1], i) => {
         const parts = [
           ohvGalleryRib(GAL, bank, [x0, x1], [GAL.banks[bank].guideFrom, GAL.banks[bank].stepT], GAL.banks[bank].ribIn, `gallery-${bank}-${i + 1}`),
-          ohvGalleryRib(GAL, bank, [x0, x1], [GAL.banks[bank].stepT, GAL.banks[bank].guideTo], GAL.banks[bank].wallIn, `gallery-${bank}-${i + 1}-guide`),
+          // Slice 8L-a (issue #46): the guide prism is the last iron a pushrod runs
+          // through on its way out of the bore - the bore's outboard end (guideTo)
+          // stands 0.6050 cm past the lifter body's own top face, because the guide
+          // wall has to stand on the crank-side room's arc, not on the body. The rod
+          // is coax with the bore, so the rib is counter-bored at the published
+          // pushrod bore (SPEC.variants.ohv.pushrod.boreRadius = the rod plus the
+          // running clearance a guide is machined with) over this prism. tmp/8l-rib.mjs
+          // measured what the lifter bore alone costs: 0.1250 cm of iron against the
+          // rod (the 0.5250 lifter bore less the 0.4000 rod), where a guide owes the
+          // rod its published running clearance.
+          ohvGalleryRib(GAL, bank, [x0, x1], [GAL.banks[bank].stepT, GAL.banks[bank].guideTo], GAL.banks[bank].wallIn, `gallery-${bank}-${i + 1}-guide`,
+            Math.max(GAL.boreRadius, SPEC.variants.ohv.pushrod.boreRadius)),
         ];
         for (const p of parts) {
           const rib = put(p.name, p.geo, materials.castIronBlock);

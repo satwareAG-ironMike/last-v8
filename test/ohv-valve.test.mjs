@@ -384,8 +384,8 @@ test(`${LAW}: pendingHardware names exactly the valvetrain families this build d
     assert.equal(drawn[p.family], 0, `pendingHardware names "${p.family}" owed while the build draws ${drawn[p.family]} of them`);
   }
   const named = pending.map((p) => p.family).sort();
-  assert.deepEqual(named, ['covers', 'pushrods', 'rockers'],
-    `the measured gap is ${JSON.stringify(named)} (drawn ${JSON.stringify(drawn)}); the row a reader sees has to name exactly that`);
+  assert.deepEqual(named, Object.entries(drawn).filter(([, n]) => n === 0).map(([k]) => k).sort(),
+    `the measured gap is ${JSON.stringify(Object.entries(drawn).filter(([, n]) => n === 0).map(([k]) => k).sort())} (drawn ${JSON.stringify(drawn)}); the row a reader sees has to name exactly that`);
   console.log(`${LAW} pending: drawn ${JSON.stringify(drawn)}, owed ${JSON.stringify(owed)}, named owed ${named.join(', ')}`);
 });
 

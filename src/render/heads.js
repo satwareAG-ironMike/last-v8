@@ -235,6 +235,25 @@ export function headBoltSpecs() {
   return specs; // 32
 }
 
+/**
+ * A bulkhead standing between the deck face and its top plane, bored at the given
+ * port axes. Built as a profile in the (x, along) plane extruded along `out`, so
+ * every hole is a tunnel through the web's own thickness.
+ */
+function boredWeb(bank, a0, a1, o0, o1, x0, x1, holes) {
+  const u = new THREE.Vector3().fromArray(bankUp(bank));
+  const o = new THREE.Vector3().fromArray(bankOut(bank));
+  const flip = new THREE.Vector3().crossVectors(u, o).x < 0 ? -1 : 1;
+  const shape = roundedRectShape(x1 - x0, a1 - a0, 0.3);
+  for (const h of holes)
+    shape.holes.push(circleHole(h.x - (x0 + x1) / 2, h.along - (a0 + a1) / 2, h.r));
+  const g = extrude(shape, o1 - o0, { bevel: 0, curveSegments: 24 });
+  g.translate(0, 0, (o0 + o1) / 2);
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), u.multiplyScalar(flip), o));
+  g.computeVertexNormals();
+  return g;
+}
+
 function headCasting(bank, materials, camCarrier) {
   const head = new THREE.Group();
   head.name = `head-${bank}`;
@@ -256,13 +275,24 @@ function headCasting(bank, materials, camCarrier) {
   //    standing 0.3181 cm INSIDE the exhaust shaft line and the end walls 0.6162 cm of
   //    air against it, both under the 0.78 cm a 0.48 cm bore plus a 0.30 cm wall needs.
   const portTop = camCarrier ? PORT_TOP : ohvRockerLayout().castingTopA;
-  for (const [name, x0, x1, o0, o1] of [
-    [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -7.95, 7.95],
-    [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -7.95, 7.95],
-    [`chimney-${bank}-mid1`, 9.0, 13.0, 6.45, 7.95],
-    [`chimney-${bank}-mid2`, -13.0, -9.0, 6.45, 7.95],
+  // Slice 8L-a (issue #46): in the OHV head the 16 pushrods stand between the
+  // exhaust seats and the outboard stay face (tmp/8l-flange.mjs measured 2764
+  // vertices of DOHC runner iron cutting a gallery wall at that plane), so this
+  // variant's exhaust leaves through its own centre webs instead. Each web the
+  // measured route reaches is BORED at the published exit - the same port neck
+  // the header bolts to, machined through the web rather than bolted onto it.
+  const E = camCarrier ? null : SPEC.variants.ohv.exhaust;
+  for (const [name, x0, x1, o0, o1, mergeX] of [
+    [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -H.webOut1, H.webOut1, null],
+    [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -H.webOut1, H.webOut1, null],
+    [`chimney-${bank}-mid1`, 9.0, 13.0, H.webOut0, H.webOut1, SPEC.manifold.exMergeX],
+    [`chimney-${bank}-mid2`, -13.0, -9.0, H.webOut0, H.webOut1, -SPEC.manifold.exMergeX],
   ]) {
-    add(name, boxInBank(bank, FACE, portTop, o0, o1, x0, x1, 0.3), rib, 'chimney');
+    const web = camCarrier || mergeX === null
+      ? boxInBank(bank, FACE, portTop, o0, o1, x0, x1, 0.3)
+      : boredWeb(bank, FACE, portTop, o0, o1, x0, x1,
+        [{ x: mergeX, along: E.topA, r: SPEC.manifold.exNeckR }]);
+    add(name, web, rib, 'chimney');
   }
 
   // 3. bucket-tower ribs: each cylinder stands on an outboard rail rib and a

@@ -150,7 +150,11 @@ test(`${LAW}: the switch builds exactly one central cam in the V, on the publish
   assert.deepEqual(lifters.sort(), bores,
     `the OHV build draws ${lifters.length} lifters (${lifters.slice(0, 3).join(', ')}...) and the block machines ${bores.length} lifter bores - the two have to be the same parts`);
   assert.equal(lifters.length, followers('ohv').lifters, `the build draws ${lifters.length} lifters for the ${followers('ohv').lifters} the switch counts`);
-  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'bucket', 'shim']) {
+  // Slice 8L-a (issue #46): the refused words are the families the spec still names
+  // as owed, plus the DOHC follower parts that never belong in this variant.
+  const pending = SPEC.variants.ohv.pendingHardware.map((p) => p.family);
+  const owedWords = [['pushrod', 'pushrods'], ['push-rod', 'pushrods'], ['rocker', 'rockers'], ['cover', 'covers']];
+  for (const [word, family] of [...owedWords.filter(([, f]) => pending.includes(f)), ['bucket', null], ['shim', null]]) {
     let hits = 0;
     group.traverse((o) => { if (o.name.toLowerCase().includes(word)) hits += 1; });
     assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: hardware may not appear before the iron that houses it is cast (and a bucket or shim belongs to the DOHC follower row, not here)`);

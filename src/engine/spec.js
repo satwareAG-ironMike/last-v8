@@ -156,6 +156,13 @@ export const SPEC = {
     bucketBoreR: 2.25, // bucket/guide bore: 0.10 over the 2.15 bucket flange,
     // 0.68 over the 1.57 spring coil OD - the spring rides inside this bore
     coverPlate: 0.7, // cam-cover plate thickness; ceiling = top - coverPlate
+    // The two centre webs between the cylinder stations: their inboard and
+    // outboard faces. The DOHC header bolts to the outboard stay face; the OHV
+    // variant's exhaust leaves THROUGH these webs (SPEC.variants.ohv.exhaust),
+    // so the plane the runner exits at is published here rather than typed in
+    // two renderers.
+    webOut0: 6.45, // inboard face of the centre webs
+    webOut1: 7.95, // outboard face of the centre webs
     stayTopA: 30.0, // top plane of the deck ribs the bucket towers stand on; the
     // plug boss face the spark plug's hex clamps against stands off this plane
 

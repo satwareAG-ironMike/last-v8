@@ -1367,7 +1367,10 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
   // before the iron that houses it is cast. The families that ARE drawn are
   // counted against the contract instead of refused.
   const PENDING_WORDS = { pushrods: ['pushrod', 'push-rod'], rockers: ['rocker'], covers: ['cover'] };
-  for (const [familyName, words] of Object.entries(PENDING_WORDS)) {
+  // Slice 8L-a (issue #46) draws the pushrods and casts their gallery, so the list
+  // this law refuses is the list the spec actually names - a family that has been
+  // closed is measured against the contract above, not refused out of the scene.
+  for (const [familyName, words] of Object.entries(PENDING_WORDS).filter(([f]) => named.includes(f))) {
     for (const word of words) {
       let hits = 0;
       ohv.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });

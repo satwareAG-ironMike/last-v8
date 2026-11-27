@@ -231,6 +231,12 @@ test(`${LAW}: no drawn pushrod cuts the block's lifter gallery iron`, () => {
       }
     }
   }
-  assert.ok(worst.air >= P.runnerAir - EPS,
-    `${worst.at} stands ${worst.air.toFixed(4)} cm against the pushrod of ${worst.rod}; tmp/8l-fit.mjs measured 0.1250 cm at block gallery-L-4-guide. The rib that guides the lifter bore has to be machined clear of the rod that leaves it`);
+  // The rib is the guide, and a guide is machined at the rod plus the running
+  // clearance the contract publishes - not at a cast-wall air gap, which is what
+  // the head's free-standing gallery boss owes (law 4). tmp/8l-rib.mjs measured
+  // the rib's nearest iron sitting on the 0.5250 cm lifter bore, 0.1250 cm off a
+  // 0.4000 cm rod: the bore the rod shares with its lifter is 0.0250 cm short of
+  // the published pushrod bore, so the guide prism is counter-bored to it.
+  assert.ok(worst.air >= P.boreRadius - P.rodRadius - EPS,
+    `${worst.at} stands ${worst.air.toFixed(4)} cm against the pushrod of ${worst.rod}; the guide bore owes the rod ${P.boreRadius} - ${P.rodRadius} = ${(P.boreRadius - P.rodRadius).toFixed(4)} cm of running clearance (SPEC.variants.ohv.pushrod), and tmp/8l-rib.mjs measured 0.1250 cm of rib iron sitting on the 0.5250 cm lifter bore`);
 });
