@@ -109,7 +109,7 @@ engine.add(valvetrain.group);
 // not a rigid body - src/engine/drive.js poses every roller at the pitch.
 const drive = createDrive(materials);
 engine.add(drive.group);
-const heads = createHeads(materials);
+const heads = createHeads(materials, SPEC.build.variant);
 engine.add(heads.group);
 const manifolds = createManifolds(materials);
 engine.add(manifolds.group);

@@ -480,7 +480,7 @@ test('A1-G7 the drawn cam journal rides the drawn bearing shells on exactly the 
   const mats = new Proxy({}, {
     get: (t, k) => (t[k] ??= new THREE.MeshStandardMaterial({ name: String(k) })),
   });
-  const heads = createHeads(mats).group;
+  const heads = createHeads(mats, SPEC.build.variant).group;
   heads.updateMatrixWorld(true);
   const br = bearingStack();
   const rows = [];

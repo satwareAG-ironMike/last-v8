@@ -53,7 +53,7 @@ const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 function buildScene() {
   const engine = createBlock(materials);
   engine.name = 'v8-block';
-  for (const u of [createCranktrain, createValvetrain, createHeads, createManifolds]) engine.add(u(materials).group);
+  for (const u of [createCranktrain, createValvetrain, createHeads, createManifolds]) engine.add(u(materials, SPEC.build.variant).group);
   engine.updateMatrixWorld(true);
   const stand = createStand(materials).group;
   stand.updateMatrixWorld(true);

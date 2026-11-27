@@ -38,7 +38,7 @@ for (const n of ['castAluminumHead', 'copperGasket', 'fastenerSteel', 'bearingSh
 
 async function buildHeads() {
   const { createHeads } = await import('../src/render/heads.js');
-  return createHeads(mats);
+  return createHeads(mats, SPEC.build.variant);
 }
 async function buildValvetrain() {
   const { createValvetrain } = await import('../src/render/valvetrain.js');
@@ -1272,7 +1272,7 @@ test('A1-G6 8E: the coolant assembly census is measured from the tree and its na
   const { createBlock } = await import('../src/render/block.js');
   const { createHeads } = await import('../src/render/heads.js');
   const casting = new Set();
-  for (const g of [createBlock(proxyMaterials(), SPEC.build.variant), createHeads(proxyMaterials()).group]) {
+  for (const g of [createBlock(proxyMaterials(), SPEC.build.variant), createHeads(proxyMaterials(), SPEC.build.variant).group]) {
     g.traverse((o) => { if (o.isMesh) casting.add(o.name); });
   }
   const clash = drawn.filter((n) => casting.has(n));

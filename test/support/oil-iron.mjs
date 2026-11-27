@@ -787,7 +787,7 @@ export function oilOracle(id = SPEC.build.variant) {
   const warrant = () => {
     const problems = [];
     const block = posedTree(createBlock(treeMats(), id)); // createBlock returns the Group itself
-    const heads = posedTree(createHeads(treeMats()).group);
+    const heads = posedTree(createHeads(treeMats(), SPEC.build.variant).group);
     // name -> meshes. A name may legitimately stand for several solids: the OHV
     // block casts one boot leg per side, each cam cover casts its own walls.
     const drawn = new Map();

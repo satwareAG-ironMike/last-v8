@@ -137,20 +137,23 @@ test(`every caller hands createHeads the build's variant`, () => {
     for (const line of src.split('\n')) {
       const t = line.trim();
       if (/^(import|export|\*|\/\/|\/\*)/.test(t)) continue; // imports, the definition, comments
-      if (!line.includes('createHeads')) continue;
-      const at = line.indexOf('createHeads');
-      const open = line.indexOf('(', at);
-      if (open < 0)
-        assert.fail(`${file} passes createHeads as a bare builder reference (${t.slice(0, 80)}), so the call it feeds cannot name a variant`);
-      let depth = 0, end = -1;
-      for (let i = open; i < line.length; i++) {
-        if (line[i] === '(') depth++;
-        else if (line[i] === ')' && --depth === 0) { end = i; break; }
+      for (const m of line.matchAll(/createHeads(\s*\()?/g)) {
+        const at = m.index;
+        const before = line.slice(0, at).trimEnd();
+        if (/(\{|,)$/.test(before)) continue; // a destructured import of the function itself
+        const open = at + m[0].length - 1;
+        if (m[0].trim() === 'createHeads')
+          assert.fail(`${file} passes createHeads as a bare builder reference (${t.slice(0, 80)}), so the call it feeds cannot name a variant`);
+        let depth = 0, end = -1;
+        for (let i = open; i < line.length; i++) {
+          if (line[i] === '(') depth++;
+          else if (line[i] === ')' && --depth === 0) { end = i; break; }
+        }
+        const args = line.slice(open + 1, end < 0 ? line.length : end);
+        seen++;
+        assert.ok(/variant/i.test(args),
+          `${file} calls createHeads(${args.trim()}) with no variant, so the OHV build gets the DOHC head by default - the defect issue #46 names`);
       }
-      const args = line.slice(open + 1, end < 0 ? line.length : end);
-      seen++;
-      assert.ok(/variant/i.test(args),
-        `${file} calls createHeads(${args.trim()}) with no variant, so the OHV build gets the DOHC head by default - the defect issue #46 names`);
     }
   }
   assert.ok(seen > 0, 'no createHeads call site was read, so this law is not measuring the callers it names');
