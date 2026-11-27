@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SPEC, bankPoint, bankUp, bankOut } from '../engine/spec.js';
+import { variantEntry } from '../engine/layout.js';
 import { boxInBank } from './parts.js';
 import {
   alignYTo, boltGeometry, circleHole, cylinderBetween, extrude, instancedBolts,
@@ -217,13 +218,69 @@ export function manifoldSpecs() {
   return out;
 }
 
+/**
+ * Slice 8L-a (issue #46): the cored exhaust runner this variant casts in its own
+ * head iron, and the outlet it leaves on.
+ *
+ * Every plane below is SPEC.variants.ohv.exhaust, which tmp/8l-route.mjs ->
+ * tmp/v8-8l-rowmatrix.out measured against the machined rings of a valve row, the
+ * 16 head-bolt bores, the liner shells, the stays, the gasket band, the rail band
+ * and the 16 rod lines: of 24000 candidate ducts per row the published mouth is
+ * legal in 87, with the spring-seat floor as the binding ring at 0.6075 cm of air.
+ * The duct is held at out 3.0000 while it runs toward the centre because the head
+ * bolt bores stand at out 5.7200..6.8800, and it only crosses outboard inside the
+ * centre-web window x 9..13, where the head casts no iron of its own to cut.
+ *
+ * The merge is not bolted onto the head: the head machines a bore through its own
+ * web (src/render/heads.js boredWeb) at the same neck the header uses, and the
+ * neck below stands in that bore. Measured over the drawn parts (tmp/8l-clearance.mjs
+ * -> tmp/v8-8l-clearance2.out): the four primaries occupy out 1.9204..5.5001, the
+ * neck 6.4500..7.9500 (the web's own two faces - it is inside the head's iron, not
+ * beside the rods), and the outlet disc plus stub 9.4500..11.9500, which is 1.4132 cm
+ * outboard of the rod surface at 8.0368. The tightest runner-to-rod reading anywhere
+ * in the tree is 1.3097 cm, at the merge neck against the nearest rod axis 3.0250 cm
+ * away in x.
+ */
+function ohvExhaust(exSub, bank, ax, materials) {
+  const E = SPEC.variants.ohv.exhaust;
+  const mergeX = (st) => Math.sign(st) * M.exMergeX;
+  for (const st of B.stations) {
+    const nodes = [
+      [E.mouthA, E.mouthOut, st + E.mouthDx], // beside its own seat insert, in the chamber void
+      [E.mouthA, E.holdOut, mergeX(st) - Math.sign(st) * (M.exMergeX - E.riseX)], // held inboard of the bolt line
+      [E.topA, E.holdOut, mergeX(st)], // risen, at the web window
+      [E.topA, H.webOut0 - M.exPortR, mergeX(st)], // up to the web's own inboard face
+    ];
+    const curve = pipeCurve(nodes.map((n) => P(bank, n)));
+    exSub.add(mesh(`ex-runner-${bank}-${st}`, new THREE.TubeGeometry(curve, 56, M.exPortR, 20, false),
+      materials.headerSteel, 'exRunner'));
+  }
+  for (const mx of [M.exMergeX, -M.exMergeX]) {
+    const neck = portNeck(bank, ax, M.exNeckR, M.exPortR, H.webOut1 - H.webOut0, ax.out);
+    put(neck, bank, E.topA, H.webOut0, mx);
+    exSub.add(mesh(`ex-merge-neck-${bank}-${mx}`, neck, materials.headerSteel, 'exNeck'));
+    const o0 = H.webOut1 + (H.webOut1 - H.webOut0);
+    const disc = cylinderBetween(P(bank, [E.topA, o0, mx]), P(bank, [E.topA, o0 + M.exOutletT, mx]), M.exOutletR, 30);
+    const stub = cylinderBetween(P(bank, [E.topA, o0 + M.exOutletT, mx]),
+      P(bank, [E.topA, o0 + M.exOutletT + 1.6, mx]), M.exOutletR - 0.35, 26);
+    exSub.add(mesh(`ex-outlet-${bank}-${mx}`, mergeGeometries([disc, stub], false), materials.headerSteel, 'exOutletFlange'));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
-export function createManifolds(materials) {
+export function createManifolds(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'manifolds';
   const specs = manifoldSpecs();
+  // Slice 8L-a (issue #46): the OHV variant's exhaust is a different casting. The
+  // intake side is unchanged - nothing stands between the intake seats and the
+  // head's inboard face in either build - but the exhaust cannot bolt to the
+  // outboard stay face in the OHV head, because that is where its 16 pushrods
+  // stand (tmp/8l-flange.mjs measured 2764 vertices of DOHC runner iron cutting a
+  // gallery wall at out 7.0000..7.7000).
+  const centralCam = variantEntry(variantId).centralCam === true;
 
   for (const bank of ['L', 'R']) {
     const ax = bankAxes(bank);
@@ -240,28 +297,30 @@ export function createManifolds(materials) {
     for (let i = 0; i < 4; i++) {
       const st = B.stations[i];
       // ---- exhaust: flange plate on the outboard stay face, neck boss, primary
-      const flG = flangePlate(bank, ax, M.exFlangeX, (M.exFlangeA1 - M.exFlangeA0) / 2,
-        M.exFlangeT, M.exPortR, M.exFlangeR);
-      put(flG, bank, PORT_A, OUT + M.exFlangeT / 2, st);
-      exSub.add(mesh(`ex-flange-${bank}-${st}`, flG, materials.headerSteel, 'exFlange'));
+      if (!centralCam) {
+        const flG = flangePlate(bank, ax, M.exFlangeX, (M.exFlangeA1 - M.exFlangeA0) / 2,
+          M.exFlangeT, M.exPortR, M.exFlangeR);
+        put(flG, bank, PORT_A, OUT + M.exFlangeT / 2, st);
+        exSub.add(mesh(`ex-flange-${bank}-${st}`, flG, materials.headerSteel, 'exFlange'));
 
-      const neckG = portNeck(bank, ax, M.exNeckR, M.exPortR, M.exNeckT, ax.out);
-      put(neckG, bank, PORT_A, OUT + M.exFlangeT, st);
-      exSub.add(mesh(`ex-neck-${bank}-${st}`, neckG, materials.headerSteel, 'exNeck'));
+        const neckG = portNeck(bank, ax, M.exNeckR, M.exPortR, M.exNeckT, ax.out);
+        put(neckG, bank, PORT_A, OUT + M.exFlangeT, st);
+        exSub.add(mesh(`ex-neck-${bank}-${st}`, neckG, materials.headerSteel, 'exNeck'));
 
-      const nodes = s.primary[i];
-      const curve = pipeCurve(nodes.map((n) => P(bank, n)));
-      primaryCurves.push(curve);
-      exSub.add(mesh(`primary-${bank}-${st}`, new THREE.TubeGeometry(curve, 56, M.exPrimaryR, 20, false),
-        materials.headerSteel, 'exPrimary'));
+        const nodes = s.primary[i];
+        const curve = pipeCurve(nodes.map((n) => P(bank, n)));
+        primaryCurves.push(curve);
+        exSub.add(mesh(`primary-${bank}-${st}`, new THREE.TubeGeometry(curve, 56, M.exPrimaryR, 20, false),
+          materials.headerSteel, 'exPrimary'));
 
-      // weld the neck to the flange, and the primary to the neck.
-      // The neck collar sits at out 8.6 on the neck barrel, not at the flange
-      // root: a ring there would come within 0.76 cm of the head stay rib behind
-      // it, and the routing rule keeps >= 1.2 cm of real air beside the casting.
-      const axis = pipeCurve([P(bank, [PORT_A, OUT + M.exFlangeT + 0.5, st]), P(bank, [PORT_A, OUT + M.exFlangeT + 1.3, st])]);
-      beadEx.push(weldBead(axis, 0.5, M.exNeckR + 0.15, 0.22));
-      beadEx.push(weldBead(curve, 0.045, M.exPrimaryR + 0.2, 0.22));
+        // weld the neck to the flange, and the primary to the neck.
+        // The neck collar sits at out 8.6 on the neck barrel, not at the flange
+        // root: a ring there would come within 0.76 cm of the head stay rib behind
+        // it, and the routing rule keeps >= 1.2 cm of real air beside the casting.
+        const axis = pipeCurve([P(bank, [PORT_A, OUT + M.exFlangeT + 0.5, st]), P(bank, [PORT_A, OUT + M.exFlangeT + 1.3, st])]);
+        beadEx.push(weldBead(axis, 0.5, M.exNeckR + 0.15, 0.22));
+        beadEx.push(weldBead(curve, 0.045, M.exPrimaryR + 0.2, 0.22));
+      }
 
       // ---- intake: mirror plate on the inboard head face, neck, runner
       const iflG = flangePlate(bank, ax, M.inFlangeX, (M.inFlangeA1 - M.inFlangeA0) / 2,
@@ -304,55 +363,65 @@ export function createManifolds(materials) {
 
       // ---- flange bolts: one per pattern offset, per port, per side
       for (const off of M.boltOffsetsAlong) {
-        const we = bankPoint(bank, PORT_A + off, OUT + M.exFlangeT, st);
+        if (!centralCam) {
+          const we = bankPoint(bank, PORT_A + off, OUT + M.exFlangeT, st);
+          bolts.push({ p: [we.x, we.y, we.z], dir: ax.out.clone().negate().toArray() });
+        }
         const wi = bankPoint(bank, PORT_A + off, -(OUT + M.inFlangeT), st);
-        bolts.push({ p: [we.x, we.y, we.z], dir: ax.out.clone().negate().toArray() });
         bolts.push({ p: [wi.x, wi.y, wi.z], dir: ax.out.toArray() });
       }
     }
 
-    // ---- pair outlets and the merged collector
-    for (let k = 0; k < 2; k++) {
-      const mx = k === 0 ? M.exMergeX : -M.exMergeX;
-      const nodes = s.pair[k];
-      const c = pipeCurve(nodes.map((n) => P(bank, n)));
-      exSub.add(mesh(`pair-${bank}-${mx}`, new THREE.TubeGeometry(c, 40, M.exPairR, 22, false),
-        materials.headerSteel, 'exPair'));
-      beadEx.push(weldBead(c, 0.92, M.exPairR + 0.2, 0.22));
+    if (centralCam) {
+      // The OHV variant's exhaust: four cored primaries per bank following the
+      // route tmp/8l-route.mjs measured legal, merged through the head's own centre
+      // webs and leaving on the web's outboard face.
+      ohvExhaust(exSub, bank, ax, materials);
+    } else {
+      // ---- pair outlets and the merged collector
+      for (let k = 0; k < 2; k++) {
+        const mx = k === 0 ? M.exMergeX : -M.exMergeX;
+        const nodes = s.pair[k];
+        const c = pipeCurve(nodes.map((n) => P(bank, n)));
+        exSub.add(mesh(`pair-${bank}-${mx}`, new THREE.TubeGeometry(c, 40, M.exPairR, 22, false),
+          materials.headerSteel, 'exPair'));
+        beadEx.push(weldBead(c, 0.92, M.exPairR + 0.2, 0.22));
+      }
+      const cc = pipeCurve(s.collector.map((n) => P(bank, n)));
+      exSub.add(mesh(`collector-${bank}`, new THREE.TubeGeometry(cc, 64, M.exCollectorR, 24, false),
+        materials.headerSteel, 'exCollector'));
+      beadEx.push(weldBead(cc, 0.985, M.exCollectorR + 0.22, 0.24));
+
+      // bolt-on collector outlet: a disc plus its short stub, on the collector axis
+      const end = P(bank, s.collector[4]);
+      const tan = cc.getTangentAt(1).normalize();
+      const disc = cylinderBetween(end, end.clone().add(tan.multiplyScalar(M.exOutletT)), M.exOutletR, 30);
+      const stub = cylinderBetween(end.clone().add(tan.multiplyScalar(M.exOutletT)),
+        end.clone().add(tan.clone().multiplyScalar(M.exOutletT + 1.6)), M.exCollectorR - 0.35, 26);
+      exSub.add(mesh(`outlet-${bank}`, mergeGeometries([disc, stub], false), materials.headerSteel, 'exOutletFlange'));
+
+      // ---- heat shields over the primaries, each gripped by clamp bands on the
+      // pair of primaries it covers, each band carrying a stand-off bolted to the
+      // shield face. A shield that bolts to nothing is a floating panel.
+      s.shields.forEach((sh, k) => {
+        const g = boxInBank(bank, sh[0], sh[1], sh[2], sh[3], sh[4], sh[5], 0.35);
+        exSub.add(mesh(`ex-shield-${bank}-${k}`, g, materials.heatShield, 'exShield'));
+      });
+      s.bands.forEach((b) => {
+        const p = P(bank, b.at);
+        const d = ax.up.clone().multiplyScalar(b.dir[0])
+          .addScaledVector(ax.out, b.dir[1])
+          .addScaledVector(X, b.dir[2]);
+        const grip = pipeCurve([p, p.clone().add(d)]);
+        exSub.add(mesh(`clamp-band-${bank}-${b.shield}-${b.cyl}`,
+          weldBead(grip, 0.5, M.clampBandR, M.clampBandTube), materials.standSteel, 'clampBand'));
+      });
+      s.stands.forEach((st) => {
+        exSub.add(mesh(`shield-stand-${bank}-${st.shield}-${st.cyl}`,
+          cylinderBetween(P(bank, st.root), P(bank, st.tip), M.shieldStayR, 18), materials.standSteel, 'shieldStay'));
+      });
+
     }
-    const cc = pipeCurve(s.collector.map((n) => P(bank, n)));
-    exSub.add(mesh(`collector-${bank}`, new THREE.TubeGeometry(cc, 64, M.exCollectorR, 24, false),
-      materials.headerSteel, 'exCollector'));
-    beadEx.push(weldBead(cc, 0.985, M.exCollectorR + 0.22, 0.24));
-
-    // bolt-on collector outlet: a disc plus its short stub, on the collector axis
-    const end = P(bank, s.collector[4]);
-    const tan = cc.getTangentAt(1).normalize();
-    const disc = cylinderBetween(end, end.clone().add(tan.multiplyScalar(M.exOutletT)), M.exOutletR, 30);
-    const stub = cylinderBetween(end.clone().add(tan.multiplyScalar(M.exOutletT)),
-      end.clone().add(tan.clone().multiplyScalar(M.exOutletT + 1.6)), M.exCollectorR - 0.35, 26);
-    exSub.add(mesh(`outlet-${bank}`, mergeGeometries([disc, stub], false), materials.headerSteel, 'exOutletFlange'));
-
-    // ---- heat shields over the primaries, each gripped by clamp bands on the
-    // pair of primaries it covers, each band carrying a stand-off bolted to the
-    // shield face. A shield that bolts to nothing is a floating panel.
-    s.shields.forEach((sh, k) => {
-      const g = boxInBank(bank, sh[0], sh[1], sh[2], sh[3], sh[4], sh[5], 0.35);
-      exSub.add(mesh(`ex-shield-${bank}-${k}`, g, materials.heatShield, 'exShield'));
-    });
-    s.bands.forEach((b) => {
-      const p = P(bank, b.at);
-      const d = ax.up.clone().multiplyScalar(b.dir[0])
-        .addScaledVector(ax.out, b.dir[1])
-        .addScaledVector(X, b.dir[2]);
-      const grip = pipeCurve([p, p.clone().add(d)]);
-      exSub.add(mesh(`clamp-band-${bank}-${b.shield}-${b.cyl}`,
-        weldBead(grip, 0.5, M.clampBandR, M.clampBandTube), materials.standSteel, 'clampBand'));
-    });
-    s.stands.forEach((st) => {
-      exSub.add(mesh(`shield-stand-${bank}-${st.shield}-${st.cyl}`,
-        cylinderBetween(P(bank, st.root), P(bank, st.tip), M.shieldStayR, 18), materials.standSteel, 'shieldStay'));
-    });
 
     beadEx.forEach((g, i) => exSub.add(mesh(`ex-bead-${bank}-${i}`, g, materials.weldBead, 'exBead')));
     beadIn.forEach((g, i) => inSub.add(mesh(`in-bead-${bank}-${i}`, g, materials.weldBead, 'inBead')));

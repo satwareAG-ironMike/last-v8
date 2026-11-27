@@ -23,10 +23,12 @@ import {
   SPEC, BANKS, DEG, bankPoint, bankOut, bankUp, camAxisBank, HEAD_TOP_A,
 } from '../engine/spec.js';
 import { bearingStack } from '../engine/bearings.js';
-import { variantEntry, ohvRockerLayout } from '../engine/layout.js';
+import { ohvPushrods, variantEntry, ohvRockerLayout } from '../engine/layout.js';
 import { camAxisPoint, valveAxisDir, valveSeatPoint } from '../engine/timing.js';
 import { boxInBank, latheBank, latheX } from './parts.js';
-import { alignYTo, boltGeometry, circleHole, extrude, instancedBolts } from './primitives.js';
+import {
+  alignYTo, boltGeometry, circleHole, extrude, instancedBolts, roundedRectShape,
+} from './primitives.js';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -233,6 +235,25 @@ export function headBoltSpecs() {
   return specs; // 32
 }
 
+/**
+ * A bulkhead standing between the deck face and its top plane, bored at the given
+ * port axes. Built as a profile in the (x, along) plane extruded along `out`, so
+ * every hole is a tunnel through the web's own thickness.
+ */
+function boredWeb(bank, a0, a1, o0, o1, x0, x1, holes) {
+  const u = new THREE.Vector3().fromArray(bankUp(bank));
+  const o = new THREE.Vector3().fromArray(bankOut(bank));
+  const flip = new THREE.Vector3().crossVectors(u, o).x < 0 ? -1 : 1;
+  const shape = roundedRectShape(x1 - x0, a1 - a0, 0.3);
+  for (const h of holes)
+    shape.holes.push(circleHole(h.x - (x0 + x1) / 2, h.along - (a0 + a1) / 2, h.r));
+  const g = extrude(shape, o1 - o0, { bevel: 0, curveSegments: 24 });
+  g.translate(0, 0, (o0 + o1) / 2);
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), u.multiplyScalar(flip), o));
+  g.computeVertexNormals();
+  return g;
+}
+
 function headCasting(bank, materials, camCarrier) {
   const head = new THREE.Group();
   head.name = `head-${bank}`;
@@ -254,13 +275,24 @@ function headCasting(bank, materials, camCarrier) {
   //    standing 0.3181 cm INSIDE the exhaust shaft line and the end walls 0.6162 cm of
   //    air against it, both under the 0.78 cm a 0.48 cm bore plus a 0.30 cm wall needs.
   const portTop = camCarrier ? PORT_TOP : ohvRockerLayout().castingTopA;
-  for (const [name, x0, x1, o0, o1] of [
-    [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -7.95, 7.95],
-    [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -7.95, 7.95],
-    [`chimney-${bank}-mid1`, 9.0, 13.0, 6.45, 7.95],
-    [`chimney-${bank}-mid2`, -13.0, -9.0, 6.45, 7.95],
+  // Slice 8L-a (issue #46): in the OHV head the 16 pushrods stand between the
+  // exhaust seats and the outboard stay face (tmp/8l-flange.mjs measured 2764
+  // vertices of DOHC runner iron cutting a gallery wall at that plane), so this
+  // variant's exhaust leaves through its own centre webs instead. Each web the
+  // measured route reaches is BORED at the published exit - the same port neck
+  // the header bolts to, machined through the web rather than bolted onto it.
+  const E = camCarrier ? null : SPEC.variants.ohv.exhaust;
+  for (const [name, x0, x1, o0, o1, mergeX] of [
+    [`chimney-${bank}-fore`, DECK_X1 - 2.0, EDGE, -H.webOut1, H.webOut1, null],
+    [`chimney-${bank}-aft`, -EDGE, -DECK_X1 + 2.0, -H.webOut1, H.webOut1, null],
+    [`chimney-${bank}-mid1`, 9.0, 13.0, H.webOut0, H.webOut1, SPEC.manifold.exMergeX],
+    [`chimney-${bank}-mid2`, -13.0, -9.0, H.webOut0, H.webOut1, -SPEC.manifold.exMergeX],
   ]) {
-    add(name, boxInBank(bank, FACE, portTop, o0, o1, x0, x1, 0.3), rib, 'chimney');
+    const web = camCarrier || mergeX === null
+      ? boxInBank(bank, FACE, portTop, o0, o1, x0, x1, 0.3)
+      : boredWeb(bank, FACE, portTop, o0, o1, x0, x1,
+        [{ x: mergeX, along: E.topA, r: SPEC.manifold.exNeckR }]);
+    add(name, web, rib, 'chimney');
   }
 
   // 3. bucket-tower ribs: each cylinder stands on an outboard rail rib and a
@@ -270,6 +302,50 @@ function headCasting(bank, materials, camCarrier) {
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
     add(`stay-${bank}-in-${st}`, boxInBank(bank, FACE, STAY_TOP, -H.gasketOd, -H.gasketId,
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
+  }
+
+  // 3b. the pushrod gallery (slice 8L-a, issue #46): the iron the 16 pushrods are
+  //     guided in. It stands in the one band of this casting the measured exhaust
+  //     runner leaves free - from the runner's crown (SPEC.variants.ohv.exhaust.topA
+  //     plus the port bore and the published cast wall) up to castingTopA, the plane
+  //     the rocker shaft bores are machined to - and is bored at the 16 published
+  //     lifter axes ohvPushrods() derives. Each bore keeps the published cast wall to
+  //     the band's inboard and outboard faces, and no part of the gallery holds
+  //     material inside its own bore: that would be a bushing, not a guide.
+  if (!camCarrier) {
+    const P = variantEntry('ohv').pushrod;
+    const R = ohvPushrods();
+    const own = R.rods.filter((r) => r.bank === bank);
+    const axisOut = own[0].out;
+    const bandA0 = own[0].bandFrom - own[0].bandLen / 2;
+    const bandA1 = own[0].bandFrom + own[0].bandLen / 2;
+    const bossR = P.boreRadius + P.castWall; // the guide hub the bore is machined in
+    const x0 = Math.min(...own.map((r) => r.x)) - bossR;
+    const x1 = Math.max(...own.map((r) => r.x)) + bossR;
+    const u = new THREE.Vector3().fromArray(bankUp(bank));
+    const o = new THREE.Vector3().fromArray(bankOut(bank));
+    // Extruded along the bore axis, so the profile plane is (x, out) and every hole
+    // is a tunnel parallel to `along`. The basis has to stay right-handed or the
+    // normals invert: (out x along) has to point along +X.
+    const flip = new THREE.Vector3().crossVectors(o, u).x < 0 ? -1 : 1;
+    const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), o, u.clone().multiplyScalar(flip));
+    const parts = [];
+    for (const r of own) {
+      const boss = new THREE.Shape();
+      boss.absarc(r.x, axisOut, bossR, 0, Math.PI * 2, false);
+      boss.holes.push(circleHole(r.x, axisOut, P.boreRadius));
+      const g = extrude(boss, bandA1 - bandA0, { bevel: 0, curveSegments: 24 });
+      g.translate(0, 0, flip * (bandA0 + bandA1) / 2);
+      g.applyMatrix4(basis);
+      parts.push(g);
+    }
+    // the spine that joins the hubs into one casting: two bars standing on the
+    // bores' own tangent planes, so no part of the spine reaches into a bore
+    for (const [i0, i1] of [[axisOut - bossR, axisOut - P.boreRadius], [axisOut + P.boreRadius, axisOut + bossR]])
+      // BoxGeometry is indexed, ExtrudeGeometry is not: merge them in one form.
+      parts.push(boxInBank(bank, bandA0, bandA1, i0, i1, x0, x1, 0).toNonIndexed());
+    add(`pushrod-gallery-${bank}`, mergeGeometries(parts, false), rib, 'gallery',
+      { bandA0, bandA1, bored: own.length, bossR });
   }
 
   // 4. the 14 cam bearing columns per bank: a split, line-bored tunnel machined to
@@ -372,9 +448,20 @@ function headCasting(bank, materials, camCarrier) {
   // (SPEC.head wall fields): a re-proportioned valve row moves these with it.
   const guideOd = H.guideBoreR + H.guideWall; // 1.05
   const pilotOd = guideOd + H.seatPilotClr; // 1.60
-  const floorOd = H.bucketBoreR + H.springFloorWall; // 2.70
   const tubeId = V.springRadius + V.springWireRadius + H.springTubeClr; // 1.90 over the 1.57 coil OD
   const tubeOd = tubeId + H.springTubeWall; // 2.20
+  // The floor is machined around the bore the follower stands in, so it is a
+  // variant fact: only the DOHC variant has a bucket bore in its head. Slice 8K
+  // took the 16 bucket-bore collars out of the OHV head - its follower is a lifter
+  // standing in the block - so an OHV floor machined around a bucket bore it does
+  // not have is the same defect, one ring later. tmp/8l-route.mjs ->
+  // tmp/v8-8l-rowmatrix.out measured what inheriting it costs: with the DOHC floor
+  // (2.5500) the published 0.9500 cm exhaust port bore is a legal swept duct in 9 of
+  // 24000 candidates at the thinnest floor tested, worst clearance 0.3168 cm over the
+  // 0.3000 cm cast wall; with the floor standing on this variant's own 1.9000 cm
+  // machined spring bore (2.2000) it is legal in 87 candidates at every floor
+  // thickness, worst clearance 0.6075 cm.
+  const floorOd = camCarrier ? H.bucketBoreR + H.springFloorWall : tubeId + H.springFloorWall; // 2.55 / 2.20
   const collarOd = H.bucketBoreR + H.collarWall; // 2.80
   for (const cyl of SPEC.cylinders.filter((c) => c.bank === bank)) {
     for (const valve of valves) {

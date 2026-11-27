@@ -36,7 +36,7 @@ import { GLOW_SPECS } from '../src/render/materials.js';
 // The authorities for the second build this gate boots (row A1-G5 "in DOHC and in OHV",
 // row P1-G6 "the OHV valvetrain in CUTAWAY and EXPLODED"). Read from the modules that
 // publish them, so the gate never types a count the engine already owns.
-import { ohvBearings, ohvLifterGallery, ohvLifters, standDatums } from '../src/engine/layout.js';
+import { ohvBearings, ohvLifterGallery, ohvLifters, ohvPushrods, standDatums } from '../src/engine/layout.js';
 import { ohvCamLayout } from '../src/engine/ohv.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1247,7 +1247,12 @@ const OHV_READ = `(() => {
   // OHV variant's cams stand in the block and those housings are #16's to replace.
   v.engine.traverse((o) => {
     const n = String(o.name);
-    if (/^pushrod-/.test(n)) names.pushrods.push(n);
+    // The rods are named pushrod-cyl(N)-(valve), the tree's per-valve part
+    // convention (lifter-, spring-, valve-). The head's pushrod GALLERY casting is
+    // named pushrod-gallery-(bank): iron, not a rod, and a census of drawn rods
+    // that counted it measured 18 for a 16-rod train - the first run of this law.
+    // This block is injected into the page as a string, so no backticks here.
+    if (/^pushrod-cyl/.test(n)) names.pushrods.push(n);
     if (/rocker-cover|^cover-/.test(n)) names.covers.push(n);
     else if (/^rocker-/.test(n)) names.rockers.push(n);
     if (/^cam-cover-/.test(n)) names.camCovers.push(n);
@@ -1276,6 +1281,7 @@ const OHV_READ = `(() => {
       chains: names.chains.length,
     },
     offMenu: names.lifters.filter((n) => !inspectable.has(n)),
+    pushrodsOffMenu: names.pushrods.filter((n) => !inspectable.has(n)),
     galleryOffMenu: names.gallery.filter((n) => !inspectable.has(n)),
     rollers,
     inspectables: v.view.inspectables().length,
@@ -1292,6 +1298,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     lifters: ohvLifters().lifters,
     cam: ohvCamLayout(ohvBearings()),
     ribs: ['L', 'R'].flatMap((b) => ohvLifterGallery().banks[b].clusters).length * 2,
+    pushrods: ohvPushrods().rods,
   };
   const ohv = JSON.parse(await evalJs(`(async () => JSON.stringify(await (${OHV_READ})))()`, { timeoutMs: 180000 }));
   console.log(`ohv build: variant ${ohv.variant}${ohv.rejected ? ` (refused ${ohv.rejected})` : ''}, ${ohv.meshes} drawn engine meshes, ${ohv.counts.lifters} lifters, ${ohv.counts.journals} cam journals, ${ohv.counts.lobes} lobes, ${ohv.counts.necks} necks, ${ohv.counts.valves} valves, ${ohv.counts.buckets} DOHC buckets, ${ohv.counts.camshafts} DOHC camshafts, ${ohv.counts.gallery} cast gallery ribs, ${ohv.counts.chains} cam chain with ${ohv.rollers} rollers, ${ohv.inspectables} inspectables`);
@@ -1301,6 +1308,10 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     bad.push(`ohv: the build draws ${ohv.counts.lifters} lifters while src/engine/layout.js ohvLifters() publishes ${published.lifters.length}`);
   if (ohv.offMenu.length)
     bad.push(`ohv: ${ohv.offMenu.length} drawn lifters are not on the inspection menu (${ohv.offMenu.slice(0, 6).join(', ')})`);
+  // Slice 8L (issue #46): a drawn part the menu cannot show is uninspectable, and the
+  // menu drops a member src/engine/view.js partLabel() cannot name.
+  if (ohv.pushrodsOffMenu.length)
+    bad.push(`ohv: ${ohv.pushrodsOffMenu.length} drawn pushrods are not on the inspection menu (${ohv.pushrodsOffMenu.slice(0, 6).join(', ')})`);
   if (ohv.counts.journals !== published.cam.journals.length)
     bad.push(`ohv: the central cam draws ${ohv.counts.journals} journals while ohvCamLayout() derives ${published.cam.journals.length}`);
   if (ohv.counts.lobes !== published.cam.lobes.length)
@@ -1321,7 +1332,7 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     valves: ohv.counts.valveRows, springs: ohv.counts.springs,
     pushrods: ohv.counts.pushrods, rockers: ohv.counts.rockers, covers: ohv.counts.covers,
   };
-  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${drawnOhv.valves} valves drawn as ${ohv.counts.valves} meshes (disc, stem, retainer) and ${drawnOhv.springs} springs for ${seats} seats`);
+  console.log(`ohv valvetrain: ${ohv.counts.lifters} lifters on ${ohv.counts.gallery} cast gallery ribs under ${ohv.counts.journals} journals / ${ohv.counts.lobes} lobes / ${ohv.counts.necks} necks of one central cam; ${drawnOhv.valves} valves drawn as ${ohv.counts.valves} meshes (disc, stem, retainer) and ${drawnOhv.springs} springs for ${seats} seats; ${drawnOhv.pushrods} pushrods on the ${published.pushrods.length} lines src/engine/layout.js ohvPushrods() publishes`);
   console.log(`ohv pending hardware published by SPEC.variants.ohv.pendingHardware: ${pendingOhv.join(', ')}`);
   console.log(`ohv cam housings drawn today: ${ohv.counts.camCovers} cam covers inherited from the shared head casting, ${drawnOhv.covers} rocker covers - pendingHardware names the rocker covers owed, and the iron they stand on is #16's`);
   if (drawnOhv.valves !== seats)
@@ -1336,6 +1347,10 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     if (!pendingOhv.includes(family) && n === 0)
       bad.push(`ohv: the live tree draws no "${family}" and pendingHardware does not name it either: an undeclared gap is invisible in the record`);
   }
+  // Slice 8L (issue #46): the rods are gate-measured against their own published
+  // lines, the same way the lifters and the cam are - the census is not a label.
+  if (drawnOhv.pushrods !== published.pushrods.length)
+    bad.push(`ohv: the build draws ${drawnOhv.pushrods} pushrods while ohvPushrods() publishes ${published.pushrods.length}`);
   if (ohv.counts.gallery !== published.ribs)
     bad.push(`ohv: the block casts ${ohv.counts.gallery} gallery ribs while ohvLifterGallery() publishes ${published.ribs} (rib + guide per cluster)`);
   console.log(`ohv gallery ribs on the inspection menu: ${ohv.counts.gallery - ohv.galleryOffMenu.length} of ${ohv.counts.gallery}${ohv.galleryOffMenu.length ? ` (${ohv.galleryOffMenu.slice(0, 6).join(', ')} off the menu)` : ''}`);

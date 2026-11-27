@@ -111,7 +111,7 @@ const drive = createDrive(materials);
 engine.add(drive.group);
 const heads = createHeads(materials, SPEC.build.variant);
 engine.add(heads.group);
-const manifolds = createManifolds(materials);
+const manifolds = createManifolds(materials, SPEC.build.variant);
 engine.add(manifolds.group);
 // The eight plugs are their own assembly, not part of the head: they are service
 // parts, they are inspected and exploded as members of their own, and the tip glow

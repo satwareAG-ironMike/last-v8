@@ -720,6 +720,54 @@ export function hudTitle(id = SPEC.build.variant) {
   return `${planeWord(id)} V${SPEC.cylinders.length} - ${bankAngleDeg()} DEG ${v.badgeWord} - ${SPEC.identity.serial}`;
 }
 
+/**
+ * Issue #46 (slice 8L-a): the 16 pushrod lines this variant's valvetrain stands on,
+ * derived once from the helpers that already own them - the lifter bores
+ * ohvLifterGallery() cuts, the lifter bodies ohvLifters() sizes and the rocker planes
+ * ohvRockerLayout() publishes. Every rod is coax with its own lifter bore (a pushrod
+ * that is not coax with its bore is a bent rod), it ends on the pad under the shaft
+ * plane its rocker presses on, and it starts on the top of the lifter body it pushes
+ * on at zero lift.
+ *
+ * The guided band - the stretch of head iron the gallery machines bores in - is the
+ * gap between the exhaust runner's crown and the casting top the shaft lines are
+ * machined to. That is where tmp/8l-route.mjs measured the runner leaving the head
+ * free, so the band is derived from the runner plane and the casting top rather than
+ * typed: the runner cannot be moved out from under it without moving the band.
+ */
+export function ohvPushrods(
+  G = ohvLifterGallery(), F = ohvLifters(G), R = ohvRockerLayout(),
+) {
+  const v = variantEntry('ohv');
+  const P = v.pushrod;
+  const E = v.exhaust;
+  const iron = v.rocker;
+  const bandA0 = E.topA + SPEC.manifold.exPortR + P.bandClr; // under the gallery
+  const bandA1 = R.castingTopA; // the top the shaft bores are machined to
+  const rods = F.lifters.map((l) => {
+    const to = R.sides[l.valve].along - iron.pad;
+    const from = l.axisAlong + F.baseRadius + l.length;
+    return {
+      cyl: l.cyl, valve: l.valve, bank: l.bank,
+      x: l.x, out: G.banks[l.bank].axisOut,
+      // the along-coordinate of the foot of this bore's axis off the cam axis: a
+      // consumer placing a solid on the axis walks from there, not from 0
+      axisAlong: G.banks[l.bank].axisAlong,
+      from, to, length: to - from,
+      bandFrom: (bandA0 + bandA1) / 2, bandLen: bandA1 - bandA0,
+    };
+  });
+  return {
+    rods,
+    rodRadius: P.rodRadius,
+    boreRadius: P.boreRadius,
+    bandA0,
+    bandA1,
+    minLengthCm: Math.min(...rods.map((r) => r.length)),
+    maxLengthCm: Math.max(...rods.map((r) => r.length)),
+  };
+}
+
 export function engineName(id = SPEC.build.variant) {
   const v = variantEntry(id);
   return `${planeWord(id).toLowerCase()} ${bankAngleDeg()} degree ${v.badgeWord} V${SPEC.cylinders.length}`;

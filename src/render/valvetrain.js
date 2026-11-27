@@ -17,7 +17,7 @@ import {
 import { latheX } from './parts.js';
 import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
 import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
-import { variantEntry, camGroupNames, ohvLifters } from '../engine/layout.js';
+import { ohvPushrods, variantEntry, camGroupNames, ohvLifters } from '../engine/layout.js';
 import { ohvCamAxis, ohvCamLayout, ohvCamLiftCm, ohvLift, ohvValveLift, ohvValvePoint, TURNED_SEGMENTS } from '../engine/ohv.js';
 
 const H = SPEC.head;
@@ -266,6 +266,38 @@ function buildOhvLifters(materials) {
 }
 
 /**
+ * Slice 8L-a (issue #46): the 16 pushrods this variant's valvetrain stands on. Each
+ * one is a straight solid on the published line ohvPushrods() derives - coax with
+ * its own lifter bore, from the top of the lifter body it pushes on at zero lift to
+ * the pad under the rocker shaft plane its rocker presses on. Nothing is typed here:
+ * the radius is SPEC.variants.ohv.pushrod.rodRadius, the ends are the published
+ * from/to, the pose law moves each rod along its own axis by exactly the lift its
+ * lobe gives its lifter, which is the only way a pushrod moves.
+ */
+function buildOhvPushrods(materials) {
+  const R = ohvPushrods();
+  const axis = ohvCamAxis();
+  const out = [];
+  for (const r of R.rods) {
+    const d = new THREE.Vector3().fromArray(bankUp(r.bank));
+    const mesh = new THREE.Mesh(disc(R.rodRadius, R.rodRadius, r.length, 24), materials.rodSteel);
+    mesh.name = `pushrod-cyl${r.cyl}-${r.valve}`;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.part = 'pushrod';
+    mesh.userData.cyl = r.cyl;
+    mesh.quaternion.setFromUnitVectors(Z_AXIS, d);
+    // The rod axis is the lifter bore axis: the cam axis point at this cylinder's
+    // station, walked along the bank's own up direction to the rod's midpoint.
+    const zero = new THREE.Vector3(r.x, axis.y, axis.z)
+      .addScaledVector(d, (r.from + r.to) / 2 - r.axisAlong);
+    mesh.position.copy(zero);
+    out.push({ mesh, d, zero, cyl: SPEC.cylinders.find((c) => c.num === r.cyl), valve: r.valve });
+  }
+  return out;
+}
+
+/**
  * Slice 8J (issue #51 option A, GATES P1-G6 / P1-G7): the 16 valves and 16
  * springs the OHV head seats. The head casting is shared by both builds - it
  * already machines the 16 seats, the 16 guides and the 16 spring floors
@@ -314,8 +346,9 @@ export function createValvetrain(materials, variantId = SPEC.build.variant) {
   if (entry.centralCam) {
     const cam = buildOhvCam(camGroupNames(variantId)[0], materials);
     const lifters = buildOhvLifters(materials);
+    const pushrods = buildOhvPushrods(materials);
     const valvesRow = buildOhvValves(materials);
-    group.add(cam, ...lifters.map((l) => l.mesh));
+    group.add(cam, ...lifters.map((l) => l.mesh), ...pushrods.map((p) => p.mesh));
     for (const f of valvesRow) group.add(f.valveG, f.spring);
     // The same half-crank turn the DOHC cams get; the lobes' baked indices carry
     // this variant's lifter axes, src/engine/ohv.js publishes them. Each lifter
@@ -324,6 +357,8 @@ export function createValvetrain(materials, variantId = SPEC.build.variant) {
     const update = (theta) => {
       cam.rotation.x = (theta / CAM.halfSpeedRatio) * DEG;
       for (const l of lifters) l.mesh.position.copy(l.zero).addScaledVector(l.d, ohvLift(l.cyl, l.valve, theta));
+      // a pushrod's lower end sits on the lifter it rides, so it travels with it
+      for (const p of pushrods) p.mesh.position.copy(p.zero).addScaledVector(p.d, ohvLift(p.cyl, p.valve, theta));
       for (const f of valvesRow) {
         const p = ohvValvePoint(f.cyl, f.valve, 0, theta);
         const lift = ohvValveLift(f.cyl, f.valve, theta);
@@ -341,6 +376,7 @@ export function createValvetrain(materials, variantId = SPEC.build.variant) {
     return {
       group, update, cams: [cam],
       lifters: lifters.map((l) => l.mesh),
+      pushrods: pushrods.map((p) => p.mesh),
       valves: valvesRow.map((f) => f.valveG),
       springs: valvesRow.map((f) => f.spring),
     };
