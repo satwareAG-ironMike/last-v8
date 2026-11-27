@@ -199,7 +199,7 @@ test(`${LAW}: the OHV head's own casting leaves the published rocker shaft lines
   const L = await layoutOf();
   const iron = SPEC.variants.ohv.rocker;
   const group = headsFor('ohv');
-  const clear = iron.shaftBoreR + iron.castWall;
+  const clear = L.shaftBoreR + iron.castWall;
   const worst = { shaft: Infinity, shaftAt: '', lever: Infinity, leverAt: '' };
   group.traverse((o) => {
     if (!o.isMesh) return;

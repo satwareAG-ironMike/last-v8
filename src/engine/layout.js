@@ -10,7 +10,7 @@
 // SPEC already publishes. A renderer, the HTML shell or the README may not
 // type any of these facts beside it.
 // ---------------------------------------------------------------------------
-import { SPEC, DEG, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
+import { SPEC, DEG, valveSide, panFlangeHalfWidth, endDiscFaceX } from './spec.js';
 import {
   boreR as lineBoreR, boltCircumR, castOdR, noseR, housingInRel, housingOutRel,
 } from './bearings.js';
@@ -560,6 +560,67 @@ export function ohvLifters(G = ohvLifterGallery(), H = ohvHousing()) {
     crankSideAirCm: G.crankSideAirCm,
     maxSweep: G.maxSweep,
     tunnelBoreR: G.tunnelBoreR,
+  };
+}
+
+/**
+ * Issue #46 (slice 8K): the rocker train this variant's head has to carry, derived
+ * from the lever slice 8J published (SPEC.variants.ohv.rockerRatio, the seat law in
+ * SPEC.head and the lifter axes ohvLifterGallery/ohvLifters cut) - never typed.
+ *
+ * Each side's shaft stands on a plane `iron.pad + iron.shaftR` above the highest the
+ * valve tip ever reaches (the plane test/ohv-valve.test.mjs measures its interface law
+ * against); the intake shaft is raised `iron.stagger` further along the bore axis,
+ * because on one plane an intake rocker's pushrod arm cuts the same cylinder's exhaust
+ * valve (tmp/8k-fit.mjs). A support stands each side of every rocker, at the midpoint
+ * of each gap between them, so no lever and no support share a plane on one shaft.
+ */
+export function ohvRockerLayout(id = 'ohv') {
+  const v = variantEntry(id);
+  const iron = v.rocker;
+  const R = v.rockerRatio;
+  const H = SPEC.head;
+  const G = ohvLifterGallery();
+  const F = ohvLifters(G);
+  const plane = H.seatA + Math.cos(H.valveAngle * DEG) * (H.stemToTip - SPEC.valves.maxLift) + iron.pad + iron.shaftR;
+  const sides = {};
+  for (const valve of ['intake', 'exhaust']) {
+    const s = valveSide(valve);
+    const tipOut = s * (H.seatOffset + Math.sin(H.valveAngle * DEG) * H.stemToTip);
+    const along = plane + (valve === 'intake' ? iron.stagger : 0);
+    const rockers = [];
+    const supports = [];
+    for (const bank of ['L', 'R']) {
+      const lifterOut = G.banks[bank].axisOut;
+      const bankRockers = SPEC.cylinders.filter((c) => c.bank === bank).map((c) => {
+        const l = F.lifters.find((x) => x.cyl === c.num && x.valve === valve);
+        const stationX = SPEC.block.stations[c.station];
+        return { cyl: c.num, bank, x: (R * l.x + stationX) / (R + 1), lifterX: l.x, stationX };
+      }).sort((a, b) => a.x - b.x);
+      rockers.push(...bankRockers);
+      // one support each side of every rocker: the midpoint of each gap, plus the two
+      // outboard ends at half the adjacent gap
+      const xs = bankRockers.map((r) => r.x);
+      const at = [...xs.slice(1).map((x, i) => (x + xs[i]) / 2), xs[0] - (xs[1] - xs[0]) / 2, xs.at(-1) + (xs.at(-1) - xs.at(-2)) / 2];
+      at.sort((a, b) => a - b).forEach((x, index) => supports.push({ bank, valve, index, x }));
+    }
+    const pivotOut = (R * G.banks.L.axisOut + tipOut) / (R + 1);
+    sides[valve] = { valve, along, pivotOut, tipOut, lifterOut: G.banks.L.axisOut, rockers, supports };
+  }
+  return {
+    stagger: iron.stagger,
+    pad: iron.pad,
+    shaftR: iron.shaftR,
+    shaftBoreR: iron.shaftR + iron.shaftClear,
+    armHalfWidth: iron.armHalfWidth,
+    supportHalfWidth: iron.supportHalfWidth,
+    castWall: iron.castWall,
+    plane, // the slice 8J interface plane the exhaust shaft stands on
+    // the highest any of this variant's casting may stand without eating the room a
+    // shaft bore and its wall need (issue #46: the DOHC port plane does not clear it)
+    castingTopA: Math.min(...Object.values(sides).map((r) => r.along)) - (iron.shaftR + iron.shaftClear + iron.castWall),
+    sides,
+    supports: Object.values(sides).flatMap((r) => r.supports),
   };
 }
 
