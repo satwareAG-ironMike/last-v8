@@ -233,9 +233,13 @@ export function manifoldSpecs() {
  *
  * The merge is not bolted onto the head: the head machines a bore through its own
  * web (src/render/heads.js boredWeb) at the same neck the header uses, and the
- * neck below stands in that bore. Everything outboard of the web - the neck's end,
- * the outlet disc and the stub - stands at out >= 8.3368, the published pushrod
- * axis 7.6368 plus the 0.7000 cm a 0.4000 cm rod needs from runner iron.
+ * neck below stands in that bore. Measured over the drawn parts (tmp/8l-clearance.mjs
+ * -> tmp/v8-8l-clearance2.out): the four primaries occupy out 1.9204..5.5001, the
+ * neck 6.4500..7.9500 (the web's own two faces - it is inside the head's iron, not
+ * beside the rods), and the outlet disc plus stub 9.4500..11.9500, which is 1.4132 cm
+ * outboard of the rod surface at 8.0368. The tightest runner-to-rod reading anywhere
+ * in the tree is 1.3097 cm, at the merge neck against the nearest rod axis 3.0250 cm
+ * away in x.
  */
 function ohvExhaust(exSub, bank, ax, materials) {
   const E = SPEC.variants.ohv.exhaust;
