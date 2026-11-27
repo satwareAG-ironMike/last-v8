@@ -188,7 +188,7 @@ test(`${LAW}: the OHV head casts a pushrod gallery per bank and bores it at the 
 test(`${LAW}: no drawn pushrod cuts the runner iron it has to pass`, () => {
   const P = SPEC.variants.ohv.pushrod;
   const R = published();
-  const group = grp(createManifolds(mats()));
+  const group = grp(createManifolds(mats(), 'ohv'));
   let worst = { air: Infinity, at: '', rod: '' };
   for (const bank of banks) {
     const vs = verts(group, bank);
