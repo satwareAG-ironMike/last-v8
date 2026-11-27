@@ -393,7 +393,7 @@ test('the OHV pass prints its valvetrain census and refuses a gap the live tree 
   // and both refusals - a family pendingHardware still names while the live tree draws
   // it, and a gap the live tree draws none of and leaves unlisted.
   assert.ok(/ohv valvetrain: /.test(src), 'the gate writes no OHV valvetrain census line');
-  const census = (src.match(/console\.log\(`ohv valvetrain: [^\n]*/g) || []);
+  const census = (src.match(/^\s*console\.log\(`ohv valvetrain: [^\n]*/gm) || []);
   assert.equal(census.length, 1, `the gate prints ${census.length} OHV census lines, expected one`);
   for (const field of ['lifters', 'gallery', 'journals', 'lobes', 'necks'])
     assert.ok(census[0].includes(`\${ohv.counts.${field}}`), `the OHV census does not count ${field}`);
@@ -409,12 +409,19 @@ test('the OHV pass prints its valvetrain census and refuses a gap the live tree 
   // in the printed label, so a law that only searches for it passes even when the read is
   // gone (measured: the poke ohv-pending-not-read replaced the read with ([])) .
   assert.ok(/const pendingOhv = \(SPEC\.variants\.ohv\.pendingHardware \|\| \[\]\)\.map\(\(p\) => p\.family\);/.test(src), 'the OHV pass never reads the pending hardware families this build publishes into a variable the gap clause can check:');
-  assert.ok(/pendingOhv\.includes\(family\) && n > 0/.test(src), 'the gate does not refuse a family pendingHardware names owed while the live tree draws it: the list has to be the measured gap');
-  assert.ok(/!pendingOhv\.includes\(family\) && n === 0/.test(src), 'the gate does not refuse a gap the live tree draws none of and pendingHardware does not name: an undeclared gap is invisible in the record');
+  // Scoped to the call sites, because the loose form of both clauses was measured
+  // dead: neutralising the refusal to `if (false && pendingOhv.includes(family) ...)`
+  // kept the bare substring and the law stayed green (tmp/v8-8j-ctlshots-gap-drawn-refusal-gone.out,
+  // tmp/v8-8j-ctlshots-gap-unlisted-refusal-gone.out). A law that greps a substring a
+  // disabled statement still contains gates nothing.
+  assert.ok(/if \(pendingOhv\.includes\(family\) && n > 0\)\s*\n\s*bad\.push\(/.test(src), 'the gate does not refuse a family pendingHardware names owed while the live tree draws it: the list has to be the measured gap');
+  assert.ok(/if \(!pendingOhv\.includes\(family\) && n === 0\)\s*\n\s*bad\.push\(/.test(src), 'the gate does not refuse a gap the live tree draws none of and pendingHardware does not name: an undeclared gap is invisible in the record');
   // The four cam covers this build inherits from the shared head casting are not the
   // rocker covers pendingHardware names, and the record has to say which is which.
-  const housings = (src.match(/console\.log\(`ohv cam housings drawn today: [^\n]*/g) || []);
-  assert.equal(housings.length, 1, `the gate prints ${housings.length} cam-housing lines, expected the one naming the inherited cam covers and the owed rocker covers`);
+  // Anchored at the line start for the same reason: commenting the print out kept the
+  // text and the loose law stayed green (tmp/v8-8j-ctlshots-housings-line-gone.out).
+  const housings = (src.match(/^\s*console\.log\(`ohv cam housings drawn today: [^\n]*/gm) || []);
+  assert.equal(housings.length, 1, `the gate prints ${housings.length} cam-housing lines at a line start, expected the one naming the inherited cam covers and the owed rocker covers`);
   assert.ok(housings[0].includes('${ohv.counts.camCovers}') && housings[0].includes('${drawnOhv.covers}'), 'the cam-housing line does not print both the inherited cam covers and the drawn rocker covers');
 });
 
