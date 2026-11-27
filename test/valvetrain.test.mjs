@@ -1300,23 +1300,6 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
     assert.ok(/^#\d+$/.test(p.issue), `pendingHardware family "${p.family}" is not tied to an open issue: "${p.issue}"`);
     assert.ok(p.why && p.why.length > 10, `pendingHardware family "${p.family}" names no reason a reader can check`);
   }
-  const named = pending.map((p) => p.family).sort();
-  assert.deepEqual([...named].sort(), ['covers', 'pushrods', 'rockers', 'springs', 'valves'],
-    `pendingHardware has to name exactly the valvetrain families the OHV build does not draw, measured ${named.join(', ')}`);
-  // issue #51 option B: the screenshot gate counts `0 valve meshes and 0 springs drawn for 8
-  // cylinders` on every OHV run. A gap the gate measures has to be a family this variant's own
-  // spec names as owed, with a reason a reader can check - and the reason is the rocker iron
-  // #45 measured missing, because a valve with no rocker has nothing pushing it.
-  for (const family of ['valves', 'springs']) {
-    const p = pending.find((e) => e.family === family);
-    assert.ok(p, `the OHV build draws no ${family} and pendingHardware does not name them either: `
-      + 'the gap the screenshot gate counts would be silent in the spec and in the record');
-    assert.ok(/rocker/i.test(p.why), `pendingHardware names "${family}" owed without naming the rocker `
-      + `iron that is the reason (${p.why})`);
-    assert.ok(/#51|#45/.test(p.issue), `the "${family}" family is tied to ${p.issue}; the issue that `
-      + 'measures this gap is #51 and the iron it waits on is #45');
-  }
-
   // the DOHC build beside it: four camshafts, buckets, and no lifter in it
   const dohc = (await buildValvetrain('dohc')).group;
   const wantDOHC = [...L.camGroupNames('dohc')].sort();
@@ -1344,11 +1327,60 @@ test(`${OHV_LAW}: the OHV valvetrain is drawn where its host iron is cast, and e
   assert.deepEqual(lifters.sort(), bores,
     `the lifters drawn in the OHV valve train (${lifters.length}: ${lifters.slice(0, 3).join(', ')}...) have to be exactly the ${bores.length} bores the block machines`);
   assert.equal(lifters.length, owed.lifters, `the OHV build draws ${lifters.length} lifters for the ${owed.lifters} its own contract counts`);
-  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'valve-', 'spring']) {
-    let hits = 0;
-    ohv.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
-    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: `
-      + `hardware may not appear in the scene before the iron that houses it is cast`);
+  // Slice 8J (issue #51 option A): the list is now MEASURED. pendingHardware has
+  // to name exactly the families this build does not draw - a family listed while
+  // drawn, or a gap drawn while unlisted, is a spec that has drifted from the
+  // scene it describes. test/ohv-valve.test.mjs measures the same invariant off
+  // the drawn metal; this law is the spec-side half.
+  const drawnCount = (re) => {
+    let n = 0;
+    ohv.traverse((o) => { if (o.isMesh && re.test(o.name)) n += 1; });
+    return n;
+  };
+  const drawnGroups = (re) => {
+    const s = new Set();
+    ohv.traverse((o) => { if (o.isGroup && re.test(o.name)) s.add(o.name); });
+    return s.size;
+  };
+  const FAMILY_RE = {
+    lifters: /^lifter-cyl/, valves: /^valve-cyl\d+-(intake|exhaust)$/, springs: /^spring-cyl\d+-(intake|exhaust)$/,
+    pushrods: /pushrod/, rockers: /rocker/, covers: /(^|-)cover/,
+  };
+  const drawn = {
+    lifters: lifters.length, valves: drawnGroups(FAMILY_RE.valves), springs: drawnCount(FAMILY_RE.springs),
+    pushrods: drawnCount(FAMILY_RE.pushrods), rockers: drawnCount(FAMILY_RE.rockers), covers: drawnCount(FAMILY_RE.covers),
+  };
+  for (const [familyName, n] of Object.entries(drawn)) {
+    const listed = pending.some((p) => p.family === familyName);
+    assert.equal(listed, n === 0,
+      `pendingHardware ${listed ? 'names' : 'does not name'} "${familyName}" while the OHV build draws ${n} of them: the list has to be the measured gap`);
+    if (n > 0) assert.equal(n, owed[familyName], `the OHV build draws ${n} ${familyName} for the ${owed[familyName]} its own contract counts`);
+  }
+  const named = pending.map((p) => p.family).sort();
+  assert.deepEqual(named, Object.keys(drawn).filter((k) => drawn[k] === 0).sort(),
+    `pendingHardware has to name exactly the valvetrain families the OHV build does not draw, measured ${named.join(', ')}`);
+  for (const family of named) {
+    const p = pending.find((e) => e.family === family);
+    assert.ok(/#16|#51|#45/.test(p.issue), `the "${family}" family is tied to ${p.issue}: the issue that owes it and the issue whose iron it waits on`);
+  }
+  // a pending family may not appear in the scene at all: hardware may not appear
+  // before the iron that houses it is cast. The families that ARE drawn are
+  // counted against the contract instead of refused.
+  const PENDING_WORDS = { pushrods: ['pushrod', 'push-rod'], rockers: ['rocker'], covers: ['cover'] };
+  for (const [familyName, words] of Object.entries(PENDING_WORDS)) {
+    for (const word of words) {
+      let hits = 0;
+      ohv.traverse((o) => { if (o.name.toLowerCase().includes(word) || (o.userData && String(o.userData.kind || '').toLowerCase().includes(word))) hits += 1; });
+      assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: `
+        + `hardware may not appear in the scene before the iron that houses it is cast`);
+    }
+  }
+  // the families this build DOES draw have to answer the words the record and the
+  // inspection menu use for them, at the count the contract owes
+  for (const [word, want] of [['valve-', owed.valves], ['spring', owed.springs]]) {
+    const groups = new Set();
+    ohv.traverse((o) => { if (o.name.toLowerCase().includes(word)) groups.add(o.name.replace(/-(head|stem|retainer)$/, '')); });
+    assert.equal(groups.size, want, `the OHV build answers "${word}" with ${groups.size} part(s) for the ${want} its own contract counts`);
   }
   console.log(`${OHV_LAW} drawn: switch ${SPEC.build.variant} -> dohc ${wantDOHC.join(', ')} with buckets, ohv ${wantOHV.join(', ')} with ${lifters.length} lifters in ${bores.length} bores; `
     + `still owed and named: ${pending.map((p) => `${p.family} (${owed[p.family]}, ${p.issue})`).join(', ')}`);
