@@ -593,6 +593,48 @@ export const SPEC = {
         castWall: 0.30, // least cast wall between a machined bore and other iron
         stagger: 2.0, // fore-aft offset between the intake and exhaust shaft planes
       },
+      // Issue #46 (slice 8L-a): the pushrod, the bore its guide machines, and the
+      // route the exhaust runner has to take to get out of this head. Every number
+      // is measured off the drawn tree and the run that measured it is named beside
+      // it; test/ohv-pushrod.test.mjs refuses a drift between the contract and the
+      // iron built from it.
+      pushrod: {
+        // tmp/8l-fit.mjs -> tmp/v8-8l-fit.out: every rod is coax with its lifter
+        // bore, standing at out 7.6368 in both banks, 35.2170..37.2170 cm long.
+        // The bore the gallery machines over it is the rod plus the running
+        // clearance a guide is machined with - written as the sum so the contract
+        // cannot drift from its own derivation.
+        rodRadius: 0.40,
+        runningClear: 0.15,
+        boreRadius: 0.40 + 0.15,
+        // The air a rod keeps against runner and gallery iron. It is this variant's
+        // published cast wall around every machined bore (rocker.castWall), not a
+        // second opinion beside it.
+        runnerAir: 0.30,
+        castWall: 0.30,
+        // The guided band is the head iron between the exhaust runner's crown and
+        // the casting top the rocker shaft lines are machined to; bandClr is the
+        // air the runner's crown keeps under it (tmp/8l-route.mjs).
+        bandClr: 0.30,
+      },
+      // The cored exhaust runner this variant casts in its own head iron. The DOHC
+      // header bolts to the outboard stay face at out 7.00 because nothing stands
+      // between the seat and that face; in the OHV head the 16 pushrods stand there
+      // (tmp/8l-flange.mjs -> tmp/v8-8l-flange.out: 2764 drawn vertices of runner
+      // iron cut a gallery wall at that plane), so the exhaust leaves through the
+      // head's own centre webs at the pair-merge station instead.
+      // tmp/8l-route.mjs -> tmp/v8-8l-rowmatrix.out swept 24000 candidate ducts per
+      // valve row against the machined rings, the 16 bolt bores, the liner shells,
+      // the stays, the gasket band, the rail band and the 16 rod lines. The
+      // spring-seat floor tower is the binding ring in every candidate of both rows.
+      exhaust: {
+        mouthDx: 2.80, // beside its own seat insert, inside the chamber void
+        mouthOut: 3.00,
+        mouthA: 26.40,
+        holdOut: 3.00, // held inboard of the head-bolt line (its bores stand 5.72..6.88)
+        riseX: 10.10, // ...until the centre-web window x 9..13 opens
+        topA: 28.60, // the plane it crosses outboard on, under the gallery band
+      },
       // A1-G7 / issue #16: the walls this variant's cam rides in. The tunnel the
       // lobes swing in is BORED - its machined face is the swept outline plus this
       // much air - and the room between the crank-side swings and the cam is the
