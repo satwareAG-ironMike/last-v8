@@ -750,6 +750,9 @@ export function ohvPushrods(
     return {
       cyl: l.cyl, valve: l.valve, bank: l.bank,
       x: l.x, out: G.banks[l.bank].axisOut,
+      // the along-coordinate of the foot of this bore's axis off the cam axis: a
+      // consumer placing a solid on the axis walks from there, not from 0
+      axisAlong: G.banks[l.bank].axisAlong,
       from, to, length: to - from,
       bandFrom: (bandA0 + bandA1) / 2, bandLen: bandA1 - bandA0,
     };

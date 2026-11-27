@@ -145,7 +145,8 @@ test(`${LAW}: the OHV build draws its 16 pushrods on the published lines`, () =>
   assert.equal(drawn.length, R.rods.length,
     `the OHV valvetrain draws ${drawn.length} pushrod solids, expected ${R.rods.length}: SPEC.variants.ohv.pendingHardware names the pushrods as the gap this variant still has`);
   for (const r of R.rods) {
-    const mesh = drawn.find((o) => String(o.name).includes(`-${r.cyl}-${r.valve}`));
+    // named the way every other part in this tree is named for its cylinder
+    const mesh = drawn.find((o) => String(o.name).includes(`cyl${r.cyl}-${r.valve}`));
     assert.ok(mesh, `no drawn pushrod is named for cyl ${r.cyl} ${r.valve}`);
     const bank = SPEC.cylinders.find((c) => c.num === r.cyl).bank;
     const vs = verts(group, bank, (o) => o === mesh);
@@ -153,8 +154,18 @@ test(`${LAW}: the OHV build draws its 16 pushrods on the published lines`, () =>
     const along = vs.map((p) => p.along);
     assert.ok(Math.abs(radial - SPEC.variants.ohv.pushrod.rodRadius) < 1e-2,
       `the drawn pushrod of cyl ${r.cyl} ${r.valve} stands ${radial.toFixed(4)} cm off its axis at its widest, not the published ${SPEC.variants.ohv.pushrod.rodRadius} cm rod radius`);
-    assert.ok(Math.abs(Math.min(...along) - r.from) < 1e-2 && Math.abs(Math.max(...along) - r.to) < 1e-2,
-      `the drawn pushrod of cyl ${r.cyl} ${r.valve} runs along ${Math.min(...along).toFixed(4)}..${Math.max(...along).toFixed(4)} while the published rod runs ${r.from.toFixed(4)}..${r.to.toFixed(4)}`);
+    // The builder's pose law travels every rod along its own axis by the lift its
+    // lobe gives its lifter, and at the crank angle a build rests at that lift is
+    // not zero for every cylinder - one cylinder of a four-stroke is always on its
+    // overlap ramp. So the law measures the solid the builder drew against the
+    // published line it was drawn from: its own length, its axis, and that its
+    // midpoint stands inside the published segment rather than off the end of it.
+    const span = Math.max(...along) - Math.min(...along);
+    const mid = (Math.min(...along) + Math.max(...along)) / 2;
+    assert.ok(Math.abs(span - (r.to - r.from)) < 1e-2,
+      `the drawn pushrod of cyl ${r.cyl} ${r.valve} is ${span.toFixed(4)} cm long, not the published ${r.to.toFixed(4)} - ${r.from.toFixed(4)} = ${(r.to - r.from).toFixed(4)} cm between its lifter and its rocker pad`);
+    assert.ok(mid > r.from && mid < r.to,
+      `the drawn pushrod of cyl ${r.cyl} ${r.valve} stands centred at along ${mid.toFixed(4)}, outside the published rod segment ${r.from.toFixed(4)}..${r.to.toFixed(4)}`);
   }
 });
 

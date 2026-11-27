@@ -556,7 +556,6 @@ export const SPEC = {
       // refuses a family listed while drawn and a gap drawn while unlisted.
       drawn: true,
       pendingHardware: [
-        { family: 'pushrods', issue: '#16', why: 'no pushrod host iron is cast in this block' },
         { family: 'rockers', issue: '#16', why: 'no rocker stud or pedestal is cast in this block' },
         { family: 'covers', issue: '#16', why: 'the rocker covers that replace the cam bosses stand on the rocker iron this block does not cast yet' },
       ],
