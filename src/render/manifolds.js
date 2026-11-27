@@ -243,8 +243,8 @@ function ohvExhaust(exSub, bank, ax, materials) {
   for (const st of B.stations) {
     const nodes = [
       [E.mouthA, E.mouthOut, st + E.mouthDx], // beside its own seat insert, in the chamber void
-      [E.mouthA, E.mouthOut, mergeX(st) - Math.sign(st) * (M.exMergeX - E.riseX)], // held inboard of the bolt line
-      [E.topA, E.mouthOut, mergeX(st)], // risen, at the web window
+      [E.mouthA, E.holdOut, mergeX(st) - Math.sign(st) * (M.exMergeX - E.riseX)], // held inboard of the bolt line
+      [E.topA, E.holdOut, mergeX(st)], // risen, at the web window
       [E.topA, H.webOut0 - M.exPortR, mergeX(st)], // up to the web's own inboard face
     ];
     const curve = pipeCurve(nodes.map((n) => P(bank, n)));
