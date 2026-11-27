@@ -257,7 +257,7 @@ test(`${LAW}: every drawn pushrod is an inspectable member with a label a builde
   for (const name of drawn) {
     const label = partLabel(name);
     assert.notEqual(label, name, `${name}: partLabel() answers its own name, so the inspection menu drops this part`);
-    assert.match(label, /^Pushrod - cylinder \d+ (intake|exhaust) - station /,
+    assert.match(label, /^Pushrod \([^)]*\) - cylinder \d+ (intake|exhaust) - station /,
       `partLabel("${name}") reads "${label}": a rod label has to name the part, its cylinder and side, and the station it stands at`);
   }
 });

@@ -1281,6 +1281,7 @@ const OHV_READ = `(() => {
       chains: names.chains.length,
     },
     offMenu: names.lifters.filter((n) => !inspectable.has(n)),
+    pushrodsOffMenu: names.pushrods.filter((n) => !inspectable.has(n)),
     galleryOffMenu: names.gallery.filter((n) => !inspectable.has(n)),
     rollers,
     inspectables: v.view.inspectables().length,
@@ -1307,6 +1308,10 @@ await withPage({ query: '?variant=ohv', minFrames: 6, watchdogMs: 900000, window
     bad.push(`ohv: the build draws ${ohv.counts.lifters} lifters while src/engine/layout.js ohvLifters() publishes ${published.lifters.length}`);
   if (ohv.offMenu.length)
     bad.push(`ohv: ${ohv.offMenu.length} drawn lifters are not on the inspection menu (${ohv.offMenu.slice(0, 6).join(', ')})`);
+  // Slice 8L (issue #46): a drawn part the menu cannot show is uninspectable, and the
+  // menu drops a member src/engine/view.js partLabel() cannot name.
+  if (ohv.pushrodsOffMenu.length)
+    bad.push(`ohv: ${ohv.pushrodsOffMenu.length} drawn pushrods are not on the inspection menu (${ohv.pushrodsOffMenu.slice(0, 6).join(', ')})`);
   if (ohv.counts.journals !== published.cam.journals.length)
     bad.push(`ohv: the central cam draws ${ohv.counts.journals} journals while ohvCamLayout() derives ${published.cam.journals.length}`);
   if (ohv.counts.lobes !== published.cam.lobes.length)
