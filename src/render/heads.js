@@ -23,10 +23,12 @@ import {
   SPEC, BANKS, DEG, bankPoint, bankOut, bankUp, camAxisBank, HEAD_TOP_A,
 } from '../engine/spec.js';
 import { bearingStack } from '../engine/bearings.js';
-import { variantEntry, ohvRockerLayout } from '../engine/layout.js';
+import { ohvPushrods, variantEntry, ohvRockerLayout } from '../engine/layout.js';
 import { camAxisPoint, valveAxisDir, valveSeatPoint } from '../engine/timing.js';
 import { boxInBank, latheBank, latheX } from './parts.js';
-import { alignYTo, boltGeometry, circleHole, extrude, instancedBolts } from './primitives.js';
+import {
+  alignYTo, boltGeometry, circleHole, extrude, instancedBolts, roundedRectShape,
+} from './primitives.js';
 
 const H = SPEC.head;
 const B = SPEC.block;
@@ -270,6 +272,50 @@ function headCasting(bank, materials, camCarrier) {
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
     add(`stay-${bank}-in-${st}`, boxInBank(bank, FACE, STAY_TOP, -H.gasketOd, -H.gasketId,
       st - 1.7, st + 1.7, 0.2), rib, 'stay');
+  }
+
+  // 3b. the pushrod gallery (slice 8L-a, issue #46): the iron the 16 pushrods are
+  //     guided in. It stands in the one band of this casting the measured exhaust
+  //     runner leaves free - from the runner's crown (SPEC.variants.ohv.exhaust.topA
+  //     plus the port bore and the published cast wall) up to castingTopA, the plane
+  //     the rocker shaft bores are machined to - and is bored at the 16 published
+  //     lifter axes ohvPushrods() derives. Each bore keeps the published cast wall to
+  //     the band's inboard and outboard faces, and no part of the gallery holds
+  //     material inside its own bore: that would be a bushing, not a guide.
+  if (!camCarrier) {
+    const P = variantEntry('ohv').pushrod;
+    const R = ohvPushrods();
+    const own = R.rods.filter((r) => r.bank === bank);
+    const axisOut = own[0].out;
+    const bandA0 = own[0].bandFrom - own[0].bandLen / 2;
+    const bandA1 = own[0].bandFrom + own[0].bandLen / 2;
+    const bossR = P.boreRadius + P.castWall; // the guide hub the bore is machined in
+    const x0 = Math.min(...own.map((r) => r.x)) - bossR;
+    const x1 = Math.max(...own.map((r) => r.x)) + bossR;
+    const u = new THREE.Vector3().fromArray(bankUp(bank));
+    const o = new THREE.Vector3().fromArray(bankOut(bank));
+    // Extruded along the bore axis, so the profile plane is (x, out) and every hole
+    // is a tunnel parallel to `along`. The basis has to stay right-handed or the
+    // normals invert: (out x along) has to point along +X.
+    const flip = new THREE.Vector3().crossVectors(o, u).x < 0 ? -1 : 1;
+    const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), o, u.clone().multiplyScalar(flip));
+    const parts = [];
+    for (const r of own) {
+      const boss = new THREE.Shape();
+      boss.absarc(r.x, axisOut, bossR, 0, Math.PI * 2, false);
+      boss.holes.push(circleHole(r.x, axisOut, P.boreRadius));
+      const g = extrude(boss, bandA1 - bandA0, { bevel: 0, curveSegments: 24 });
+      g.translate(0, 0, flip * (bandA0 + bandA1) / 2);
+      g.applyMatrix4(basis);
+      parts.push(g);
+    }
+    // the spine that joins the hubs into one casting: two bars standing on the
+    // bores' own tangent planes, so no part of the spine reaches into a bore
+    for (const [i0, i1] of [[axisOut - bossR, axisOut - P.boreRadius], [axisOut + P.boreRadius, axisOut + bossR]])
+      // BoxGeometry is indexed, ExtrudeGeometry is not: merge them in one form.
+      parts.push(boxInBank(bank, bandA0, bandA1, i0, i1, x0, x1, 0).toNonIndexed());
+    add(`pushrod-gallery-${bank}`, mergeGeometries(parts, false), rib, 'gallery',
+      { bandA0, bandA1, bored: own.length, bossR });
   }
 
   // 4. the 14 cam bearing columns per bank: a split, line-bored tunnel machined to
