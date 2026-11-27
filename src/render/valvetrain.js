@@ -18,7 +18,7 @@ import { latheX } from './parts.js';
 import { extrude, alignX, alignYTo, chainSprocketGeometry, springGeometry } from './primitives.js';
 import { chainLayout, gapCutR, tipRadius } from '../engine/drive.js';
 import { variantEntry, camGroupNames, ohvLifters } from '../engine/layout.js';
-import { ohvCamAxis, ohvCamLayout, ohvCamLiftCm, ohvLift, TURNED_SEGMENTS } from '../engine/ohv.js';
+import { ohvCamAxis, ohvCamLayout, ohvCamLiftCm, ohvLift, ohvValveLift, ohvValvePoint, TURNED_SEGMENTS } from '../engine/ohv.js';
 
 const H = SPEC.head;
 const V = SPEC.valves;
@@ -169,7 +169,7 @@ function buildValve(cyl, valve, materials) {
   put(`${g.name}-head`, disc(headR * 0.94, headR, H.headThickness, 30), mat, 'valve head', -H.headThickness / 2);
   put(`${g.name}-stem`, disc(H.stemRadius, H.stemRadius, H.stemToTip, 18), mat, 'valve stem', H.stemToTip / 2);
   // retainer: top face on the valve tip plane, underside is the moving spring seat
-  put(`${g.name}-retainer`, disc(H.retainerRadius, H.retainerRadius * 1.12, H.retainerGap, 24), materials.springSteel, 'valve retainer', H.stemToTip - H.retainerGap / 2);
+  put(`${g.name}-retainer`, disc(H.retainerRadius, H.retainerRadius * H.retainerFlare, H.retainerGap, 24), materials.springSteel, 'valve retainer', H.stemToTip - H.retainerGap / 2);
   return g;
 }
 
@@ -265,6 +265,47 @@ function buildOhvLifters(materials) {
   return out;
 }
 
+/**
+ * Slice 8J (issue #51 option A, GATES P1-G6 / P1-G7): the 16 valves and 16
+ * springs the OHV head seats. The head casting is shared by both builds - it
+ * already machines the 16 seats, the 16 guides and the 16 spring floors
+ * test/heads.test.mjs gates - so the valve row is the same metal the DOHC row is:
+ * same seat, same axis, same stem, same disc, same retainer. What differs is the
+ * follower: no bucket and no shim stand on this tip, and the lift comes from the
+ * lifter's contact law through the published lever (src/engine/ohv.js
+ * ohvValveLift), not from a cam face. The spring keeps the fixed seat the head
+ * machines at guideLength and the moving seat under the retainer, and it is
+ * compressed by the same lever law.
+ */
+function buildOhvValves(materials) {
+  const mounted = H.stemToTip - H.retainerGap - H.guideLength; // installed spring length at zero lift
+  const out = [];
+  for (const cyl of SPEC.cylinders) {
+    for (const valve of valves) {
+      const valveG = buildValve(cyl, valve, materials);
+      const spring = new THREE.Mesh(springGeometry(V.springRadius, mounted, V.springCoils, V.springWireRadius), materials.springSteel);
+      spring.name = `spring-cyl${cyl.num}-${valve}`;
+      spring.castShadow = true;
+      spring.receiveShadow = true;
+      spring.userData.part = 'valve spring';
+      spring.userData.cyl = cyl.num;
+      const seatPt = valveSeatPoint(cyl, valve);
+      const d = new THREE.Vector3().fromArray(valveAxisDir(cyl, valve));
+      const quat = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, d);
+      valveG.quaternion.copy(quat);
+      spring.quaternion.copy(alignYTo(d));
+      const seat = new THREE.Vector3(seatPt.x, seatPt.y, seatPt.z);
+      out.push({
+        cyl, valve, valveG, spring, mounted,
+        seat,
+        d,
+        anchor: seat.clone().addScaledVector(d, H.guideLength), // fixed spring seat in the head
+      });
+    }
+  }
+  return out;
+}
+
 export function createValvetrain(materials, variantId = SPEC.build.variant) {
   const group = new THREE.Group();
   group.name = 'valvetrain';
@@ -273,17 +314,36 @@ export function createValvetrain(materials, variantId = SPEC.build.variant) {
   if (entry.centralCam) {
     const cam = buildOhvCam(camGroupNames(variantId)[0], materials);
     const lifters = buildOhvLifters(materials);
+    const valvesRow = buildOhvValves(materials);
     group.add(cam, ...lifters.map((l) => l.mesh));
+    for (const f of valvesRow) group.add(f.valveG, f.spring);
     // The same half-crank turn the DOHC cams get; the lobes' baked indices carry
     // this variant's lifter axes, src/engine/ohv.js publishes them. Each lifter
-    // moves along its own bore axis by exactly the lift its lobe gives it.
+    // moves along its own bore axis by exactly the lift its lobe gives it, and
+    // each valve moves along its own axis by that lift through the lever.
     const update = (theta) => {
       cam.rotation.x = (theta / CAM.halfSpeedRatio) * DEG;
       for (const l of lifters) l.mesh.position.copy(l.zero).addScaledVector(l.d, ohvLift(l.cyl, l.valve, theta));
+      for (const f of valvesRow) {
+        const p = ohvValvePoint(f.cyl, f.valve, 0, theta);
+        const lift = ohvValveLift(f.cyl, f.valve, theta);
+        f.valveG.position.set(p.x, p.y, p.z);
+        const live = f.mounted - lift;
+        f.spring.scale.set(1, live / f.mounted, 1);
+        // the fixed seat: the coil's floor end stays on the machined floor at
+        // guideLength and the compressed coil hangs half a live length above it,
+        // so its retainer end lands on the retainer underside as the valve drops
+        f.spring.position.copy(f.anchor).addScaledVector(f.d, live / 2);
+      }
     };
     update(0);
     group.userData.family = 'valvetrain';
-    return { group, update, cams: [cam], lifters: lifters.map((l) => l.mesh) };
+    return {
+      group, update, cams: [cam],
+      lifters: lifters.map((l) => l.mesh),
+      valves: valvesRow.map((f) => f.valveG),
+      springs: valvesRow.map((f) => f.spring),
+    };
   }
 
   const cams = [];

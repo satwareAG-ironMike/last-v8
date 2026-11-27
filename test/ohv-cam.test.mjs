@@ -138,9 +138,11 @@ test(`${LAW}: the switch builds exactly one central cam in the V, on the publish
   assert.equal(lobeMeshes.length, 16, `${lobeMeshes.length} lobes drawn on the central cam, not 16`);
   assert.ok(necks.length > 0, 'a cam of journals and lobes with nothing joining them is a set of discs, not a cam');
   // slice 8C-3a machined the 16 lifter bores and slice 8C-3b draws the followers
-  // that stand in them, so the cam is no longer alone in this variant's train.
-  // What is still owed is named in SPEC.variants.ohv.pendingHardware, and no part
-  // of an owed family may appear before the iron that houses it is cast.
+  // that stand in them; slice 8J (issue #51 option A) draws the 16 valves and 16
+  // springs those lifters act on. What is still owed is named in
+  // SPEC.variants.ohv.pendingHardware, and no part of an owed family may appear
+  // before the iron that houses it is cast. The DOHC follower parts (bucket,
+  // shim) never belong in this variant at all.
   const GAL = ohvLifterGallery();
   const bores = Object.values(GAL.banks).flatMap((b) => b.bores.map((o) => o.name)).sort();
   const lifters = [];
@@ -148,11 +150,19 @@ test(`${LAW}: the switch builds exactly one central cam in the V, on the publish
   assert.deepEqual(lifters.sort(), bores,
     `the OHV build draws ${lifters.length} lifters (${lifters.slice(0, 3).join(', ')}...) and the block machines ${bores.length} lifter bores - the two have to be the same parts`);
   assert.equal(lifters.length, followers('ohv').lifters, `the build draws ${lifters.length} lifters for the ${followers('ohv').lifters} the switch counts`);
-  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'bucket', 'shim', 'spring', 'valve-']) {
+  for (const word of ['pushrod', 'push-rod', 'rocker', 'cover', 'bucket', 'shim']) {
     let hits = 0;
     group.traverse((o) => { if (o.name.toLowerCase().includes(word)) hits += 1; });
-    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: hardware may not appear before the iron that houses it is cast`);
+    assert.equal(hits, 0, `the OHV build draws ${hits} part(s) for "${word}" while SPEC.variants.ohv.pendingHardware names that family owed: hardware may not appear before the iron that houses it is cast (and a bucket or shim belongs to the DOHC follower row, not here)`);
   }
+  let ohvValves = 0, ohvSprings = 0;
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    if (/^valve-cyl\d+-(intake|exhaust)-/.test(o.name)) ohvValves += 1;
+    if (/^spring-cyl\d+-(intake|exhaust)$/.test(o.name)) ohvSprings += 1;
+  });
+  assert.equal(ohvSprings, followers('ohv').springs, `the OHV build draws ${ohvSprings} springs for the ${followers('ohv').springs} the switch counts`);
+  assert.ok(ohvValves >= followers('ohv').valves, `the OHV build answers ${ohvValves} valve parts for the ${followers('ohv').valves} valves the switch counts`);
   const dohc = train('dohc').group;
   assert.equal(camGroupNames('dohc').filter((n) => dohc.getObjectByName(n)).length, camCount('dohc'),
     'the DOHC build has to keep its four camshafts beside this variant');

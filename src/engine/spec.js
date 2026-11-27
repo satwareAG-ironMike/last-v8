@@ -137,6 +137,10 @@ export const SPEC = {
     deckBoltRadius: 0.85,
     retainerGap: 0.4, // retainer thickness; spring top seat at stemToTip - retainerGap
     retainerRadius: 0.75,
+    // the retainer's spring-side lip: its underside carries the coil ends, so the
+    // disc is turned wider on that face than the pad face a rocker presses on
+    // (test/ohv-valve.test.mjs measures both faces off the drawn metal)
+    retainerFlare: 1.12,
     shimRadius: 1.75, // adjusting shim under the bucket
     bucketFlangeRadius: 2.15, // guide lip on the bucket skirt
 
@@ -546,16 +550,15 @@ export const SPEC = {
       // this casting machines IS drawn - 16 lifters standing in the 16 bores
       // ohvLifterGallery() cuts. What is not drawn is named beside the flag, so
       // drawn: true cannot read as "the whole train is done". Slice 8H (issue #51
-      // option B) adds the valve families the same way: the screenshot gate counts
-      // 0 valve meshes and 0 springs on every OHV run, and a gap a gate measures
-      // has to be a declared family with the reason #45 measured.
+      // option B) declared the valve families the same way; slice 8J (issue #51
+      // option A) drew them once #45 landed the lever they were waiting on, so
+      // what is left below is the measured remainder - test/ohv-valve.test.mjs
+      // refuses a family listed while drawn and a gap drawn while unlisted.
       drawn: true,
       pendingHardware: [
         { family: 'pushrods', issue: '#16', why: 'no pushrod host iron is cast in this block' },
         { family: 'rockers', issue: '#16', why: 'no rocker stud or pedestal is cast in this block' },
         { family: 'covers', issue: '#16', why: 'the rocker covers that replace the cam bosses stand on the rocker iron this block does not cast yet' },
-        { family: 'valves', issue: '#51', why: 'the head seats 16 valves and the build draws none: a valve needs a rocker to act on it, and #45 measured that no rocker stud or pedestal is cast in this block' },
-        { family: 'springs', issue: '#51', why: 'a valve spring seats on the retainer a rocker pad loads, so while no rocker iron is cast in this block the 16 springs have nothing to hold them' },
       ],
       belowCrankCm: 10.8, // cam axis on the V bisector, below the crank centre
       // Issue #45 (slice 8I): the rocker lever ratio, valve arm over pushrod arm.
